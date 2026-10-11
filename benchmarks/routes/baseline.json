@@ -1,0 +1,172 @@
+{
+  "schema_version": 1,
+  "corpus": {
+    "schema_version": 1,
+    "utterances": {
+      "count": 120,
+      "sha256": "f902bb527f92c96d9b94cde83c0127c271c74cff71523036f2b916ffdb175191"
+    }
+  },
+  "model": "",
+  "model_layer": {},
+  "metrics": {
+    "n": 120.0,
+    "coverage": 0.7916666666666666,
+    "accuracy": 0.968421052631579,
+    "accuracy_all": 0.9333333333333333,
+    "task_recall": 0.9523809523809523,
+    "task_precision": 0.975609756097561,
+    "chat_recall": 0.9811320754716981,
+    "chat_precision": 0.9629629629629629,
+    "ambiguous_rate": 0.20833333333333334,
+    "majority_baseline": 0.6083333333333333
+  },
+  "per_category": {
+    "ambiguous": {
+      "n": 12.0,
+      "coverage": 0.0,
+      "accuracy": null,
+      "ambiguous_rate": 1.0
+    },
+    "chitchat": {
+      "n": 25.0,
+      "coverage": 0.72,
+      "accuracy": 1.0,
+      "ambiguous_rate": 0.28
+    },
+    "emoji_punct": {
+      "n": 8.0,
+      "coverage": 1.0,
+      "accuracy": 1.0,
+      "ambiguous_rate": 0.0
+    },
+    "hard": {
+      "n": 8.0,
+      "coverage": 0.375,
+      "accuracy": 0.0,
+      "ambiguous_rate": 0.625
+    },
+    "imperative": {
+      "n": 24.0,
+      "coverage": 1.0,
+      "accuracy": 1.0,
+      "ambiguous_rate": 0.0
+    },
+    "long_task": {
+      "n": 12.0,
+      "coverage": 1.0,
+      "accuracy": 1.0,
+      "ambiguous_rate": 0.0
+    },
+    "negation": {
+      "n": 10.0,
+      "coverage": 0.9,
+      "accuracy": 1.0,
+      "ambiguous_rate": 0.1
+    },
+    "question": {
+      "n": 14.0,
+      "coverage": 1.0,
+      "accuracy": 1.0,
+      "ambiguous_rate": 0.0
+    },
+    "slash": {
+      "n": 7.0,
+      "coverage": 1.0,
+      "accuracy": 1.0,
+      "ambiguous_rate": 0.0
+    }
+  },
+  "misses": [
+    {
+      "id": "u-0113",
+      "category": "hard",
+      "expect": "chat",
+      "got": "task",
+      "source": "rule",
+      "ambiguous": false,
+      "text": "谢谢你帮我查资料",
+      "note": "礼貌词包的过去时陈述：规则层**有把握地**判成 task。修它要动礼貌词与 task 词的优先级，而那个方向的代价更大（见 router.py 的 _COURTESY_PREFIXES）"
+    },
+    {
+      "id": "u-0114",
+      "category": "hard",
+      "expect": "task",
+      "got": "chat",
+      "source": "rule",
+      "ambiguous": false,
+      "text": "我们上次聊到哪儿了？",
+      "note": "该走 search_memory，但形状是一句问号结尾的闲聊"
+    },
+    {
+      "id": "u-0115",
+      "category": "hard",
+      "expect": "task",
+      "got": "chat",
+      "source": "rule",
+      "ambiguous": false,
+      "text": "你还记得我上次说的那件事吗？",
+      "note": "同上"
+    },
+    {
+      "id": "u-0116",
+      "category": "hard",
+      "expect": "task",
+      "got": "chat",
+      "source": "default",
+      "ambiguous": true,
+      "text": "别忘了我说的",
+      "note": "否定式里藏着一个正向请求：别忘 = 记住。表里只有「忘掉」"
+    },
+    {
+      "id": "u-0117",
+      "category": "hard",
+      "expect": "task",
+      "got": "chat",
+      "source": "default",
+      "ambiguous": true,
+      "text": "回想一下我们第一次见面",
+      "note": "祈使动词不在表里：加一个「回想一下」就能收"
+    },
+    {
+      "id": "u-0118",
+      "category": "hard",
+      "expect": "task",
+      "got": "chat",
+      "source": "default",
+      "ambiguous": true,
+      "text": "记录一下我今天的感受",
+      "note": "同义动词不在表里：表里是「记一下」，这句是「记录一下」"
+    },
+    {
+      "id": "u-0119",
+      "category": "hard",
+      "expect": "task",
+      "got": "chat",
+      "source": "default",
+      "ambiguous": true,
+      "text": "把昨天那段话再念一遍",
+      "note": "表里是「念一下」，这句是「念一遍」"
+    },
+    {
+      "id": "u-0120",
+      "category": "hard",
+      "expect": "task",
+      "got": "chat",
+      "source": "default",
+      "ambiguous": true,
+      "text": "我上次说想买的那本书叫什么",
+      "note": "要查记忆，但连问号都没有"
+    }
+  ],
+  "structural_violations": [],
+  "lexicon_violations": [],
+  "tolerance": {
+    "accuracy": 0.02,
+    "coverage": 0.02,
+    "task_recall": 0.02,
+    "chat_recall": 0.02
+  },
+  "frozen_at": "2026-10-10T06:56:01Z",
+  "note": "这是**实测值，不是目标值**（先跑后填）。门槛 = 本文件的值 ± tolerance，方向见 biosnn_memterm.bench.routeeval.GATED（三项都是越大越好）。改语料要同时改 freeze.json 并重跑 --freeze。**门槛只绑规则层**：模型层要 Ollama，把门槛绑上去等于让装没装模型决定提交能不能过。"
+}

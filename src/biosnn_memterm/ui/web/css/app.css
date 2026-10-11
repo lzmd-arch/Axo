@@ -1,0 +1,681 @@
+/* 对话页样式。
+ *
+ * 颜色全部走 CSS 变量，集中在 :root 里。壁纸、主题、用户自定义配色
+ * 都只改这一处——CSS 变量是本设计里"可自由更改"的落点，不是普通的组织习惯。
+ *
+ * **明暗由 Python 显式驱动，不用 prefers-color-scheme。** Qt 外壳那边读
+ * QStyleHints.colorScheme()，把结果写进 documentElement.dataset.theme，
+ * 下面那块 `:root[data-theme="light"]` 才生效。靠 Chromium 自己去检测是脆的
+ * ——它检测的东西与 Qt 检测的东西未必是同一个，而两侧明暗不一致的样子
+ * （网页白了、外壳还黑着）非常刺眼，却很难归因。
+ *
+ * 这一条也意味着**网页与 Qt 外壳的默认值必须是同一套**。
+ */
+
+:root {
+  --bg: #0f1116;
+  --bg-elevated: #171a22;
+  --bg-bubble-user: #262d3d;
+  --bg-bubble-assistant: #171a22;
+  --bg-bubble-system: #2a2318;
+  --fg: #e6e9f0;
+  --fg-muted: #8b93a7;
+  --fg-strong: #ffffff;
+  --accent: #6b8afd;
+  --border: #252a36;
+  --danger: #e2705f;
+  /* 遮罩的不透明度：1 = 壁纸完全被盖住，0 = 完全露出来。
+     Python 侧写的是 1 - 可见度/100，默认可见度 18 → 0.82，正是原本写死的那个数。 */
+  --wallpaper-dim: 0.82;
+  /* 磨砂：填充、描边、上高光、下暗边、外投影。**填充与那两道边必须自己撑起
+     "玻璃"的观感**，不能全靠 backdrop-filter——没有壁纸时（默认就是没有）背后
+     是纯色，糊出来的还是那个纯色，等于没糊。详见 #send 那一段的说明。
+     与 --danger 同一条纪律：**浅色块必须同样是给一组**，漏了那一侧就会静默
+     用上暗色这组（白填充 + 白亮边落在白底上，两块都看不见）。
+
+     五支的取舍与 Qt 外壳那边是同一套：**上面是光、下面是影**。--glass-hi 与
+     --glass-lo 就对应 QSS 里那对 `border-top-color` / `border-bottom-color`，
+     只是这一侧能用 `inset` 投影写出来（QSS 没有 box-shadow，只好拿描边顶替）。
+     多出来的 --glass-shadow 是外壳那一侧**做不到**的一件：真投影。它让按钮与
+     底下的壁纸之间隔出一层深浅，而"浮在纸上面"正是玻璃首先要说的事。 */
+  --glass-bg: rgba(255, 255, 255, 0.12);
+  --glass-line: rgba(255, 255, 255, 0.20);
+  --glass-hi: rgba(255, 255, 255, 0.30);
+  --glass-lo: rgba(0, 0, 0, 0.30);
+  --glass-shadow: rgba(0, 0, 0, 0.35);
+  --radius: 12px;
+  --max-width: 780px;
+  --font-ui: "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, "Courier New", monospace;
+}
+
+:root[data-theme="light"] {
+  --bg: #f6f7f9;
+  --bg-elevated: #ffffff;
+  --bg-bubble-user: #e4e9f7;
+  --bg-bubble-assistant: #ffffff;
+  --bg-bubble-system: #fdf5e3;
+  --fg: #1f2430;
+  --fg-muted: #6a7286;
+  --fg-strong: #000000;
+  --accent: #3559c7;
+  --border: #e2e5ec;
+  /* **浅色必须单独给一支 danger。** 原本这一块没覆盖它，于是浅色下用的还是
+     暗色那支鲑鱼粉 #e2705f——在白底上对比度只有 2.5 左右，而错误提示恰恰是
+     最需要看得清的那一句。这个值与 LIGHT_TOKENS.danger 同源。 */
+  --danger: #c0392b;
+  /* 浅色是**白玻璃**：填充几乎是白的，靠一道灰描边和顶上那记白高光读出厚度。
+     内高光在浅色下比底色更白（不是更黑），所以它不是 fg-strong 的 alpha——
+     与 Qt 外壳那边"高光取最亮的 token"读起来是一回事，写法不同：这一侧的高光
+     是**真的光**（不透明度的白），而不是"背景色兑一点黑"。
+     底边这一支在浅色下是**深**的：与外壳那边同一个理由——白底上画不出比底色更
+     白的线，能读出来的只有底下那道影。 */
+  --glass-bg: rgba(255, 255, 255, 0.62);
+  --glass-line: rgba(0, 0, 0, 0.10);
+  --glass-hi: rgba(255, 255, 255, 0.95);
+  --glass-lo: rgba(0, 0, 0, 0.10);
+  --glass-shadow: rgba(31, 36, 48, 0.10);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: 15px;
+  line-height: 1.65;
+  overflow: hidden;
+}
+
+/* ── 壁纸与蒙层 ─────────────────────────────────────────────────────────── */
+
+#wallpaper {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  /* 只改壁纸不该让整页重排，所以它是独立的一层而不是 body 的背景 */
+}
+
+#scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: var(--bg);
+}
+
+/* 没有壁纸时蒙层完全不透明（即纯色背景）；有壁纸时按 --wallpaper-dim 半透明。
+   这比"切换 body 背景色"少一次整页重绘，也让壁纸的明暗不影响文字可读性。
+
+   **用 opacity 而不是 color-mix。** 可见度是一个用户可拖的数，而 color-mix 的
+   百分比只能写死在样式表里；opacity 可以直接吃一个变量。等价性是实测过的：
+   color-mix(in srgb, C 82%, transparent) 画出来的就是 C 以 0.82 的 alpha。
+
+   明暗两态**不再各有一个默认可见度**。原本浅色是 88%（壁纸透出 12%）。现在
+   只有一个用户旋钮，两个默认值会让"滑杆停在 18%"与"屏幕上实际是 12%"对不上
+   ——而那种不一致是查不出来的。代价是浅色下壁纸比改动前略明显一点。 */
+body.has-wallpaper #scrim {
+  opacity: var(--wallpaper-dim);
+}
+
+/* ── 预留的 Live2D 容器 ─────────────────────────────────────────────────── */
+
+#live2d-host {
+  position: fixed;
+  right: 18px;
+  bottom: 96px;
+  width: 240px;
+  height: 320px;
+  z-index: 2;
+  pointer-events: none; /* 未接入时不挡点击；接入后由 live2d.js 打开 */
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+
+#live2d-host.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ── 顶栏 ───────────────────────────────────────────────────────────────── */
+
+#topbar {
+  position: relative;
+  z-index: 3;
+  flex: 0 0 auto;
+  padding: 8px 20px;
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-elevated) 70%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── 对话流 ─────────────────────────────────────────────────────────────── */
+
+#stream {
+  position: relative;
+  z-index: 3;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 20px 20px 8px;
+  scroll-behavior: auto; /* 流式时不要平滑滚动，否则永远追不上新内容 */
+}
+
+/* 空状态。住在 #stream 里（见 index.html 的说明），所以它得自己让开位置，
+   不能像 .msg 那样左右各占一半。 */
+#empty {
+  max-width: var(--max-width);
+  margin: 24px auto 0;
+  color: var(--fg-muted);
+  font-size: 14px;
+  text-align: center;
+}
+
+/* ── 首次使用的人设卡片 ─────────────────────────────────────────────────── */
+
+/* 与 #empty 是同一件事的两种形态，所以开头那两条（限宽 + 居中）照抄。 */
+#welcome {
+  max-width: var(--max-width);
+  margin: 12px auto 0;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  font-size: 14px;
+}
+
+#welcome h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  line-height: 1.4;
+  color: var(--fg-strong);
+}
+
+/* 内置那段。**white-space: pre-line**：它正文里有换行，而 ``textContent`` 写进
+   <p> 之后换行会被折成空格，三句话就糊成一段了。 */
+#welcome-builtin {
+  margin: 0 0 14px;
+  padding: 9px 12px;
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  color: var(--fg-muted);
+  white-space: pre-line;
+}
+
+#welcome label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--fg-muted);
+  font-size: 13px;
+}
+
+#persona-input {
+  width: 100%;
+  resize: vertical;
+  min-height: 72px;
+  max-height: 200px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.5;
+  outline: none;
+}
+
+#persona-input:focus {
+  border-color: var(--accent);
+}
+
+.welcome-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+#persona-save,
+#persona-skip {
+  padding: 7px 16px;
+  border-radius: 8px;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+#persona-save {
+  border: 1px solid transparent;
+  background: var(--accent);
+  color: #fff;
+}
+
+#persona-save:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+#persona-save:not(:disabled):hover {
+  filter: brightness(1.08);
+}
+
+/* 「先不写」刻意是次要样式：它是退路，不该看起来和主操作一样重。 */
+#persona-skip {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-muted);
+}
+
+#persona-skip:hover {
+  border-color: var(--fg-muted);
+  color: var(--fg);
+}
+
+.welcome-note {
+  margin: 8px 0 0;
+  color: var(--fg-muted);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.msg {
+  max-width: var(--max-width);
+  margin: 0 auto 16px;
+  animation: rise 0.18s ease-out;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg {
+    animation: none;
+  }
+}
+
+/* 标题浮在**壁纸**上：``.msg`` 自己没有背景，而壁纸是用户选的任意一张图。
+   所以它得自带一块底——不能指望"主题底色 + 蒙层"那层保障，蒙层只压掉 18% 的
+   壁纸：纯白壁纸下 ``--fg-muted`` 对合成底只有 **3.59**，浅色配纯黑壁纸更是
+   **2.96**，两者都在正文下限 4.5 之下（口径见 ``ui/color.py``）。
+
+   **打底的不透明度是这一条的全部内容，不能照抄顶栏。** 顶栏用的是
+   ``color-mix(..., 70%, transparent)``，壁纸还有 30% 透上来——暗色配纯白壁纸时
+   合成底成了中灰 ``#5d5f64``，对 ``--fg-muted`` 只有 **2.08**，比不打底还低。
+   不透明的 ``--bg-elevated`` 把它变成一个与壁纸无关的数（暗 5.66 / 浅 4.81），
+   于是这件事可以被断言，而不是"看着还行"（``test_theme.py`` 钉着）。 */
+.msg-caption {
+  display: inline-block;
+  font-size: 12px;
+  color: var(--fg-muted);
+  margin-bottom: 4px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--bg-elevated);
+}
+
+.msg-body {
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--bg-bubble-assistant);
+  border: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+
+.msg-user {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.msg-user .msg-body {
+  background: var(--bg-bubble-user);
+  max-width: 86%;
+}
+
+.msg-system .msg-body {
+  background: var(--bg-bubble-system);
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+  font-size: 14px;
+}
+
+.msg-system .msg-body p:first-child {
+  margin-top: 0;
+}
+
+/* ── 工具结果与确认卡片 ─────────────────────────────────────────────────── */
+
+/* 工具结果：**它不是助手说的话**，所以有一支自己的颜色与一个说得出名字的标题。
+   混进 .msg-assistant 的话，回看时会读成"助手说了一段格式奇怪的东西"。 */
+.msg-tool .msg-body {
+  background: var(--bg-elevated);
+  border-style: dashed;
+  font-size: 13.5px;
+  color: var(--fg-muted);
+  white-space: pre-wrap;
+}
+
+/* 确认卡片。左边一道强调色，与对话内容一眼分得开——它是一件**等你动手**的东西，
+   而对话流里其余每一件都不是。 */
+.msg-tool-confirm .msg-body {
+  border-left: 3px solid var(--accent);
+}
+
+.msg-tool-confirm.tool-stale .msg-body {
+  border-left-color: var(--fg-muted);
+  opacity: 0.72;
+}
+
+.tool-summary {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tool-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* 工具卡上的「允许 / 拒绝」。**这一侧是真模糊**：背后是 #scrim 压过的壁纸，
+   backdrop-filter 有东西可采（Qt 外壳那边没有，只能靠渐变拟态）。
+
+   三记 box-shadow 就是外壳那边"上下两条亮度不同的描边"在这里的写法：顶上一道
+   亮线（`inset 0 1px 0`，iOS 玻璃按钮顶上那记极细的高光）、底下一条暗线
+   （`inset 0 -1px 0`，它贴着的影）、再加一道**真投影**。前两记 QSS 只能用描边
+   顶替，第三记它做不到——所以这里比外壳多一样东西，不是随手加的。 */
+.tool-actions button {
+  font: inherit;
+  font-size: 13.5px;
+  padding: 4px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--glass-line);
+  background: var(--glass-bg);
+  color: var(--fg);
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  backdrop-filter: blur(16px) saturate(160%);
+  box-shadow:
+    inset 0 1px 0 var(--glass-hi),
+    inset 0 -1px 0 var(--glass-lo),
+    0 1px 2px var(--glass-shadow);
+}
+
+.tool-actions button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+/* 禁用的按钮必须看起来就是禁用的：这张卡片上"不能点"与"点了没人接"是两件事，
+   而后者正是这一版最怕出现的那种静默分歧。**模糊也一并撤掉**——一块还在糊背景、
+   还带着高光的按钮，看起来像"可以点"，那正是这一条要防的。 */
+.tool-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+
+.tool-actions .tool-deny {
+  color: var(--danger);
+}
+
+.tool-countdown {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.msg-footer {
+  font-size: 12px;
+  color: var(--fg-muted);
+  margin-top: 4px;
+  padding-left: 12px;
+}
+
+/* 思考中的呼吸光标：只在最后一条助手消息且正忙时出现 */
+body.busy .msg-assistant:last-child .msg-body::after {
+  content: "▋";
+  color: var(--accent);
+  margin-left: 2px;
+  animation: blink 1s steps(2, start) infinite;
+}
+
+@keyframes blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+/* ── 消息内的 markdown 元素 ─────────────────────────────────────────────── */
+
+.msg-body > *:first-child {
+  margin-top: 0;
+}
+
+.msg-body > *:last-child {
+  margin-bottom: 0;
+}
+
+.msg-body p {
+  margin: 0.5em 0;
+}
+
+.msg-body h1,
+.msg-body h2,
+.msg-body h3,
+.msg-body h4,
+.msg-body h5,
+.msg-body h6 {
+  margin: 0.8em 0 0.4em;
+  line-height: 1.3;
+  color: var(--fg-strong);
+}
+
+.msg-body h1 {
+  font-size: 1.35em;
+}
+.msg-body h2 {
+  font-size: 1.2em;
+}
+.msg-body h3 {
+  font-size: 1.08em;
+}
+.msg-body h4,
+.msg-body h5,
+.msg-body h6 {
+  font-size: 1em;
+}
+
+.msg-body code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  padding: 1px 5px;
+  border-radius: 5px;
+}
+
+.msg-body pre {
+  background: color-mix(in srgb, #000 30%, var(--bg-elevated));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  margin: 0.7em 0;
+}
+
+.msg-body pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.88em;
+  line-height: 1.5;
+}
+
+.msg-body blockquote {
+  margin: 0.6em 0;
+  padding: 2px 0 2px 12px;
+  border-left: 3px solid var(--border);
+  color: var(--fg-muted);
+}
+
+.msg-body ul,
+.msg-body ol {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+
+.msg-body li {
+  margin: 0.2em 0;
+}
+
+.msg-body a {
+  color: var(--accent);
+}
+
+.msg-body hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1em 0;
+}
+
+/* ── 输入区 ─────────────────────────────────────────────────────────────── */
+
+#composer {
+  position: relative;
+  z-index: 3;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  max-width: var(--max-width);
+  width: 100%;
+  margin: 0 auto;
+  padding: 12px 20px 18px;
+}
+
+#input {
+  flex: 1 1 auto;
+  resize: none;
+  min-height: 44px;
+  max-height: 220px;
+  padding: 11px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: 15px;
+  line-height: 1.5;
+  outline: none;
+}
+
+#input:focus {
+  border-color: var(--accent);
+}
+
+#input:disabled {
+  opacity: 0.55;
+}
+
+/* 「发送」是这一页的主行动键，所以它**保留主色实心**，不做成无色玻璃（与 Qt
+   外壳那边 `kind="primary"` 是同一条判断）。玻璃感只加两样：描边换成亮边、
+   顶上那道内高光。填充用 color-mix 压到 88% —— 剩下那 12% 透出去的正是壁纸，
+   这一页里"半透明"能读出效果，也就只有它背后真有东西的时候。
+   阴影那三记与 `.tool-actions button` 同一套：**主键也是玻璃，只是有色**。
+   （外壳那边的主按钮此刻也吃那对斜边，两边的取舍是一致的。） */
+#send {
+  flex: 0 0 auto;
+  height: 44px;
+  padding: 0 20px;
+  border-radius: var(--radius);
+  border: 1px solid var(--glass-line);
+  background: color-mix(in srgb, var(--accent) 88%, transparent);
+  color: #fff;
+  font-family: var(--font-ui);
+  font-size: 15px;
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  backdrop-filter: blur(16px) saturate(160%);
+  box-shadow:
+    inset 0 1px 0 var(--glass-hi),
+    inset 0 -1px 0 var(--glass-lo),
+    0 1px 2px var(--glass-shadow);
+}
+
+/* 兜底：不支持 backdrop-filter 的引擎（Chromium 老版本、某些软件渲染后端）
+   把那点半透明也一并去掉。留着半透明却没有模糊，读起来是"这块有点脏"，
+   比不透明更差。
+
+   **三记投影不必跟着撤。** 它们说的是"这是一块有厚度的东西"，与背后糊不糊无关
+   ——毕竟默认就没有壁纸，本来也糊不出什么。上面那条给 .tool-actions button
+   写 `box-shadow: none` 是更早的写法（那一档干脆退成一块扁的卡），留着不动。 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .tool-actions button {
+    background: var(--bg-bubble-user);
+    border-color: var(--border);
+    box-shadow: none;
+  }
+
+  #send {
+    background: var(--accent);
+  }
+}
+
+#send:disabled {
+  opacity: 0.45;
+  cursor: default;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+
+#send:not(:disabled):hover {
+  filter: brightness(1.08);
+}
+
+/* 滚动条：默认样式在暗色下是亮白的一条，很扎眼 */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 18%, transparent);
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--fg) 30%, transparent);
+  background-clip: content-box;
+}

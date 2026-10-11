@@ -1,0 +1,48 @@
+# 行尾归一。Git for Windows 的系统默认是 core.autocrlf=true（别动它），
+# 那意味着工作区是 CRLF、仓库里是 LF。这个文件是兜底：明确告诉 git 哪些
+# 文件必须以 LF 入库，免得某台机器上的配置漂移把整仓行尾换掉。
+* text=auto eol=lf
+
+# 二进制，别当文本处理（否则 git 会试图"修"它们）
+*.npz binary
+*.npy binary
+*.db binary
+*.sqlite3 binary
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary
+
+# 这些必须逐字节一致，任何行尾转换都会让产物哈希变化
+*.json text eol=lf
+# 两份量具语料（benchmarks/gold/*.jsonl 与 benchmarks/routes/utterances.jsonl）的
+# 冻结判据都是 sha256(原始字节)。上面那条通配 `* text=auto eol=lf` 现在**碰巧**
+# 也让它们走 LF，但"碰巧"不是判据——显式列出来，任何机器上的配置漂移都不会让指纹
+# 无声失效。失效的指纹比没有指纹更糟：守卫看起来还在。
+*.jsonl text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.py text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+
+# 随产物发出去的许可全文（GPL-3.0 / LGPL-3.0）。上面那条通配 `* text=auto eol=lf`
+# 现在也让它们走 LF，但这两份文件与量具语料是同一类东西：**过一遍行尾转换就不再是
+# 原文**，而它们要满足的是 LGPLv3 §4(b) 的"附一份副本"。逐字节的判据（sha256）钉在
+# tests/test_licenses.py 里；`.pre-commit-config.yaml` 里也把 `licenses/` 排除在
+# trailing-whitespace 之外——正文里有 42 行以空白结尾，那是原文的一部分，不是待清理
+# 的脏东西。
+licenses/*.txt text eol=lf
+
+# Windows 批处理**必须**是 CRLF，这不是风格问题。
+# `* text=auto eol=lf` 那条通配把 run.bat 也写成了 LF，而 cmd.exe 解析 LF-only 的
+# 批处理时会算错行偏移——症状不是报错，是**从某个字节偏移开始把半行当命令执行**：
+# `'rt' is not recognized`、`'equ' is not recognized`、`) was unexpected at this time`，
+# 然后整个脚本以 255 退出。纯 ASCII 的 LF 批处理碰巧能跑，一旦有中文（多字节）就
+# 必然错位，所以它一直没被发现。
+# 下面这条把它们固定成 CRLF，任何平台检出都是。守护它的是
+# tests/test_entry_points.py——**别再改回 lf**。
+*.bat text eol=crlf
+*.cmd text eol=crlf

@@ -1,0 +1,70 @@
+# 仓库里**永远不该出现用户自己的东西**。这份文件是第一道门，边界在哪、为什么，
+# 见 tests/test_repo_hygiene.py——那里拿 git ls-files 复核同一件事。
+
+# 记忆库数据：绝不入库。它可能很大，且含私人对话内容。
+# 运行时实际落在用户目录（%LOCALAPPDATA%\biosnn-memterm\），这里的 data/ 只是
+# 开发时的可覆盖默认位置。
+# ⚠ 裸名字（不带前导斜杠）在**任何层级**都匹配，所以 tests/data/ 这类同名目录也
+#   会被一起忽略——那时 git add 会安静地什么都不做。要放行就写 !tests/data/。
+data/
+# 运行时数据的两个目录。**用复数是为了跟源码目录区分**：运行时是 sessions/，
+# 源码是 src/biosnn_memterm/session/（单数）。裸名字在任何层级都匹配，所以这里
+# 差一个字母就会把源码目录一起忽略掉。
+sessions/
+wallpapers/
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite3
+*.npz
+*.npy
+
+# 逐字稿（会话记录，session/store.py 写出来的）是 .jsonl，三份量具语料也是 .jsonl
+# ——**同名不同命**。所以是"一律忽略 + 逐份放行"，而不是反过来：漏掉一条规则的
+# 代价是一份私人对话进了远端（不可逆），多写一行放行规则的代价只是以后加测试夹具时补
+# 一行。
+#
+# **放行是按目录逐个写的，不是 `!benchmarks/**/*.jsonl`。** 后者看起来更省事，实际是
+# 把"哪些 jsonl 可以进库"这个判断交给了目录名——`benchmarks/` 下面再放一份逐字稿就
+# 静默放行了，而"放行"在这里的含义是"推上去就收不回来了"（tests/test_repo_hygiene.py
+# 的 `_JSONL_ALLOWED_UNDER` 是同一份名单，加语料时两处都要动）。
+#
+# 加路由语料时正是被漏掉的那个：文件在工作区里，本地每条腿都绿，而它在库里根本不存在
+# ——`--check` 与 `test_router_corpus_integrity.py` 只有在**别人检出之后**才会红。
+# 加基质语料（P4a）时**又漏了一次**，两次的形状一模一样。所以现在有一条守卫按名单
+# 逐个目录问"里面的 .jsonl 会不会被挡住"：
+# `tests/test_repo_hygiene.py::test_registered_corpus_directories_survive_the_ignore_rules`。
+*.jsonl
+!benchmarks/gold/*.jsonl
+!benchmarks/routes/*.jsonl
+!benchmarks/substrate/*.jsonl
+
+# 模型权重：README 教用户自己 ollama create 的 GGUF 落在仓库根目录
+*.gguf
+
+# 用户配置（含本地路径与后端地址）
+config.toml
+!config.example.toml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# 工具链缓存
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.hypothesis/
+
+# 编辑器
+.vscode/
+.idea/
+*.swp

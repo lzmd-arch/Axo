@@ -1,0 +1,76 @@
+{"id": "q-001", "query": "北岸一号站的采集箱是不是每五分钟推一次数据包？", "category": "name_number", "expect": ["m-0001"], "never": ["m-0002", "m-0003", "m-0004", "m-0005"]}
+{"id": "q-002", "query": "北岸二号站的采集箱是不是每十五分钟推一次数据包？", "category": "name_number", "expect": ["m-0008"], "never": ["m-0006", "m-0007", "m-0009", "m-0010"]}
+{"id": "q-003", "query": "南岸一号站的采集箱是不是每一小时推一次数据包？", "category": "name_number", "expect": ["m-0015"], "never": ["m-0011", "m-0012", "m-0013", "m-0014"]}
+{"id": "q-004", "query": "南岸二号站的采集箱是不是每十分钟推一次数据包？", "category": "name_number", "expect": ["m-0017"], "never": ["m-0016", "m-0018", "m-0019", "m-0020"]}
+{"id": "q-005", "query": "湾口浮标站的采集箱是不是每半小时推一次数据包？", "category": "name_number", "expect": ["m-0024"], "never": ["m-0021", "m-0022", "m-0023", "m-0025"]}
+{"id": "q-006", "query": "北岸一号站的蓄电池的电量低于百分之十五是不是就会告警？", "category": "name_number", "expect": ["m-0027"], "never": ["m-0026", "m-0028", "m-0029", "m-0030"]}
+{"id": "q-007", "query": "北岸二号站的蓄电池的电量低于百分之二十五是不是就会告警？", "category": "name_number", "expect": ["m-0034"], "never": ["m-0031", "m-0032", "m-0033", "m-0035"]}
+{"id": "q-008", "query": "南岸一号站的蓄电池的电量低于百分之十是不是就会告警？", "category": "name_number", "expect": ["m-0036"], "never": ["m-0037", "m-0038", "m-0039", "m-0040"]}
+{"id": "q-009", "query": "南岸二号站的蓄电池的电量低于百分之二十是不是就会告警？", "category": "name_number", "expect": ["m-0043"], "never": ["m-0041", "m-0042", "m-0044", "m-0045"]}
+{"id": "q-010", "query": "湾口浮标站的蓄电池的电量低于百分之三十是不是就会告警？", "category": "name_number", "expect": ["m-0050"], "never": ["m-0046", "m-0047", "m-0048", "m-0049"]}
+{"id": "q-011", "query": "北岸一号站的运行日志是不是保留九十天？", "category": "name_number", "expect": ["m-0053"], "never": ["m-0051", "m-0052", "m-0054", "m-0055"]}
+{"id": "q-012", "query": "北岸二号站的运行日志是不是保留一百八天？", "category": "name_number", "expect": ["m-0060"], "never": ["m-0056", "m-0057", "m-0058", "m-0059"]}
+{"id": "q-013", "query": "南岸一号站的运行日志是不是保留六十天？", "category": "name_number", "expect": ["m-0062"], "never": ["m-0061", "m-0063", "m-0064", "m-0065"]}
+{"id": "q-014", "query": "南岸二号站的运行日志是不是保留一百二天？", "category": "name_number", "expect": ["m-0069"], "never": ["m-0066", "m-0067", "m-0068", "m-0070"]}
+{"id": "q-015", "query": "湾口浮标站的运行日志是不是保留三十天？", "category": "name_number", "expect": ["m-0071"], "never": ["m-0072", "m-0073", "m-0074", "m-0075"]}
+{"id": "q-016", "query": "北岸一号站的盐度探头是不是每季度标定一次？", "category": "name_number", "expect": ["m-0079"], "never": ["m-0076", "m-0077", "m-0078", "m-0080"]}
+{"id": "q-017", "query": "北岸二号站的盐度探头是不是每周标定一次？", "category": "name_number", "expect": ["m-0081"], "never": ["m-0082", "m-0083", "m-0084", "m-0085"]}
+{"id": "q-018", "query": "南岸一号站的盐度探头是不是每月标定一次？", "category": "name_number", "expect": ["m-0088"], "never": ["m-0086", "m-0087", "m-0089", "m-0090"]}
+{"id": "q-019", "query": "南岸二号站的盐度探头是不是每半年标定一次？", "category": "name_number", "expect": ["m-0095"], "never": ["m-0091", "m-0092", "m-0093", "m-0094"]}
+{"id": "q-020", "query": "湾口浮标站的盐度探头是不是每两周标定一次？", "category": "name_number", "expect": ["m-0097"], "never": ["m-0096", "m-0098", "m-0099", "m-0100"]}
+{"id": "q-021", "query": "北岸一号站的链路协议是不是串口？", "category": "name_number", "expect": ["m-0105"], "never": ["m-0101", "m-0102", "m-0103", "m-0104"]}
+{"id": "q-022", "query": "北岸二号站的链路协议是不是HTTP？", "category": "name_number", "expect": ["m-0107"], "never": ["m-0106", "m-0108", "m-0109", "m-0110"]}
+{"id": "q-023", "query": "南岸一号站的链路协议是不是WebSocket？", "category": "name_number", "expect": ["m-0114"], "never": ["m-0111", "m-0112", "m-0113", "m-0115"]}
+{"id": "q-024", "query": "南岸二号站的链路协议是不是MQTT？", "category": "name_number", "expect": ["m-0116"], "never": ["m-0117", "m-0118", "m-0119", "m-0120"]}
+{"id": "q-025", "query": "湾口浮标站的链路协议是不是CoAP？", "category": "name_number", "expect": ["m-0123"], "never": ["m-0121", "m-0122", "m-0124", "m-0125"]}
+{"id": "q-026", "query": "北岸一号站的存储卡是不是十六吉字节？", "category": "name_number", "expect": ["m-0126"], "never": ["m-0127", "m-0128", "m-0129", "m-0130"]}
+{"id": "q-027", "query": "北岸二号站的存储卡是不是六十四吉字节？", "category": "name_number", "expect": ["m-0133"], "never": ["m-0131", "m-0132", "m-0134", "m-0135"]}
+{"id": "q-028", "query": "南岸一号站的存储卡是不是二百五十六吉字节？", "category": "name_number", "expect": ["m-0140"], "never": ["m-0136", "m-0137", "m-0138", "m-0139"]}
+{"id": "q-029", "query": "南岸二号站的存储卡是不是三十二吉字节？", "category": "name_number", "expect": ["m-0142"], "never": ["m-0141", "m-0143", "m-0144", "m-0145"]}
+{"id": "q-030", "query": "湾口浮标站的存储卡是不是一百二十八吉字节？", "category": "name_number", "expect": ["m-0149"], "never": ["m-0146", "m-0147", "m-0148", "m-0150"]}
+{"id": "q-031", "query": "设备的巡检周期是多久？", "category": "exact", "expect": ["m-0163"]}
+{"id": "q-032", "query": "浮标上的航标灯闪光周期是几秒？", "category": "exact", "expect": ["m-0166"]}
+{"id": "q-033", "query": "海流计多久送回厂家检修？", "category": "exact", "expect": ["m-0167"]}
+{"id": "q-034", "query": "雷雨天气要做什么准备？", "category": "exact", "expect": ["m-0168"]}
+{"id": "q-035", "query": "固件升级要挑什么时候做？", "category": "exact", "expect": ["m-0169"]}
+{"id": "q-036", "query": "值班表按几周一轮排？", "category": "exact", "expect": ["m-0170"]}
+{"id": "q-037", "query": "锚链长度是水深的几倍？", "category": "exact", "expect": ["m-0179"]}
+{"id": "q-038", "query": "设备台账记在哪里？", "category": "exact", "expect": ["m-0177"]}
+{"id": "q-039", "query": "机柜温度过高会怎么样？", "category": "distractor_topic", "expect": ["m-0152"], "never": ["m-0151"]}
+{"id": "q-040", "query": "机柜温度过低会怎么样？", "category": "distractor_topic", "expect": ["m-0151"], "never": ["m-0152"]}
+{"id": "q-041", "query": "主链路断了走什么备用方案？", "category": "distractor_topic", "expect": ["m-0154"], "never": ["m-0153"]}
+{"id": "q-042", "query": "每月流量上限是多少？", "category": "distractor_topic", "expect": ["m-0153"], "never": ["m-0154"]}
+{"id": "q-043", "query": "风速计结冰了怎么办？", "category": "distractor_topic", "expect": ["m-0156"], "never": ["m-0155"]}
+{"id": "q-044", "query": "风速计的量程到多少？", "category": "distractor_topic", "expect": ["m-0155"], "never": ["m-0156"]}
+{"id": "q-045", "query": "水温传感器的精度到多少？", "category": "distractor_topic", "expect": ["m-0157"], "never": ["m-0158"]}
+{"id": "q-046", "query": "气温传感器的精度到多少？", "category": "distractor_topic", "expect": ["m-0158"], "never": ["m-0157"]}
+{"id": "q-047", "query": "库里有没有提到企鹅栖息地？", "category": "no_answer", "expect": []}
+{"id": "q-048", "query": "有没有关于火山监测的记录？", "category": "no_answer", "expect": []}
+{"id": "q-049", "query": "站点用过柴油发电机吗？", "category": "no_answer", "expect": []}
+{"id": "q-050", "query": "有没有记录过赤潮发生的日期？", "category": "no_answer", "expect": []}
+{"id": "q-051", "query": "设备的采购预算是多少？", "category": "no_answer", "expect": []}
+{"id": "q-052", "query": "有没有提到过卫星遥感影像？", "category": "no_answer", "expect": []}
+{"id": "q-053", "query": "有没有关于海底光缆的记录？", "category": "no_answer", "expect": []}
+{"id": "q-054", "query": "站上养过狗吗？", "category": "no_answer", "expect": []}
+{"id": "q-055", "query": "数据存在哪里？", "category": "redundant_pair", "expect": ["m-0171"], "optional": ["m-0172"], "budget": 400}
+{"id": "q-056", "query": "数据库什么时候备份？", "category": "redundant_pair", "expect": ["m-0173"], "optional": ["m-0174"], "budget": 400}
+{"id": "q-057", "query": "告警短信有什么限制？", "category": "redundant_pair", "expect": ["m-0175"], "optional": ["m-0176"], "budget": 400}
+{"id": "q-058", "query": "设备清单放在哪？", "category": "redundant_pair", "expect": ["m-0178"], "optional": ["m-0177"], "budget": 400}
+{"id": "q-059", "query": "台账改动会留痕吗？", "category": "redundant_pair", "expect": ["m-0177"], "optional": ["m-0178"], "budget": 400}
+{"id": "q-060", "query": "站房为什么会渗水？", "category": "budget", "expect": ["m-0161"], "optional": ["m-0162"], "budget": 45}
+{"id": "q-061", "query": "巡检具体看哪些东西？", "category": "budget", "expect": ["m-0165"], "optional": ["m-0164"], "budget": 45}
+{"id": "q-062", "query": "锚链怎么配？", "category": "budget", "expect": ["m-0180"], "optional": ["m-0179"], "budget": 45}
+{"id": "q-063", "query": "台风来了浮标怎么办？", "category": "budget", "expect": ["m-0182"], "optional": ["m-0181"], "budget": 45}
+{"id": "q-064", "query": "备份文件放在哪？", "category": "budget", "expect": ["m-0173"], "optional": ["m-0174"], "budget": 45}
+{"id": "q-065", "query": "你们把采到的东西搁在什么地方？", "category": "paraphrase", "expect": ["m-0183"]}
+{"id": "q-066", "query": "坏天气来了怎么办？", "category": "paraphrase", "expect": ["m-0184"]}
+{"id": "q-067", "query": "网断了会不会丢数？", "category": "paraphrase", "expect": ["m-0185"]}
+{"id": "q-068", "query": "新改动多久能上线？", "category": "paraphrase", "expect": ["m-0186"]}
+{"id": "q-069", "query": "出故障了谁会发现？", "category": "paraphrase", "expect": ["m-0187"]}
+{"id": "q-070", "query": "早期试点的站点数据还能查到吗？", "category": "cold_twin", "expect": ["m-0193"]}
+{"id": "q-071", "query": "最早那版固件的说明文档在哪？", "category": "cold_twin", "expect": ["m-0194"]}
+{"id": "q-072", "query": "观测点一共分布在哪些地方？", "category": "pinned_twin", "expect": ["m-0159"]}
+{"id": "q-073", "query": "回答风格是怎么要求的？", "category": "pinned_twin", "expect": ["m-0160"]}
+{"id": "q-074", "query": "采样间隔最后定成多少了？", "category": "session_exclude", "expect": ["m-0199"], "exclude": ["m-0197"]}
+{"id": "q-075", "query": "标定最后定的是几点法？", "category": "session_exclude", "expect": ["m-0200"], "exclude": ["m-0198"]}
+{"id": "q-076", "query": "上一次会话说的标定方法现在还算数吗？", "category": "session_exclude", "expect": ["m-0200"], "exclude": ["m-0198"]}

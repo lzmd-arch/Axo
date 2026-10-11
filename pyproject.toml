@@ -1,0 +1,139 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "biosnn-memterm"
+version = "0.1.0"
+description = "BioSNN 记忆终端：把长期记忆与性格放在终端侧，独立于所调用的大模型"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+keywords = ["spiking-neural-network", "long-term-memory", "llm", "desktop", "sdr", "hebbian"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# 核心依赖只有两个，这是硬约束：memcore 不许 import 这两个之外的任何东西
+# （由 tests/test_layering.py 用 ast 遍历 import 语句强制）。Qt、HTTP 客户端、
+# torch 全部走 extras —— 理由与 BioSNN-Plug ADR-0002 和气体插件仓同源：
+# 一份召回基准测试不该需要装 Qt 才能跑。
+dependencies = [
+  # 骨架库走 PyPI 而非 workspace 路径。本仓是仓库外独立包（见计划书与 ADR-0011
+  # 的先例），semver 是唯一的兼容性保护；骨架库当前 0.x，钉住 <0.2。
+  "biosnn-bus>=0.1.0,<0.2",
+  "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+# 桌面应用层：PySide6 的 wheel 声明的许可是
+# `LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only`——**三选一，不是一个**，本项目按
+# LGPL-3.0 那一支使用。随产物发出去就得履行 LGPLv3 的义务：附全文（licenses/）、
+# onedir 下 Qt 的 DLL 是独立文件可替换、给出 Qt 源码的取得地址。三件事都写在
+# THIRD-PARTY-NOTICES.md 里。不用 PyQt6：它只有 GPL-3.0 与商业授权两条路，没有
+# LGPL 那一支可选。
+# QtWebEngineWidgets 承载对话区（markdown 流式 + 预留 Live2D），
+# QtWebChannel 做 Python↔JS 桥，不用起本地 HTTP 服务器。
+app = ["PySide6>=6.7"]
+# 本地推理客户端。Ollama 走 HTTP；云端走 OpenAI 兼容端点，同一个协议。
+llm = ["httpx>=0.27"]
+# 打包（P6a 起用；构建入口是 tools/build_exe.py）。装它要跑 `uv sync --all-extras`
+# 而不是 `--extra pack`：uv sync 是精确同步，只给 pack 会把 PySide6 与 httpx 摘掉。
+pack = ["pyinstaller>=6.0"]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0",
+  "pytest-cov>=6.0",
+  "ruff>=0.9",
+  # 放进 dev 组而不是 uvx：pre-commit install 写进 .git/hooks 的那段脚本会记住
+  # 安装它时用的解释器路径，而 uvx 的临时环境会被回收——钩子随后就找不到自己。
+  "pre-commit>=4.0",
+  # Qt 测试。offscreen 平台下跑，CI 无需显示器。
+  "pytest-qt>=4.4",
+  "PySide6>=6.7",
+  "httpx>=0.27",
+]
+
+[project.urls]
+Repository = "https://github.com/lzmd-arch/BioSNN-MemoryTerminal"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/memcore", "src/biosnn_memterm"]
+
+[tool.hatch.build.targets.sdist]
+# benchmarks/ 进 sdist 而不进 wheel：语料是"从源码检出跑"的资产，CLI 与测试都按仓库
+# 相对路径找它。**P6a 没有把这个问题答了**——它冻结的是 exe（见 tools/build_exe.py），
+# 产物里不带 benchmarks/，而"wheel 要不要带语料"是另一件事，仍然开着（届时
+# default_gold_dir() 得能处理安装态）。
+include = ["src/", "tests/", "tools/", "benchmarks/", "README.md", "LICENSE"]
+
+# ── PyTorch 不进本仓 ────────────────────────────────────────────────────────
+# 记忆核心是纯 numpy 的。P2 的神经元级基质用 numpy 稠密矩阵（4096² float32
+# 约 67MB，matvec 约 2ms），不需要 torch；真要 GPU 加速时再按 BioSNN-Plug
+# 与气体仓的写法加 torch extra 并按平台换源。
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# --strict-markers：写错的 @pytest.mark 会被当成"无此标记"直接报错，而不是
+# 静默地什么也不做（比如 gui 测试忘了排除、被当成核心腿跑）。
+#
+# **不加 --strict-config**：下面的 qt_api 是 pytest-qt 注册的 ini 键，而
+# pytest-qt 随 PySide6 一起在 dev 组里。一旦在没装它的环境跑 pytest（正是本仓
+# "核心腿不该需要 Qt"那条承诺），--strict-config 会因为未知键直接失败——恰好
+# 打脸那条承诺。
+#
+# 这个"没装它的环境"现在不只是假设：核心腿的那些命令都带 `-p no:pytest-qt`
+# （见 tools/ci_local.py 与 .github/workflows/ci.yml），在那些命令下 qt_api
+# **确实**是个未知键——现在 CI 的测试腿末尾就挂着一行
+# `799 passed, 1 warning`，那一条警告是 `Unknown config option: qt_api`。
+# 它是无害的（配置没生效，因为插件根本没加载）；加了 --strict-config 会让它变成
+# 错误，CI 上四条腿一起红。
+addopts = "-q --strict-markers"
+# Qt 测试走 offscreen，CI 与无显示环境都能跑。WebEngine 也需要它。
+qt_api = "pyside6"
+markers = [
+  "gui: 需要 PySide6，核心腿用 --ignore 排除（与气体仓的分腿纪律一致）",
+  "slow: 基准与容量扫描",
+]
+
+[tool.coverage.run]
+source = ["memcore", "biosnn_memterm"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RET", "ARG", "PTH"]
+ignore = [
+  # 中文注释里全角标点很常见，行宽交给 formatter
+  "E501",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ARG001", "ARG002"]
+# tools：基准脚本就是要 print；冒烟脚本里的替身方法必须与真件同签名，
+# 参数用不上是必然的，不是疏漏。ARG001 与 ARG002 分别是"普通函数"与"方法"的
+# 同一个规则——探针的工具实现是普通函数（``_run_get_time(arguments, store)``），
+# 而它必须与派发处的统一签名一致：``get_time`` 用不上 ``arguments``/``store``
+# 是它的定义决定的，不是漏写。
+"tools/*" = ["T201", "ARG001", "ARG002"]
+# 工具目录：``Tool.run(self, arguments, ctx)`` 是注册表派发处的**统一签名**，派发口
+# 按位置传参。``get_time`` 用不上 ``arguments`` 是它的定义决定的，不是漏写；而把参数
+# 改名成 ``_arguments`` 会让七个工具的实现看上去来自两套约定——那个不一致本身
+# 比 ARG002 更难读。上一段的 ``tools/*`` 里有同一条推理。
+"src/biosnn_memterm/agent/catalog.py" = ["ARG002"]
+# PTH111（"``os.path.expanduser`` 换成 ``Path.expanduser``"）在这一处**是错的建议**：
+# ``_as_path_list`` 要判的是"用户写下时可读目录是不是绝对路径"，而那必须判**原文**——
+# ``Path.expanduser()`` 会连分隔符一起归一化（Windows 上 ``Path("/home/notes")`` 变成
+# ``\home\notes``），于是"写下时的形状"没了，POSIX 形状的条目在本机照样被丢掉。这条
+# 建议在其它文件里仍然管用，所以只在这一处豁免。理由的展开写在
+# ``settings_store.py::_is_absolute_anywhere`` 的 docstring 里。
+"src/biosnn_memterm/ui/settings_store.py" = ["PTH111"]

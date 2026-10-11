@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "memories": {
+    "count": 200,
+    "sha256": "69ca657ee25337575ee6324acc2675238f3717b86ef5063e91614c4e2ee3d850"
+  },
+  "queries": {
+    "count": 76,
+    "sha256": "697cb4f75f7a0df2aca8bc7cf76197b724cbd4a963f3a0cde46d017565eb7cf2"
+  },
+  "categories": {
+    "name_number": 30,
+    "exact": 8,
+    "distractor_topic": 8,
+    "no_answer": 8,
+    "redundant_pair": 5,
+    "budget": 5,
+    "paraphrase": 5,
+    "cold_twin": 2,
+    "pinned_twin": 2,
+    "session_exclude": 3
+  }
+}

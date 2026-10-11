@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "corpus": {
+    "schema_version": 1,
+    "memories": {
+      "count": 200,
+      "sha256": "53cb8192fbf2ebcd99a704501c06331decba2da6b87bae8132b33a2c6ae7acdf"
+    },
+    "queries": {
+      "count": 40,
+      "sha256": "730eafe60f1f8cefbbd68ca8e5b49e71c121e08f903a11ea6eb83292c066cea9"
+    },
+    "clusters": {
+      "commute": 20,
+      "course": 20,
+      "invoice": 20,
+      "kitchen": 20,
+      "medication": 20,
+      "network": 20,
+      "photo": 20,
+      "plant": 20,
+      "project": 20,
+      "water": 20
+    }
+  },
+  "config": {
+    "assoc": "hash",
+    "k": 64,
+    "scale": 200,
+    "drop": 0.5,
+    "probes": 200,
+    "top_m": 8,
+    "min_weight": 0.1,
+    "decay": 0.5
+  },
+  "nodes": 200.0,
+  "edges": 1600.0,
+  "neighbors": {
+    "edge_same": 485.0,
+    "edge_diff": 260.0,
+    "orphan_nodes": 18.0,
+    "neighbor_auc": 0.7083346550356859,
+    "neighbor_precision@m": 0.6510067114093959
+  },
+  "completion": {
+    "n_probes": 200.0,
+    "completion_top1": 0.025,
+    "completion_top5": 0.19,
+    "confusion_rate": 0.975
+  },
+  "graph_hit": {
+    "n_queries": 40.0,
+    "lexical_hit@1": 0.85,
+    "lexical_hit@8": 1.0,
+    "lexical_mrr": 0.9020833333333333,
+    "graph_hit@1": 0.825,
+    "graph_hit@8": 1.0,
+    "graph_mrr": 0.8883333333333333
+  },
+  "metrics": {
+    "neighbor_auc": 0.7083346550356859,
+    "completion_top1": 0.025
+  },
+  "sweeps": {},
+  "structural_violations": [],
+  "tolerance": {
+    "neighbor_auc": 0.02,
+    "completion_top1": 0.05
+  },
+  "frozen_at": "2026-10-10T19:58:01Z",
+  "note": "这是**实测值，不是目标值**（先跑后填）。门槛 = 本文件的值 ± tolerance，方向见 biosnn_memterm.bench.substrate.GATED（两项都是越大越好）。**门槛只绑默认档**（assoc=hash、k=ASSOC_K、scale=语料条数）：扫描出来的那几行是用来裁决参数该取多少的，冻住其中一个等于把待决问题伪装成已决问题。改语料要同时改 freeze.json 并重跑 --freeze。graph_hit@* 刻意不进门槛——它回答的是「第三通道该不该上」，而那还没有裁决。"
+}

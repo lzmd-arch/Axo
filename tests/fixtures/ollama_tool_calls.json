@@ -1,0 +1,106 @@
+{
+  "provenance": {
+    "captured": "2026-10-10",
+    "model": "qwen3-4b:latest",
+    "ollama": "0.40.2",
+    "via": "tools/smoke_agent.py --dump（默认 think=False）",
+    "note": "真实 Ollama /api/chat 的响应片，从一次四探针全绿的运行里截出来。只删掉随机器与时钟变化的字段（created_at / *_duration / *_count），message 一字节未改。三条要点在这份字节里都能直接看到：tool_calls 与 done:true 在**同一片**到达（不分片）；没有 type:'function' 外壳；function.arguments 是**对象**不是 JSON 字符串。",
+    "regenerate": "uv run python tools/smoke_agent.py qwen3-4b --dump tools/_probe_raw.jsonl"
+  },
+  "events": [
+    {
+      "probe": "单工具·时间",
+      "chunk": {
+        "model": "qwen3-4b:latest",
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "8sSSa6VfvbBPBtwCYGmg7z44OuPBOJW1",
+              "function": {
+                "index": 0,
+                "name": "get_time",
+                "arguments": {}
+              }
+            }
+          ]
+        },
+        "done": true,
+        "done_reason": "stop"
+      }
+    },
+    {
+      "probe": "单工具·检索",
+      "chunk": {
+        "model": "qwen3-4b:latest",
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "juQeMrHpTVd8NjwxEgmsMYwFDoM4aQ9P",
+              "function": {
+                "index": 0,
+                "name": "search_memory",
+                "arguments": {
+                  "query": "备用钥匙"
+                }
+              }
+            }
+          ]
+        },
+        "done": true,
+        "done_reason": "stop"
+      }
+    },
+    {
+      "probe": "多步·先查再写",
+      "chunk": {
+        "model": "qwen3-4b:latest",
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "f7XWuXpGOEVIDp8PpzcfriQ9Po2IvXZs",
+              "function": {
+                "index": 0,
+                "name": "search_memory",
+                "arguments": {
+                  "query": "面馆休息日"
+                }
+              }
+            }
+          ]
+        },
+        "done": true,
+        "done_reason": "stop"
+      }
+    },
+    {
+      "probe": "多步·先查再写",
+      "chunk": {
+        "model": "qwen3-4b:latest",
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "pqG8ZknseLNcsvXaKFGcljYXzNZnj5F7",
+              "function": {
+                "index": 0,
+                "name": "write_memory",
+                "arguments": {
+                  "content": "常去的那家面馆周一休息。"
+                }
+              }
+            }
+          ]
+        },
+        "done": true,
+        "done_reason": "stop"
+      }
+    }
+  ]
+}

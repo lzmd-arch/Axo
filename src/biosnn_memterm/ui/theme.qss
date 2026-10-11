@@ -1,0 +1,493 @@
+/* Qt 外壳的样式表模板。
+ *
+ * 占位符是「美元符号 + 名字」形式，由 ``theme.build_qss()`` 用
+ * ``string.Template`` 替换（**不是** ``str.format``——QSS 本身满地 ``{}``，
+ * format 会把它们全吃掉）。可用名字见 ``theme._substitutions()``。
+ *
+ * **本文件里不许出现落单的美元符号，注释里也不行。** ``Template`` 不认识 QSS
+ * 的注释语法，它替换任意位置出现的占位符；写一个没有对应值的名字会让
+ * ``substitute`` 当场抛 ``KeyError``。这是故意的——模板与代码脱节的症状本来
+ * 就是"某条规则静默不生效"，让它抛比让它静默好。（写这条注释的时候正是被它
+ * 炸了一次：解释语法的例句本身就是一个非法占位符。）
+ *
+ * **这里只写"画成什么样"，不写"什么时候变"。** 主题切换靠重新生成整张表，
+ * 不做运行时的规则增删。
+ *
+ * 三条刻意不碰的东西，理由都不是偷懒：
+ *
+ * 1. **不做滚动条、下拉箭头、勾选框指示器。** 这三样是 Fusion 用 QPalette 画的，
+ *    只要 ``theme_qt.build_palette()`` 给对了底色它们就是对的；手写这三样是 QSS
+ *    最容易做丑的地方，且丑得不明显——要等有人滚动才发现。
+ * 2. **不设 font-family。** 中文字形靠 Qt 的字体回退链，钉死一个族名会把回退
+ *    打断，结果是"英文好看、中文变宋体"。
+ * 3. **不碰本仓唯一的控件级样式表。** ``main_window._show_context`` 给
+ *    ``#contextBar`` 写的是控件级 ``QProgressBar::chunk``（那是**语义交通灯**，
+ *    红黄绿不该随主色变）。已实测：控件级样式表**不会**顶掉应用级的槽底规则，
+ *    两边共存，所以这里的 ``background`` 只管槽。
+ */
+
+/* ── 底：窗口与面板 ────────────────────────────────────────── */
+
+QMainWindow,
+QDialog {
+    background: $bg;
+}
+
+/* 顶栏与指示灯条拼成一条 58 像素的横带，所以只有下面那条边线——
+ * 各画一条会得到一条夹在中间的双线。 */
+QFrame#header,
+QFrame#contextStrip {
+    background: $bgElevated;
+    border: none;
+    border-bottom: 1px solid $border;
+}
+
+/* 三个面板容器本身不画底：底色由窗口出，面板只负责排布。
+ * 给它们实底色会让 splitter 的拖动缝隙变成一道白线。 */
+QFrame#sessionPane,
+QFrame#ledgerPane,
+QFrame#memoryListPane {
+    background: transparent;
+    border: none;
+}
+
+QLabel {
+    color: $fg;
+    background: transparent;
+}
+
+QLabel#paneTitle {
+    color: $fgMuted;
+    font-weight: 600;
+}
+
+QLabel#contextLabel {
+    color: $fgMuted;
+}
+
+QLabel#memoryCount,
+QLabel#memoryMessage {
+    color: $fgMuted;
+}
+
+/* ── 顶栏状态灯 ────────────────────────────────────────────── */
+
+/* ``_set_backend_up`` / ``_set_backend_down`` 一直在写 ``state`` 属性并调
+ * ``_restyle()``，但在这张表之前**没有任何选择器读它**——那两处代码因此是
+ * 装饰性的。这几条让它们从此真的有用。
+ *
+ * ok 用正文色而不是绿色：这个位置要回答的是"后端在不在"，"在"是常态、不该
+ * 抢注意力；而"不在"必须抢。 */
+QLabel#status {
+    color: $fgMuted;
+}
+
+QLabel#status[state="ok"] {
+    color: $fg;
+}
+
+QLabel#status[state="error"] {
+    color: $danger;
+}
+
+/* ── 上下文指示灯 ──────────────────────────────────────────── */
+
+/* 只管槽。填充色由 ``_show_context`` 的控件级样式表给，见文件头第 3 条。 */
+QProgressBar#contextBar {
+    background: $bgSunken;
+    border: none;
+    border-radius: 3px;
+}
+
+/* ── 输入与文本区 ──────────────────────────────────────────── */
+
+QLineEdit,
+QComboBox,
+QSpinBox {
+    background: $bgSunken;
+    border: 1px solid $border;
+    border-radius: 6px;
+    padding: 4px 8px;
+    color: $fg;
+    selection-background-color: $accent;
+    selection-color: $accentFg;
+}
+
+/* 下拉箭头是 Fusion 用调色板画的，所以这里要给够它占的宽度，
+ * 否则文字会压到箭头上。不设 ``::down-arrow``——设了就得自备图片，
+ * 而自备图片在换了 DPI 之后会糊。 */
+QComboBox {
+    padding-right: 20px;
+}
+
+QLineEdit:focus,
+QComboBox:focus,
+QSpinBox:focus {
+    border-color: $accent;
+}
+
+QLineEdit:disabled,
+QComboBox:disabled,
+QSpinBox:disabled {
+    color: $fgMuted;
+    background: $bg;
+}
+
+QTextBrowser {
+    background: $bgSunken;
+    border: 1px solid $border;
+    border-radius: 6px;
+    padding: 6px;
+    color: $fg;
+    selection-background-color: $accent;
+    selection-color: $accentFg;
+}
+
+/* 还欠着的是「SNN 热度」那一块（P4c）。它是常驻说明，不是内容，用沉一点的底
+ * 把它与上面的详情正文区分开，免得被读成"这条记忆的属性"。
+ *
+ * 联想那两块**不再**在这里：邻居列表已经是真数据（有边权、有点得动的行），
+ * 走下面通用的 QListWidget 样式；它上面那行顶栏是状态句，按 hint 处理。 */
+QTextBrowser#memoryPending {
+    background: $bg;
+    color: $fgMuted;
+}
+
+/* 邻居面板的顶栏：它说的是"这份图什么状态"，不是某条记忆的属性。
+ * 用灰字，与列表里的真数据（边权、权重）分开——那一栏里出现数字是**对的**，
+ * 这一行里出现数字就得怀疑是不是编的。 */
+QLabel#memoryAssocNote {
+    color: $fgMuted;
+}
+
+/* ── 列表 ──────────────────────────────────────────────────── */
+
+QListWidget {
+    background: $bgSunken;
+    border: 1px solid $border;
+    border-radius: 6px;
+    padding: 4px;
+    color: $fg;
+    outline: none;
+}
+
+QListWidget::item {
+    padding: 6px 8px;
+    border-radius: 4px;
+    color: $fg;
+}
+
+QListWidget::item:hover {
+    background: $accentSoft;
+}
+
+QListWidget::item:selected {
+    background: $accentSoft;
+    color: $fgStrong;
+}
+
+/* 会话列表的两行式由 ``widgets.SessionItemDelegate`` 全权绘制，所以这里把通用
+ * 规则给的 item 内边距**收回**。理由：QSS 的 ``padding`` 与自绘 delegate 对
+ * "内容区从哪开始"的理解不是同一套（前者缩的是子控件矩形，后者的 ``paint`` 拿到
+ * 的是完整 ``option.rect``），两边各缩一次的结果是行高与文字基线对不上——而
+ * 那种错位看起来像是字体坏了，查不到这里。**几何归 delegate，颜色归样式表。** */
+QListWidget#sessionList::item {
+    padding: 0;
+}
+
+/* ── 按钮 ──────────────────────────────────────────────────── */
+
+/* 磨砂玻璃（iOS 风）。
+ *
+ * **这一侧是"拟态"，不是真模糊。** 窗口的底色是不透明的（见上面 QMainWindow /
+ * QDialog 那条），壁纸只画在 QtWebEngine 页面里，而 QSS **没有 blur、没有
+ * box-shadow**。所以这里能做的只有四件：半透明填充、纵向渐变、**四条边分成
+ * 亮顶与暗底**、一道大圆角。「光从上打下来」这个观感靠的正是第三条——网页侧
+ * 才是真 ``backdrop-filter``（那边背后真有壁纸），这条不对称是有意的。
+ *
+ * **四件里最要紧的是那对边。** 只给填充加一道均匀描边时，按钮读起来是"一块
+ * 浅一点的圆角矩形"，不是玻璃；上下两条亮度不同的边才把它变成"一块有厚度的
+ * 东西"——顶边是光，底边是它贴着的影子。所以下面**不写 `border-color` 简写**：
+ * 顶底各写一条。写成简写会把四边一起抹平，而那种失效在屏幕上只是"看着有点
+ * 平"，查不回来。
+ *
+ * **填充与边用的不是同一支颜色。** 填充取 ``tokens.fg_strong``（暗态白、亮态
+ * 黑），它要的是"离开背景"的方向，那个方向随明暗反转；边取的是**该模式下最亮
+ * 与最暗的那两个 token**，因为光就是白的、影子就是黑的，不随主题反转。两处都
+ * 只有一个 alpha 表按明暗分列。**这里不写任何色值**——写了就会在另一侧主题下
+ * 静默用错，而那种错看起来只是"颜色有点怪"。
+ *
+ * **哪些是边、哪些是填充，见 ``theme._substitutions``**：八个 glass 占位符的值
+ * 都在那里算，这个文件只负责把它们摆在正确的位置上。
+ *
+ * 圆角与内边距同时从 6px/5px 放大到 10px/6px：玻璃感靠"厚"读出来，薄薄一片
+ * 半透明只会像没画完。 */
+QPushButton {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 $glassTop, stop:1 $glassBottom);
+    border: 1px solid $glassLine;
+    border-top-color: $glassLineTop;
+    border-bottom-color: $glassLineBottom;
+    border-radius: 10px;
+    padding: 6px 14px;
+    color: $fg;
+}
+
+/* 悬停**只换填充，不碰那对边**——边是"材质"，材质不跟着鼠标变。反馈由填充
+ * 变亮（暗态）或变暗（亮态）给出，哪个方向见 ``_GlassAlphas``。 */
+QPushButton:hover {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 $glassTopHover, stop:1 $glassBottomHover);
+}
+
+/* 按下态换成一个**不透明**的下沉色，见 ``_substitutions`` 里 "glassPressed"
+ * 那一格的说明：高光是"变亮"，而按下去只能靠变暗表达，两个方向凑不到一起。
+ *
+ * 这一条**要把那对边一并抹平**（用 ``border-color`` 简写）：一块已经凹下去的底
+ * 还顶着一条亮顶边，读起来是"浮着"，与"按下去了"正好相反。 */
+QPushButton:pressed {
+    background: $glassPressed;
+    border-color: $glassLine;
+}
+
+/* 禁用态**退出磨砂那套**：一块半透明的、还带高光的按钮，看起来像"可以点"。
+ * 这一条也顺带把那组 glass 占位符的适用范围钉死——它们只管"活着"的按钮。 */
+QPushButton:disabled {
+    background: $bg;
+    border-color: $border;
+    color: $fgMuted;
+}
+
+QPushButton:checked {
+    background: $accentSoft;
+    border-color: $accent;
+    color: $fgStrong;
+}
+
+/* 主按钮：「＋ 新会话」。整个外壳里只有它用实心主色，所以主色在外壳上
+ * 有一个明确的落点，而不是只活在列表选中行和网页里。
+ *
+ * **它是磨砂那套的第一个例外**：不变成无色玻璃，只把实心色换成一道纵向渐变。
+ * 主色在外壳上只有一个落点，让它变成半透明的就等于把这个落点删了。
+ *
+ * 渐变的**方向必须随明暗翻**，所以两头走 ``$accentTop`` / ``$accentBottom``
+ * 而不是直接写 ``$accentHover`` / ``$accent``：``accentHover`` 是"离背景更远"
+ * 的那一支，而"更远"在暗态是更亮、在亮态是更暗。写死一个顺序的话，亮色模式下
+ * 主按钮就是"光从下面打上来"，与旁边那些玻璃按钮的受光方向正好相反。
+ *
+ * **它照旧吃那道斜边**——这一条曾经是不成立的。斜边一度从 ``fg_strong`` 兑
+ * alpha，而亮态的 ``fg_strong`` 是黑，落在主色上就是一条更暗的顶边，所以那时
+ * 这里单独用 ``border-color`` 把四边抹平。边改成"该模式下最亮/最暗的那两个
+ * token"之后（见 ``theme._GLASS_EDGE_TOKENS``），白色在两种模式下都是亮的那
+ * 一支，主色上的高光也就成立了。所以这里**一个字都不用写**：不写 ``border-color``，
+ * 它就从上面通用那条继承到那对边——不写即是吃。 */
+QPushButton[kind="primary"] {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 $accentTop, stop:1 $accentBottom);
+    color: $accentFg;
+}
+
+/* 悬停同样**只换填充**（与通用那条一个规矩）：底不用渐变而直接换成
+ * ``$accentHover``，是因为主色只有一支"更远"的色，没有第二个端点可插值。 */
+QPushButton[kind="primary"]:hover {
+    background: $accentHover;
+}
+
+QPushButton[kind="primary"]:pressed {
+    background: $accentPressed;
+    border-color: $accentPressed;
+}
+
+QPushButton[kind="primary"]:disabled {
+    background: $accentDisabled;
+    border-color: $accentDisabled;
+    color: $fgMuted;
+}
+
+/* 危险按钮：「彻底删除」。**常态只染文字不填底**——它旁边就是「编辑正文」，
+ * 填了底的破坏性按钮会变成那一排里最显眼的，而它恰恰是最不该被顺手点的。
+ *
+ * **它是磨砂那套的第二个例外，而且是"什么都不用写"的那种**：这里只改 ``color``，
+ * 于是它照旧从上面的通用规则拿到那层玻璃底——那正是这条注释要的"不填**危险色**的
+ * 底"。别顺手给它补一句 ``background: $danger``，那会把这一整段的意思反过来。
+ *
+ * 悬停时那道**斜边是有意抹平的**（``border-color`` 简写，四边同染危险色）：它要
+ * 说的事情与旁边那些玻璃按钮不同——不是"这块亮了"，是"这一下会删东西"，而四边
+ * 等重的描边正是"这是一圈警戒线"的样子。这一条是磨砂进来之后才有的效果，写下来
+ * 免得被当成漏改。 */
+QPushButton[kind="danger"] {
+    color: $danger;
+}
+
+QPushButton[kind="danger"]:hover {
+    border-color: $danger;
+    color: $danger;
+}
+
+QPushButton[kind="danger"]:disabled {
+    color: $fgMuted;
+}
+
+QToolButton {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 4px 8px;
+    color: $fg;
+}
+
+QToolButton:hover {
+    background: $accentSoft;
+    border-color: $border;
+}
+
+QToolButton:pressed,
+QToolButton:checked {
+    background: $accentSoft;
+    border-color: $accent;
+}
+
+QToolButton:disabled {
+    color: $fgMuted;
+}
+
+QCheckBox {
+    color: $fg;
+    spacing: 6px;
+    background: transparent;
+}
+
+QCheckBox:disabled {
+    color: $fgMuted;
+}
+
+/* ── 设置窗口的控件 ────────────────────────────────────────── */
+
+/* 分类列（左）与页（右）之间只隔一条竖线，所以列表自己要**退出**通用 QListWidget
+ * 规则：那条规则给的是「下沉的底 + 四边圆角边框」，画在这里会变成"窗口里嵌了
+ * 一个小框"，而它其实是一条侧边导航。 */
+QListWidget#settingsCategories {
+    background: $bg;
+    border: none;
+    border-right: 1px solid $border;
+    border-radius: 0;
+    padding: 6px 0;
+}
+
+/* 左边那道 2 像素的竖条是"我在哪一页"的第二重提示（第一重是底色）。
+ * **未选中时也留着一条透明的**：只给选中态设 border-left 的话，选中会把内容
+ * 整体右推 2 像素——一次点击让文字轻微一跳，说不清哪里不对但看着就是不舒服。
+ *
+ * **纵向内边距在代码里，不在这里。** 建 item 时给了显式的 sizeHint
+ * （`settings_dialog._CATEGORY_PAD_Y`），与 `#sessionList` 那条「几何归 delegate、
+ * 颜色归样式表」同一个理由：QSS 的 padding 与布局各自算一遍"这一行多高"，
+ * 两边就可能对不上——曾经出现过"行距 16 像素、高亮带 32 像素"的画面。 */
+QListWidget#settingsCategories::item {
+    padding: 0 12px;
+    border-radius: 0;
+    border-left: 2px solid transparent;
+    color: $fgMuted;
+}
+
+QListWidget#settingsCategories::item:hover {
+    background: $accentSoft;
+    color: $fg;
+}
+
+QListWidget#settingsCategories::item:selected {
+    background: $accentSoft;
+    border-left: 2px solid $accent;
+    color: $fgStrong;
+}
+
+QFrame#settingsFooter {
+    background: $bgElevated;
+    border: none;
+    border-top: 1px solid $border;
+}
+
+/* 分节标题与说明文字。**这里只改颜色与字重，不设 font-size。**
+ * QSS 的 px 尺寸不受系统的 DPI 缩放影响（`pt` 才是），在 200% 缩放的屏上会比
+ * 正文小一半——而"把说明写得比正文小一号"是这组规则唯一的动机，不值得用
+ * 高 DPI 下的可读性去换。层次由 `$fgMuted` 拉开。 */
+QLabel#sectionTitle {
+    color: $fgStrong;
+    font-weight: 600;
+}
+
+QLabel#hint,
+QLabel#accentNote,
+QLabel#wallpaperName,
+QLabel#backendNote,
+QLabel#toolNote {
+    color: $fgMuted;
+}
+
+/* 「这一条几乎等于整个盘」。**只在这句话真有内容时才画出来**——与下面那句
+ * remoteWarning 不同，它不是一件"总要能读"的代价说明，而是对刚刚那一次点击的
+ * 直接回应，所以常态空着、出现即告警。 */
+QLabel#toolWide {
+    color: $danger;
+}
+
+/* 「允许远程主机」那句代价说明。**不勾时也要能读**——用户得先知道代价才能决定
+ * 要不要勾。所以常态是次要色，勾上之后才转成告警色，而不是常态隐藏。 */
+QLabel#remoteWarning {
+    color: $fgMuted;
+}
+
+QLabel#remoteWarning[armed="yes"] {
+    color: $danger;
+}
+
+QGroupBox {
+    border: 1px solid $border;
+    border-radius: 6px;
+    margin-top: 12px;
+    padding-top: 8px;
+    color: $fg;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 4px;
+    color: $fgMuted;
+}
+
+QSlider::groove:horizontal {
+    height: 4px;
+    background: $bgSunken;
+    border-radius: 2px;
+}
+
+QSlider::sub-page:horizontal {
+    background: $accent;
+    border-radius: 2px;
+}
+
+QSlider::handle:horizontal {
+    width: 14px;
+    margin: -6px 0;
+    border-radius: 7px;
+    background: $accent;
+    border: 2px solid $bgElevated;
+}
+
+QSlider::handle:horizontal:disabled {
+    background: $accentDisabled;
+}
+
+/* ── 分隔条 ────────────────────────────────────────────────── */
+
+QSplitter::handle {
+    background: $border;
+}
+
+QSplitter::handle:horizontal {
+    width: 2px;
+}
+
+QSplitter::handle:hover {
+    background: $accent;
+}

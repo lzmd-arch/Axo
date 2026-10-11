@@ -1,0 +1,202 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # 缓存与工作目录不在同一文件系统时，硬链接会失败并刷一屏警告
+  UV_LINK_MODE: copy
+
+jobs:
+  # ── 风格 ────────────────────────────────────────────────────────────────────
+  lint:
+    name: ruff（check + format）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run ruff check --output-format=github .
+      - run: uv run ruff format --check .
+
+  # ── 核心腿 ──────────────────────────────────────────────────────────────────
+  # 3.10 那一腿是 pyproject 里 `requires-python = ">=3.10"` 那句对外的声明的实际
+  # 覆盖。没有它，改下限时没有任何一处会红。
+  test:
+    name: pytest（Python ${{ matrix.python-version }}）
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - run: uv sync --locked
+      - name: 跑核心腿（排除 gui）
+        # gui 测试要 PySide6 和一个 Qt 平台插件（offscreen），144 条，只验接线。
+        # 把 Qt 塞进无头 Linux 是不必要的风险，所以它留在本地；这里排除的是
+        # **整个文件**而不是个别测试——标了 gui 的正好就是这 11 个 test_ui_*。
+        #
+        # 注意用 --ignore-glob 而不是 `-m "not gui"`：前者是路径级的，shell 不
+        # 会去展开它（所以引号必须有）；后者按标记排，将来有人在非 test_ui_*
+        # 文件里加 gui 测试时它会漏。两条口径在 README 的测试章节里都写了。
+        #
+        # **`-p no:pytest-qt` 不能省**（第一次跑 CI 就是死在这里）。排除了
+        # test_ui_* 只是不**选**那些文件，而 pytest-qt 的 `pytest_configure`
+        # 钩子在**收集之前**就把 QtGui import 了——只要它在环境里（dev 组带着
+        # PySide6），这条腿就连一个测试都跑不到：
+        #
+        #     INTERNALERROR> ImportError: libEGL.so.1: cannot open shared object file
+        #
+        # 退出码 3，报错里没有一处提到 gui 或 Qt 测试。改成不禁用而是给无头 Linux
+        # 装 libEGL 也"能过"，但那是为了让一个**用不到的插件**才能 import 而给
+        # runner 装图形栈——与"核心腿不该需要 Qt"那条承诺正相反。
+        run: uv run pytest -p no:pytest-qt --ignore-glob='tests/test_ui_*'
+
+  # ── 金标准门槛 ──────────────────────────────────────────────────────────────
+  # 它同时是核心腿里的一个测试文件（tests/test_recall_gate.py），这样漂移在普通
+  # `pytest` 里就会红。这里再单列一条 job，是为了让"哪一版配置产出了这组数字"
+  # 可追溯——artifact 只传 JSON 报告，不传语料（语料在版本控制里）。
+  goldset:
+    name: 金标准门槛（纯词法）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: 与基线比（跌破容差退出码 1，结构不变量被违反退出码 3）
+        # --no-semantic：不探测 Ollama。语义通道需要本机模型，把门槛绑在它上面
+        # 等于让"有没有装模型"决定提交能不能过（见 tools/bench_recall.py 的
+        # 模块 docstring 与计划书 §三）。
+        #
+        # **退出码 1 不等于程序出错**——它表达的是"召回行为比登记在案的基线差了"。
+        # 分流的办法写在 README 的排障表里：语料 sha 不符 = 有人改了题；
+        # 指标跌破 = 召回行为变了；结构断言红 = pinned/cold/excluded 被注入。
+        run: uv run python tools/bench_recall.py --no-semantic --check --json > goldset-report.json
+      - name: 把报告打出来（失败也要看得到）
+        if: always()
+        run: cat goldset-report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: goldset-report
+          path: goldset-report.json
+
+  # ── 路由门槛 ────────────────────────────────────────────────────────────────
+  # 与下面那条同形，连注释也是同一套。它同时是核心腿里的一个测试文件
+  # （tests/test_router_gate.py），单列一条 job 是为了让"哪一版规则表产出了这组
+  # 数字"可追溯——artifact 只传 JSON 报告，不传语料（语料在版本控制里）。
+  router:
+    name: 路由门槛（规则层）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: 与基线比（跌破容差退出码 1，结构不变量被违反退出码 3）
+        # --no-model：不探测 Ollama。模型自分类的默认值本来就是关的，而把门槛绑在
+        # 它上面等于让"这台机器装没装模型、装了哪个"决定提交能不能过（与金标准那条
+        # 腿的 --no-semantic 同一条纪律，见 tools/bench_router.py 的模块 docstring）。
+        #
+        # **退出码 1 不等于程序出错**——它表达的是"路由行为比登记在案的基线差了"。
+        # 分流：语料 sha 不符 = 有人改了题；指标跌破 = 规则表变了；
+        # 结构断言红（3）= 斜杠层被改坏，或者歧义标志失效。
+        run: uv run python tools/bench_router.py --no-model --check --json > router-report.json
+      - name: 把报告打出来（失败也要看得到）
+        if: always()
+        run: cat router-report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: router-report
+          path: router-report.json
+
+  # ── 基质门槛 ────────────────────────────────────────────────────────────────
+  # 三条门槛腿里的第三条，形状与上面两条一致。它同时是核心腿里的两个测试文件
+  # （tests/test_substrate_gate.py 与 tests/test_substrate_corpus_integrity.py），
+  # 单列一条 job 是为了让"哪一版编码器与建图参数产出了这组数字"可追溯——
+  # artifact 只传 JSON 报告，不传语料（语料在版本控制里）。
+  #
+  # 它**不需要 --no-model 这类开关**：这套量具的全部输入是 blake2b 与 numpy，
+  # 无随机数、无模型、无 GPU、无网络。这正是它的两项指标能进门槛、而语义通道
+  # 那一项不能的原因（README 记着的那次实测否定结果）。
+  substrate:
+    name: 基质门槛（图 A 与 W）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: 与基线比（跌破容差退出码 1，语料与图对不上退出码 3）
+        # **退出码 1 不等于程序出错**——它表达的是"图 A 的边权或 W 的吸引域比
+        # 登记在案的基线差了"。分流：语料 sha 不符 = 有人改了题；指标跌破 =
+        # 编码或建图的规则变了；结构断言红（3）= 语料与图对不上，那是 bug。
+        #
+        # 注意它**不跑 --k/--scale 扫描**：扫描出来的那些行是用来裁决参数该取
+        # 多少的，冻住其中一个等于把待决问题伪装成已决问题。
+        run: uv run python tools/bench_substrate.py --check --json > substrate-report.json
+      - name: 把报告打出来（失败也要看得到）
+        if: always()
+        run: cat substrate-report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: substrate-report
+          path: substrate-report.json
+
+  # ── 打包 ────────────────────────────────────────────────────────────────────
+  # 这是"核心腿不该需要 Qt"那条承诺的机械证据：装的是 wheel，不是源码树，
+  # 而 wheel 的依赖里不许出现 PySide6。
+  package:
+    name: 构建 wheel 并在干净环境安装
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      # 刻意不跑 uv sync：构造 wheel 不需要同步过的环境，而且这里要的正是
+      # "干净"——同步过 dev 组的环境里一定有 PySide6。
+      - run: uv build --out-dir dist
+      - name: 在全新 venv 里安装并导入
+        run: |
+          uv venv /tmp/clean --python 3.12
+          uv pip install --python /tmp/clean/bin/python dist/*.whl
+          /tmp/clean/bin/python -c "
+          import memcore, biosnn_memterm
+          from biosnn_memterm.bench import load_goldset, summarize
+          print('biosnn-memterm', biosnn_memterm.__version__, 'OK')
+          "
+      - name: 确认 wheel 没有把 Qt 拖成依赖
+        run: |
+          /tmp/clean/bin/python -c "
+          import importlib.util
+          assert importlib.util.find_spec('PySide6') is None, '核心包不应依赖 PySide6'
+          print('未安装 PySide6，符合预期')
+          "
+      - uses: actions/upload-artifact@v4
+        with:
+          name: biosnn-memterm-wheel
+          path: dist/*.whl

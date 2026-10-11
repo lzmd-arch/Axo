@@ -1,0 +1,133 @@
+# 提交前的自动检查。
+#
+# 装上：uv run pre-commit install
+#
+# 为什么 pre-commit 在 dev 组而不是用 uvx 跑：`pre-commit install` 会把一段脚本
+# 写进 .git/hooks，那脚本记住的是"安装它时用的解释器路径"。uvx 的临时环境会被
+# 回收，钩子随后就找不到自己——症状是每次提交都报一句莫名其妙的
+# "command not found"。装进项目 venv 就不会。
+#
+# 行尾（CRLF）不靠这里管。Git for Windows 的系统默认是 core.autocrlf=true，
+# 那是正确的默认值，不要动；真正的兜底是仓库根的 .gitattributes。
+default_language_version:
+  python: python3.12
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      # ``licenses/`` 排除在这两条之外：**许可全文必须逐字节 verbatim**。
+      # GPL-3.0 正文里有 39 行、LGPL-3.0 里有 3 行以空白结尾，`trailing-whitespace`
+      # 每次都想去"修"它们——而改过的副本不再是 §4(b) 要的 "a copy of this
+      # License"，它是一份被编辑过的文本。这份副本是要随产物发给别人的，
+      # "钩子顺手清理过"不是可以接受的差异。哈希钉在 tests/test_licenses.py 里。
+      - id: trailing-whitespace
+        exclude: ^licenses/
+      # 只修行尾空白，不动行尾符——行尾符交给 .gitattributes + autocrlf
+      - id: end-of-file-fixer
+        exclude: ^licenses/
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: ["--maxkb=2048"]
+        # 记忆库与模型文件绝不该进仓库；这条是最后一道防线
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+        # 只对 .gitattributes 明确声明了 eol=lf 的类型生效
+        #
+        # **`--fix=lf` 不认识 eol=crlf**（它只比对字面行尾，不读 .gitattributes），
+        # 所以它会无条件把纯 CRLF 的文件改成 LF。而 `*.bat` 被 .gitattributes 钉成
+        # CRLF 是有原因的——cmd.exe 解析 LF 批处理时会错位（见 .gitattributes 里
+        # 那段），所以这里必须把批处理排除掉，否则每次提交都会把它改回坏掉的样子，
+        # 而钩子会报"fixed mixed line endings"、看起来像在做一件好事。
+        exclude: \.(bat|cmd)$
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.10
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: memcore-layering
+        name: memcore 分层纯净度
+        # 单独跑这一个测试文件：它守的是"记忆核心不认识 Qt 与 HTTP"这条设计
+        # 红线，值得在每次提交时独立报错，而不是混在整套测试的结果里。
+        #
+        # -p no:pytest-qt：这条腿不该加载 Qt（理由见 tools/ci_local.py 与 ci.yml）。
+        # 本机是 Windows，忘了加也看不出来——它只在无头/无图形栈的机器上炸。
+        entry: uv run pytest -p no:pytest-qt tests/test_layering.py -q
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: repo-hygiene
+        name: 仓库卫生（用户数据不进库）
+        # 为什么值得在**提交前**独立报错，而不是等 CI：这条守的是"推上去就收不回来"
+        # 的那类东西（逐字稿、记忆库、壁纸、配置），而 CI 是推**之后**才跑的。等到
+        # CI 变红，内容已经在远端了——那时要做的是重写历史，不是改一个文件。
+        #
+        # 查的是 git ls-files，也就是"这一次提交会带上去什么"。耗时 ≈ 0.1s。
+        entry: uv run pytest -p no:pytest-qt tests/test_repo_hygiene.py -q
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: goldset-gate
+        name: 金标准门槛（纯词法）
+        # 为什么值得进每次提交：门槛比的是**四项 headline 指标的绝对值**，而改
+        # 召回参数、改语料、乃至改 `_fuse` 的权重都能让它动——那些改动常常碰不到
+        # tests/test_recall.py（那里用可控小库逐条断言"该中的中"，不量"整体差了
+        # 0.06"）。等 CI 发现的话，一份已经推上去的提交就要多一轮。
+        #
+        # 退出码有含义（见 tools/bench_recall.py）：1 = 跌破容差、2 = 用法或环境
+        # 不对、3 = 结构不变量被违反——**3 是 bug，不是标定问题**，别当"数字不好
+        # 看"顺手把容差调宽。
+        #
+        # 耗时 ≈ 2s，与上面那条 memcore-layering 同量级。--no-semantic 明确不
+        # 探测 Ollama：让"有没有装模型"决定提交能不能过是不可接受的。
+        entry: uv run python tools/bench_recall.py --no-semantic --check --quiet
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: router-gate
+        name: 路由门槛（规则层）
+        # 与上面那条同一条理由：规则层是一张手写的标记词表，而**改一个词能同时
+        # 弄坏另一条**（"加个同义词"顺手把否定式判反了）。那种退化常常碰不到
+        # tests/test_router.py——那里逐条断言"这句话该判成什么"，不量"整体差了
+        # 0.03"。它是确定性的，所以门槛的容差比召回那边紧得多（0.02），一条翻转
+        # 就会红：这正是要的效果。
+        #
+        # 退出码有含义（见 tools/bench_router.py）：1 = 跌破容差、2 = 用法或环境
+        # 不对、3 = 结构不变量被违反（斜杠层被改坏、歧义标志失效）——**3 是 bug**。
+        #
+        # 耗时 ≈ 0.2s。--no-model 不探测 Ollama：模型自分类默认就是关的，而让
+        # "有没有装模型"决定提交能不能过是不可接受的。
+        entry: uv run python tools/bench_router.py --no-model --check --quiet
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: substrate-gate
+        name: 基质门槛（图 A 与 W）
+        # 与上面两条同一条理由，但**它守的东西最容易被间接改坏**：`neighbor_auc`
+        # 只看编码器（encode_assoc 的选位规则、词法码的 k）与建图（top-m、边权
+        # 下限）这两层，而这两层都在 memcore 里、被别处共用。改 `sdr.py` 里一个
+        # 常量、动一下 Jaccard 的口径，都能让它动，而 tests/test_sdr_assoc.py 与
+        # tests/test_graph.py 那些逐条断言**一个都不会红**——它们量的是"这条码选
+        # 对了没有"，不量"整张图的排序能力掉了 0.06"。
+        #
+        # 退出码有含义（见 tools/bench_substrate.py）：1 = 跌破容差、2 = 用法或
+        # 环境不对、3 = 语料与图对不上（**那是 bug**）。
+        #
+        # 耗时 ≈ 0.7s——三条门槛腿里最慢的一条（200 条语料 × 200 个探针各跑一次
+        # 补全），但仍在同一量级。它不探测任何模型与网络：全部输入是 blake2b 与
+        # numpy，所以"这台机器装没装 Ollama"决定不了提交能不能过。
+        entry: uv run python tools/bench_substrate.py --check --quiet
+        language: system
+        pass_filenames: false
+        always_run: true

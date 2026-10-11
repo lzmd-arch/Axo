@@ -1,0 +1,120 @@
+{"id": "u-0001", "text": "/task 帮我查一下上个月那件事", "expect": "task", "category": "slash", "note": "命令本身不进正文，剩下的才是要判的那句"}
+{"id": "u-0002", "text": "/TASK 帮我把那份表读一下", "expect": "task", "category": "slash", "note": "大小写不敏感"}
+{"id": "u-0003", "text": "/task 现在几点了", "expect": "task", "category": "slash"}
+{"id": "u-0004", "text": "/chat 今天有点累", "expect": "chat", "category": "slash"}
+{"id": "u-0005", "text": "/chat 帮我查一下库里那条记录", "expect": "chat", "category": "slash", "note": "显式闲聊压过规则层的 task 信号——用户说了算，这是这一层的全部意义"}
+{"id": "u-0006", "text": "/task", "expect": "task", "category": "slash", "note": "裸切换：只改状态，这一轮没有正文可送"}
+{"id": "u-0007", "text": "/chat", "expect": "chat", "category": "slash"}
+{"id": "u-0008", "text": "帮我找一下去年十月的那份记录", "expect": "task", "category": "imperative"}
+{"id": "u-0009", "text": "帮我把这周的笔记整理一下", "expect": "task", "category": "imperative"}
+{"id": "u-0010", "text": "查一下我上次说的那个会议时间", "expect": "task", "category": "imperative"}
+{"id": "u-0011", "text": "搜一下库里有没有提过盐度探头", "expect": "task", "category": "imperative"}
+{"id": "u-0012", "text": "读一下 docs/plan.md", "expect": "task", "category": "imperative"}
+{"id": "u-0013", "text": "打开 notes.txt", "expect": "task", "category": "imperative"}
+{"id": "u-0014", "text": "列一下我这个月记的所有东西", "expect": "task", "category": "imperative"}
+{"id": "u-0015", "text": "算一下这三个月一共花了多少", "expect": "task", "category": "imperative"}
+{"id": "u-0016", "text": "提醒我明天下午三点开会", "expect": "task", "category": "imperative"}
+{"id": "u-0017", "text": "帮我记一下：牛奶要买两盒", "expect": "task", "category": "imperative", "note": "改动状态，要过确认闸门"}
+{"id": "u-0018", "text": "写一条记忆：路由器放在书房", "expect": "task", "category": "imperative"}
+{"id": "u-0019", "text": "忘掉那条关于路由器的记忆", "expect": "task", "category": "imperative"}
+{"id": "u-0020", "text": "现在几点了", "expect": "task", "category": "imperative", "note": "get_time，只读工具"}
+{"id": "u-0021", "text": "总结一下我们刚才聊的内容", "expect": "task", "category": "imperative"}
+{"id": "u-0022", "text": "翻译一下这句英文：the tide is rising", "expect": "task", "category": "imperative"}
+{"id": "u-0023", "text": "看一下报告.pdf 的第二页", "expect": "task", "category": "imperative"}
+{"id": "u-0024", "text": "替我把那份表格改成按月份排", "expect": "task", "category": "imperative"}
+{"id": "u-0025", "text": "找找有没有关于咖啡的记录", "expect": "task", "category": "imperative"}
+{"id": "u-0026", "text": "我记不清了，帮我查查看", "expect": "task", "category": "imperative"}
+{"id": "u-0027", "text": "桌面上的那个文件夹里有什么", "expect": "task", "category": "imperative", "note": "没有文件名可认，靠指了一个目录"}
+{"id": "u-0028", "text": "把上个月的记录都列出来", "expect": "task", "category": "imperative"}
+{"id": "u-0029", "text": "查一查气象站的联系人是谁", "expect": "task", "category": "imperative"}
+{"id": "u-0030", "text": "今天星期几", "expect": "task", "category": "imperative", "note": "与 get_time 同一类：查一个确定的事实"}
+{"id": "u-0031", "text": "/home/user/笔记.txt 里写了什么", "expect": "task", "category": "imperative", "note": "认不出的斜杠是普通输入；这句里的文件名才是信号"}
+{"id": "u-0032", "text": "你为什么这么想？", "expect": "chat", "category": "question"}
+{"id": "u-0033", "text": "你觉得这样安排合适吗？", "expect": "chat", "category": "question"}
+{"id": "u-0034", "text": "这是什么意思？", "expect": "chat", "category": "question"}
+{"id": "u-0035", "text": "你是不是不喜欢这个话题？", "expect": "chat", "category": "question"}
+{"id": "u-0036", "text": "什么是潮汐？", "expect": "chat", "category": "question", "note": "知识问答不是任务：库里没有的东西去查也没用"}
+{"id": "u-0037", "text": "为什么月亮会有引力？", "expect": "chat", "category": "question"}
+{"id": "u-0038", "text": "你怎么看这件事？", "expect": "chat", "category": "question"}
+{"id": "u-0039", "text": "那个方案有什么问题吗？", "expect": "chat", "category": "question"}
+{"id": "u-0040", "text": "你觉得我该不该去？", "expect": "chat", "category": "question"}
+{"id": "u-0041", "text": "你累不累？", "expect": "chat", "category": "question"}
+{"id": "u-0042", "text": "你在想什么？", "expect": "chat", "category": "question", "note": "没有标记词，只有句末问号——这一类靠问号兜住"}
+{"id": "u-0043", "text": "你说这些有什么用吗？", "expect": "chat", "category": "question"}
+{"id": "u-0044", "text": "那个词用中文怎么说？", "expect": "chat", "category": "question"}
+{"id": "u-0045", "text": "我该怎么办？", "expect": "chat", "category": "question", "note": "在讨主意，不是让助手去动什么东西"}
+{"id": "u-0046", "text": "今天天气不错", "expect": "chat", "category": "chitchat"}
+{"id": "u-0047", "text": "今天有点累，随便聊两句吧", "expect": "chat", "category": "chitchat"}
+{"id": "u-0048", "text": "哈哈，你太逗了", "expect": "chat", "category": "chitchat"}
+{"id": "u-0049", "text": "嗯嗯", "expect": "chat", "category": "chitchat"}
+{"id": "u-0050", "text": "好的，知道了", "expect": "chat", "category": "chitchat"}
+{"id": "u-0051", "text": "谢谢你啦", "expect": "chat", "category": "chitchat"}
+{"id": "u-0052", "text": "辛苦了", "expect": "chat", "category": "chitchat"}
+{"id": "u-0053", "text": "我今天心情特别好", "expect": "chat", "category": "chitchat"}
+{"id": "u-0054", "text": "睡不着，有点烦", "expect": "chat", "category": "chitchat"}
+{"id": "u-0055", "text": "晚安，明天见", "expect": "chat", "category": "chitchat"}
+{"id": "u-0056", "text": "好久不见", "expect": "chat", "category": "chitchat"}
+{"id": "u-0057", "text": "我最近有点无聊", "expect": "chat", "category": "chitchat"}
+{"id": "u-0058", "text": "路上堵了四十分钟，真郁闷", "expect": "chat", "category": "chitchat"}
+{"id": "u-0059", "text": "我们聊聊别的吧", "expect": "chat", "category": "chitchat"}
+{"id": "u-0060", "text": "你觉得我是不是想太多了？", "expect": "chat", "category": "chitchat"}
+{"id": "u-0061", "text": "唉，今天真不顺", "expect": "chat", "category": "chitchat"}
+{"id": "u-0062", "text": "我今天做了个奇怪的梦", "expect": "chat", "category": "chitchat"}
+{"id": "u-0063", "text": "有意思，再多说点", "expect": "chat", "category": "chitchat"}
+{"id": "u-0064", "text": "你说得对", "expect": "chat", "category": "chitchat"}
+{"id": "u-0065", "text": "真的吗？我不太信", "expect": "chat", "category": "chitchat"}
+{"id": "u-0066", "text": "这个周末打算出去走走", "expect": "chat", "category": "chitchat"}
+{"id": "u-0067", "text": "我在想一件事，不知道该怎么办", "expect": "chat", "category": "chitchat"}
+{"id": "u-0068", "text": "外面的雨下得挺大", "expect": "chat", "category": "chitchat"}
+{"id": "u-0069", "text": "咖啡喝多了，心跳有点快", "expect": "chat", "category": "chitchat"}
+{"id": "u-0070", "text": "我养的那盆花开了", "expect": "chat", "category": "chitchat"}
+{"id": "u-0071", "text": "我在想一个问题", "expect": "chat", "category": "ambiguous", "note": "一个标记词都没命中，但它是闲聊——歧义标志该亮"}
+{"id": "u-0072", "text": "把那个东西弄一下", "expect": "chat", "category": "ambiguous", "note": "含糊的委托：规则层认不出来，正该反问一句"}
+{"id": "u-0073", "text": "就这样吧", "expect": "chat", "category": "ambiguous"}
+{"id": "u-0074", "text": "还是算了吧", "expect": "chat", "category": "ambiguous"}
+{"id": "u-0075", "text": "我不知道该说什么", "expect": "chat", "category": "ambiguous"}
+{"id": "u-0076", "text": "这件事有点复杂", "expect": "chat", "category": "ambiguous"}
+{"id": "u-0077", "text": "嗯，让我再想想", "expect": "chat", "category": "ambiguous"}
+{"id": "u-0078", "text": "你懂的", "expect": "chat", "category": "ambiguous"}
+{"id": "u-0079", "text": "到时候再说吧", "expect": "chat", "category": "ambiguous"}
+{"id": "u-0080", "text": "也不是不行", "expect": "chat", "category": "ambiguous"}
+{"id": "u-0081", "text": "换个话题吧，这个太沉重了", "expect": "chat", "category": "ambiguous", "note": "同上一档：表里没有可用信号，而默认退回 CHAT 在这里恰好是对的"}
+{"id": "u-0082", "text": "这个不用记，我随口说的", "expect": "chat", "category": "ambiguous", "note": "表里只有正向的「记一下」，这句的否定形式认不出来"}
+{"id": "u-0083", "text": "别帮我查了，我自己来吧", "expect": "chat", "category": "negation", "note": "含 task 动词，但被否定掉了"}
+{"id": "u-0084", "text": "先别急着帮我查，我想想", "expect": "chat", "category": "negation"}
+{"id": "u-0085", "text": "不用提醒我了", "expect": "chat", "category": "negation"}
+{"id": "u-0086", "text": "不需要记住这个", "expect": "chat", "category": "negation"}
+{"id": "u-0087", "text": "不用列出来了", "expect": "chat", "category": "negation"}
+{"id": "u-0088", "text": "这个别记下来了", "expect": "chat", "category": "negation"}
+{"id": "u-0089", "text": "不用帮我整理一下了", "expect": "chat", "category": "negation"}
+{"id": "u-0090", "text": "不用打开那个文件", "expect": "chat", "category": "negation"}
+{"id": "u-0091", "text": "别搜了，我找到了", "expect": "chat", "category": "negation", "note": "表里没有「搜」这个单字动词，所以这句靠的是「判不出来 → 退回闲聊」，不是否定规则"}
+{"id": "u-0092", "text": "不必替我改成别的", "expect": "chat", "category": "negation"}
+{"id": "u-0093", "text": "哈哈哈哈哈", "expect": "chat", "category": "emoji_punct", "note": "重复的嘟囔：按不同的字数判，不按重复了几次"}
+{"id": "u-0094", "text": "？？？", "expect": "chat", "category": "emoji_punct"}
+{"id": "u-0095", "text": "！！！", "expect": "chat", "category": "emoji_punct"}
+{"id": "u-0096", "text": "嗯嗯嗯嗯", "expect": "chat", "category": "emoji_punct"}
+{"id": "u-0097", "text": "好的好的", "expect": "chat", "category": "emoji_punct"}
+{"id": "u-0098", "text": "……", "expect": "chat", "category": "emoji_punct"}
+{"id": "u-0099", "text": "呜呜呜", "expect": "chat", "category": "emoji_punct"}
+{"id": "u-0100", "text": "ok", "expect": "chat", "category": "emoji_punct"}
+{"id": "u-0101", "text": "帮我把这个月记的所有东西按日期排一下，然后把跟会议有关的那几条单独列出来", "expect": "task", "category": "long_task", "note": "长句不该改变判定：标记词在长句里一样有效"}
+{"id": "u-0102", "text": "先查一下上周我们聊了什么，再帮我记一条：下周一把报告交上去", "expect": "task", "category": "long_task"}
+{"id": "u-0103", "text": "读一下 docs/notes.md，把里面提到的时间都摘出来，然后提醒我明天早上看一遍", "expect": "task", "category": "long_task"}
+{"id": "u-0104", "text": "我想找找看有没有关于潮汐的数据，如果有就记下来", "expect": "task", "category": "long_task"}
+{"id": "u-0105", "text": "帮我把报告.pdf 和 notes.txt 都读一遍，然后总结一下两份说的是不是同一件事", "expect": "task", "category": "long_task"}
+{"id": "u-0106", "text": "现在几点了？顺便提醒我半小时后起来走走", "expect": "task", "category": "long_task", "note": "句末问号不该把一句委托拉回闲聊"}
+{"id": "u-0107", "text": "先把那条关于咖啡的记忆找出来，然后改成只喝一杯", "expect": "task", "category": "long_task"}
+{"id": "u-0108", "text": "帮我看一下那个文件夹里有没有叫 log.txt 的文件，有的话读一下最后几行", "expect": "task", "category": "long_task"}
+{"id": "u-0109", "text": "我忘了上次那个联系人叫什么，帮我搜一下", "expect": "task", "category": "long_task"}
+{"id": "u-0110", "text": "把这些都列出来，再看一下哪几条是上周记的", "expect": "task", "category": "long_task"}
+{"id": "u-0111", "text": "帮我算一下从上次标定到现在过了多久，然后把结果记下来", "expect": "task", "category": "long_task"}
+{"id": "u-0112", "text": "读读 data.csv，顺便告诉我里面有多少行", "expect": "task", "category": "long_task"}
+{"id": "u-0113", "text": "谢谢你帮我查资料", "expect": "chat", "category": "hard", "note": "礼貌词包的过去时陈述：规则层**有把握地**判成 task。修它要动礼貌词与 task 词的优先级，而那个方向的代价更大（见 router.py 的 _COURTESY_PREFIXES）"}
+{"id": "u-0114", "text": "我们上次聊到哪儿了？", "expect": "task", "category": "hard", "note": "该走 search_memory，但形状是一句问号结尾的闲聊"}
+{"id": "u-0115", "text": "你还记得我上次说的那件事吗？", "expect": "task", "category": "hard", "note": "同上"}
+{"id": "u-0116", "text": "别忘了我说的", "expect": "task", "category": "hard", "note": "否定式里藏着一个正向请求：别忘 = 记住。表里只有「忘掉」"}
+{"id": "u-0117", "text": "回想一下我们第一次见面", "expect": "task", "category": "hard", "note": "祈使动词不在表里：加一个「回想一下」就能收"}
+{"id": "u-0118", "text": "记录一下我今天的感受", "expect": "task", "category": "hard", "note": "同义动词不在表里：表里是「记一下」，这句是「记录一下」"}
+{"id": "u-0119", "text": "把昨天那段话再念一遍", "expect": "task", "category": "hard", "note": "表里是「念一下」，这句是「念一遍」"}
+{"id": "u-0120", "text": "我上次说想买的那本书叫什么", "expect": "task", "category": "hard", "note": "要查记忆，但连问号都没有"}

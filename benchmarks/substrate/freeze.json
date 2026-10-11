@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "memories": {
+    "count": 200,
+    "sha256": "53cb8192fbf2ebcd99a704501c06331decba2da6b87bae8132b33a2c6ae7acdf"
+  },
+  "queries": {
+    "count": 40,
+    "sha256": "730eafe60f1f8cefbbd68ca8e5b49e71c121e08f903a11ea6eb83292c066cea9"
+  },
+  "clusters": {
+    "commute": 20,
+    "course": 20,
+    "invoice": 20,
+    "kitchen": 20,
+    "medication": 20,
+    "network": 20,
+    "photo": 20,
+    "plant": 20,
+    "project": 20,
+    "water": 20
+  },
+  "query_clusters": {
+    "commute": 4,
+    "course": 4,
+    "invoice": 4,
+    "kitchen": 4,
+    "medication": 4,
+    "network": 4,
+    "photo": 4,
+    "plant": 4,
+    "project": 4,
+    "water": 4
+  }
+}
