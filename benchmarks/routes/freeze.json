@@ -1,18 +1,19 @@
 {
   "schema_version": 1,
   "utterances": {
-    "count": 120,
-    "sha256": "f902bb527f92c96d9b94cde83c0127c271c74cff71523036f2b916ffdb175191"
+    "count": 125,
+    "sha256": "c4753c36de13398c22dcd32ce98327488842b99d2a3dbd5b2a9479bce2e89a09"
   },
   "categories": {
     "ambiguous": 12,
     "chitchat": 25,
     "emoji_punct": 8,
-    "hard": 8,
+    "hard": 10,
     "imperative": 24,
     "long_task": 12,
     "negation": 10,
     "question": 14,
+    "reminder": 3,
     "slash": 7
   }
 }

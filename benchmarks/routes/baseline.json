@@ -3,23 +3,23 @@
   "corpus": {
     "schema_version": 1,
     "utterances": {
-      "count": 120,
-      "sha256": "f902bb527f92c96d9b94cde83c0127c271c74cff71523036f2b916ffdb175191"
+      "count": 125,
+      "sha256": "c4753c36de13398c22dcd32ce98327488842b99d2a3dbd5b2a9479bce2e89a09"
     }
   },
   "model": "",
   "model_layer": {},
   "metrics": {
-    "n": 120.0,
-    "coverage": 0.7916666666666666,
-    "accuracy": 0.968421052631579,
-    "accuracy_all": 0.9333333333333333,
-    "task_recall": 0.9523809523809523,
-    "task_precision": 0.975609756097561,
-    "chat_recall": 0.9811320754716981,
-    "chat_precision": 0.9629629629629629,
-    "ambiguous_rate": 0.20833333333333334,
-    "majority_baseline": 0.6083333333333333
+    "n": 125.0,
+    "coverage": 0.848,
+    "accuracy": 0.9811320754716981,
+    "accuracy_all": 0.976,
+    "task_recall": 1.0,
+    "task_precision": 0.9615384615384616,
+    "chat_recall": 0.9642857142857143,
+    "chat_precision": 1.0,
+    "ambiguous_rate": 0.152,
+    "majority_baseline": 0.592
   },
   "per_category": {
     "ambiguous": {
@@ -30,9 +30,9 @@
     },
     "chitchat": {
       "n": 25.0,
-      "coverage": 0.72,
+      "coverage": 0.8,
       "accuracy": 1.0,
-      "ambiguous_rate": 0.28
+      "ambiguous_rate": 0.2
     },
     "emoji_punct": {
       "n": 8.0,
@@ -41,10 +41,10 @@
       "ambiguous_rate": 0.0
     },
     "hard": {
-      "n": 8.0,
-      "coverage": 0.375,
-      "accuracy": 0.0,
-      "ambiguous_rate": 0.625
+      "n": 10.0,
+      "coverage": 0.9,
+      "accuracy": 0.7777777777777778,
+      "ambiguous_rate": 0.1
     },
     "imperative": {
       "n": 24.0,
@@ -70,6 +70,12 @@
       "accuracy": 1.0,
       "ambiguous_rate": 0.0
     },
+    "reminder": {
+      "n": 3.0,
+      "coverage": 1.0,
+      "accuracy": 1.0,
+      "ambiguous_rate": 0.0
+    },
     "slash": {
       "n": 7.0,
       "coverage": 1.0,
@@ -89,74 +95,24 @@
       "note": "礼貌词包的过去时陈述：规则层**有把握地**判成 task。修它要动礼貌词与 task 词的优先级，而那个方向的代价更大（见 router.py 的 _COURTESY_PREFIXES）"
     },
     {
-      "id": "u-0114",
+      "id": "u-0124",
       "category": "hard",
-      "expect": "task",
-      "got": "chat",
+      "expect": "chat",
+      "got": "task",
       "source": "rule",
       "ambiguous": false,
-      "text": "我们上次聊到哪儿了？",
-      "note": "该走 search_memory，但形状是一句问号结尾的闲聊"
+      "text": "你提醒我了",
+      "note": "反空转的那一条：它含「提醒我」，但说的是一件**已经发生过的事**，不是一句委托。规则层有把握地判成 task（0.85），与 u-0113 同族（过去时的陈述里含着一个 task 标记）。最顺手的修法「标记后面紧跟『了』→ 闲聊」当场被证否：「别提醒我了」也是「提醒我 + 了」，那条规则会把刚修好的取消路径一起打回闲聊。"
     },
     {
-      "id": "u-0115",
-      "category": "hard",
-      "expect": "task",
-      "got": "chat",
-      "source": "rule",
-      "ambiguous": false,
-      "text": "你还记得我上次说的那件事吗？",
-      "note": "同上"
-    },
-    {
-      "id": "u-0116",
+      "id": "u-0125",
       "category": "hard",
       "expect": "task",
       "got": "chat",
       "source": "default",
       "ambiguous": true,
-      "text": "别忘了我说的",
-      "note": "否定式里藏着一个正向请求：别忘 = 记住。表里只有「忘掉」"
-    },
-    {
-      "id": "u-0117",
-      "category": "hard",
-      "expect": "task",
-      "got": "chat",
-      "source": "default",
-      "ambiguous": true,
-      "text": "回想一下我们第一次见面",
-      "note": "祈使动词不在表里：加一个「回想一下」就能收"
-    },
-    {
-      "id": "u-0118",
-      "category": "hard",
-      "expect": "task",
-      "got": "chat",
-      "source": "default",
-      "ambiguous": true,
-      "text": "记录一下我今天的感受",
-      "note": "同义动词不在表里：表里是「记一下」，这句是「记录一下」"
-    },
-    {
-      "id": "u-0119",
-      "category": "hard",
-      "expect": "task",
-      "got": "chat",
-      "source": "default",
-      "ambiguous": true,
-      "text": "把昨天那段话再念一遍",
-      "note": "表里是「念一下」，这句是「念一遍」"
-    },
-    {
-      "id": "u-0120",
-      "category": "hard",
-      "expect": "task",
-      "got": "chat",
-      "source": "default",
-      "ambiguous": true,
-      "text": "我上次说想买的那本书叫什么",
-      "note": "要查记忆，但连问号都没有"
+      "text": "把明天那个提醒取消掉",
+      "note": "「取消提醒」那一族漏掉的形状：**动词与宾语之间隔着字**。表里已经写了 6 种排列（取消提醒/取消那个提醒/取消掉提醒/把提醒取消/删掉提醒/删除提醒），这句一个都不命中。够得着（再加一个整词「提醒取消」就命中），这一轮故意不收：那是给一张已经在用 6 种排列写同一件事的表再伸长一格，而更一般的做法（同句里「提醒」与「取消」同时出现）等于把「出现过某个字」当语域证据——与 CORPUS.md 拒绝 雨/花/梦 是同一条线。"
     }
   ],
   "structural_violations": [],
@@ -167,6 +123,6 @@
     "task_recall": 0.02,
     "chat_recall": 0.02
   },
-  "frozen_at": "2026-10-10T06:56:01Z",
-  "note": "这是**实测值，不是目标值**（先跑后填）。门槛 = 本文件的值 ± tolerance，方向见 axo.bench.routeeval.GATED（三项都是越大越好）。改语料要同时改 freeze.json 并重跑 --freeze。**门槛只绑规则层**：模型层要 Ollama，把门槛绑上去等于让装没装模型决定提交能不能过。"
+  "frozen_at": "2026-10-12T06:18:10Z",
+  "note": "这是**实测值，不是目标值**（先跑后填）。门槛 = 本文件的值 ± tolerance，方向见 axo.bench.routeeval.GATED（四项都是越大越好），容差的含义见那里的 DEFAULT_TOLERANCE（这份测量是确定性的，容差不是噪声，是「允许几条翻转而不惊动人」）。改语料要同时改 freeze.json 并重跑 --freeze。**门槛只绑规则层**：模型层要 Ollama，把门槛绑上去等于让装没装模型决定提交能不能过。"
 }

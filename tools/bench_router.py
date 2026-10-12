@@ -4,7 +4,7 @@
 之后路由是变准了还是变不准了"这个问题没有答案——只能靠读代码判断，而读代码判断不出
 "``别``"这个否定词该放在 task 之前还是之后。
 
-这个脚本量的是那个缺口：120 条带人工标注的输入，逐条走
+这个脚本量的是那个缺口：125 条带人工标注的输入，逐条走
 :func:`~axo.agent.router.decide_turn`，报准确率与两类的查全/查准。
 指标的口径写在 :mod:`axo.bench.routeeval` 里，**那里是定义，这里只是报告**。
 
@@ -115,7 +115,7 @@ def _resolve_classifier(args: argparse.Namespace) -> Classifier | None:
     backend = OllamaChatBackend(model=name, host=args.host)
     print(f"模型层：{name} @ {args.host}（上下文 {backend.context_window} tokens）")
 
-    # 逐条问一次，所以要把"问到第几条了"打出来——本地 4B 模型 120 条要跑几分钟，
+    # 逐条问一次，所以要把"问到第几条了"打出来——本地 4B 模型 125 条要跑几分钟，
     # 一段没有任何输出的几分钟与"卡死了"在终端上看起来一模一样。
     seen = 0
 

@@ -112,7 +112,7 @@
 **更早：工具与语域（P3a）。** 模型**真的能动手**：七个工具（查记忆 / 读记忆 / 写记忆 /
 遗忘 / 看时间 / 设提醒 / 读文件）在对话里可用，**改变状态的那三个要你在对话流里点一下
 内联卡片才执行**，没点就是不做。哪一轮给不给工具由**语域路由**决定（斜杠命令 + 一张手写
-的标记词表 + 一个默认关着的模型自分类），路由本身由 `benchmarks/routes/` 那 120 条语料
+的标记词表 + 一个默认关着的模型自分类），路由本身由 `benchmarks/routes/` 那 125 条语料
 离线量着走。工具轮次写进逐字稿并能回放，界面上显示的是**真实的调用轨迹**、不是模型的
 自述。细节见 [agent.md](agent.md) 的「语域、工具与确认闸门」——**那里有两条必须辨析的术语**。
 
@@ -348,10 +348,10 @@ benchmarks/gold/      金标准语料（量具，不是数据集）
   baseline_lexical.json 词法通道的**实测**基线与容差
   CORPUS.md             这是什么、十类难例、冻结纪律、敏感度实测留档
 benchmarks/routes/    路由语料（同一套纪律，被测对象是路由）
-  utterances.jsonl      120 条虚构输入 + 标注
+  utterances.jsonl      125 条虚构输入 + 标注
   freeze.json           sha256 + 条数 + 类别普查
   baseline.json         规则层的**实测**基线与容差（`model_layer` 有意留空）
-  CORPUS.md             九类难例、两把尺子、为什么 accuracy 与 coverage 必须成对
+  CORPUS.md             十类难例、两把尺子、为什么 accuracy 与 coverage 必须成对
 benchmarks/substrate/ 基质语料（200 条虚构记忆 + 40 条查询，带**词场**簇标签）
   memories.jsonl        200 条，10 个词场 × 20 条
   queries.jsonl         40 条查询 + 同簇的期望集
