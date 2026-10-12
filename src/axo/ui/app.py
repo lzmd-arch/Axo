@@ -1,13 +1,17 @@
 """应用入口。
 
-入口函数只做六件事：**定两处环境变量、建 app、定样式、建窗口、进事件循环**。
-日志、配置、数据库连接、模型探活都不在这里——那些属于各自模块的职责，塞进入口
-只会让"启动时到底发生了什么"变得不可读。
+入口函数只做七件事：**定两处环境变量、建 app、定样式、定记忆位置、建窗口、进事件
+循环**。日志、配置、数据库连接、模型探活都不在这里——那些属于各自模块的职责，塞进
+入口只会让"启动时到底发生了什么"变得不可读。
 
 那两处环境变量（:func:`configure_isolated_state` 与
 :func:`_configure_webengine_environment`）是**唯一必须先于 ``QApplication``** 的
 东西，所以它们是入口的职责，而不是某个模块的——Qt 初始化之后再设环境变量对已经
 起来的 Chromium 无效，而 ``QStandardPaths`` 的路径问过一次就定死了。
+
+**"定记忆位置"（:func:`~axo.ui.data_root.boot_data_root`）必须排在建窗口之前**，
+理由与那两处不同：它不碰 Qt 的全局状态，而是**赶在四个 store 把路径焊死之前**。
+待办的搬迁也是在那里真正动盘的——所以不存在"搬到一半、库还开着"那种状态。
 
 ``main`` 刻意不 import :mod:`axo.ui.cli`（尚未存在）也不 import
 ``MainWindow``，后者的导入推迟到 ``QApplication`` 建好之后：PySide6 的窗口类在
@@ -174,6 +178,17 @@ def main(argv: list[str] | None = None) -> int:
     # ``aboutToQuit`` 三条路都汇进去，而它是幂等的。
     app.setQuitOnLastWindowClosed(False)
 
+    # ── 记忆放在哪：**必须在建 MainWindow 之前** ────────────────────────────
+    # 那个窗口一建好，四个 store 加一张图就把 ``paths`` 现算出来的路径焊死了
+    # （见 main_window.py 里那几行）。而"位置"住在注册表里、读它要 Qt，所以这件事
+    # 只能在这里做——它是本入口的第七件事，理由与另外六件同级。
+    #
+    # 这也是**待办搬迁真正动盘的地方**：写指针与复制都发生在打开任何东西之前，所以
+    # 不存在"搬到一半、库还开着"那种状态。
+    from .data_root import boot_data_root
+
+    move_report = boot_data_root(make_settings())
+
     from .main_window import MainWindow  # 推迟到 QApplication 之后
 
     window = MainWindow()
@@ -181,6 +196,11 @@ def main(argv: list[str] | None = None) -> int:
     # 并连带销毁原生窗口——表现为"窗口一闪而过"。挂在 app 上是最省事的锚点。
     app.main_window = window  # type: ignore[attr-defined]
     window.show()
+    # **在 show() 之后说。** 搬迁的结果要有个父窗口才弹得出来，而在建窗口之前既没有
+    # 地方说、抛异常又等于"程序打不开"。这一步可能弹一个对话框问"旧的那份删不删"，
+    # 所以不能塞进 MainWindow 的构造函数里——那会让它出现在主窗口之前。
+    if move_report is not None:
+        window.report_data_move(move_report)
     try:
         return app.exec()
     finally:
