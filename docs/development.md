@@ -482,6 +482,7 @@ tools/
   sleep_once.py       睡眠巩固 CLI：跑一轮 / `--dry-run` / `--replay <run_id>` 逐条比对
   bench_space.py      配对级分隔度的老量具（换嵌入模型时仍用它）
   smoke_agent.py      Step 0 探针：本地模型会不会真的吐工具调用（结论在它自己的 docstring 里）
+  _smoke_screen_mask.py 探针（**要真显示器**）：遮罩到底盖没盖住自己的窗口
   smoke_cloud_vision.py 探针：云端到底收不收图（当场生成一张纯色 PNG 问它颜色，猜不中就是图没到）
   ci_local.py         本地跑 CI 的六条腿 + 一条 CI 上没有的 gui 腿（ci.bat 调它）
   build_exe.py        冻结成 Windows onedir 产物，构建完当场自检（见「打包（P6a）」）
