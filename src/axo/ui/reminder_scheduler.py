@@ -22,7 +22,7 @@
 
 ## 先写 sidecar，再弹（write-ahead）
 
-:meth:`_fire` 里 ``mark_all_fired`` 排在 ``due.emit`` **之前**。反过来的话，弹出之后、
+:meth:`_fire` 里 ``mark_occurrences`` 排在 ``due.emit`` **之前**。反过来的话，弹出之后、
 落盘之前进程退出（关窗收进托盘的用户随时会这么做），下次启动会**重弹**同一条。
 两个方向的代价不对称：重弹每次都会发生，而"标了却没弹成"很少发生。
 
@@ -131,7 +131,7 @@ class ReminderScheduler(QObject):
         """
         if not self._running:
             return
-        pending = next_due_at(self._reminders.all(), self._fired.fired_ids())
+        pending = next_due_at(self._reminders.all(), self._fired.fired_keys())
         if pending is None:
             # 没有将来的提醒 → **把表停掉**，不是排一个很远的时刻：一个空转的定时器
             # 会在进程存活期间一直醒（每次都要重读一遍文件），而"没有东西可等"是
@@ -167,16 +167,16 @@ class ReminderScheduler(QObject):
                 （"到点了"），不必再分。
         """
         now = self._now()
-        due = due_now(self._reminders.all(), self._fired.fired_ids(), now)
+        due = due_now(self._reminders.all(), self._fired.fired_keys(), now)
         if not due:
             return
         # **先写后弹**（write-ahead）。见模块文档：反过来的代价是每次退出都重弹。
-        self._fired.mark_all_fired([one.reminder_id for one in due], now)
+        self._fired.mark_occurrences(due, now, by="gui")
         self._report(due, late=late)
 
     def _report(self, due: Sequence[Reminder], *, late: bool) -> None:
         if len(due) == 1:
             title = "错过了一条提醒" if late else "提醒"
-            self.due.emit(title, due[0].text)
+            self.due.emit(title, due[0].reminder.text)
             return
         self.missed.emit(f"{len(due)} 条提醒到点了", missed_summary(due))

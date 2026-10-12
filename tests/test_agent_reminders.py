@@ -19,19 +19,27 @@
 from __future__ import annotations
 
 import json
+import time
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
 from axo import paths
 from axo.agent.reminders import (
+    REPEAT_DAILY,
+    REPEAT_ONCE,
+    REPEAT_WEEKLY,
     FiredStore,
+    Occurrence,
     Reminder,
     ReminderStore,
     due_now,
+    fired_key,
     missed_summary,
     new_reminder_id,
     next_due_at,
+    next_occurrence,
 )
 
 AT = 1_760_000_000.0
@@ -244,7 +252,7 @@ def test_due_now_takes_only_what_has_come_due() -> None:
     """
     past, future = _reminder("a", AT - 10), _reminder("b", AT + 10)
     found = due_now([past, future], {"c"}, AT)
-    assert [one.reminder_id for one in found] == ["a"]
+    assert [one.reminder.reminder_id for one in found] == ["a"]
 
 
 def test_a_boundary_reminder_counts_as_due() -> None:
@@ -262,14 +270,14 @@ def test_due_now_is_sorted_by_when_they_were_due() -> None:
     """
     late = _reminder("晚", AT - 1)
     early = _reminder("早", AT - 100)
-    assert [one.reminder_id for one in due_now([late, early], set(), AT)] == ["早", "晚"]
+    assert [one.reminder.reminder_id for one in due_now([late, early], set(), AT)] == ["早", "晚"]
 
 
 def test_a_fired_reminder_never_comes_back() -> None:
     """**这一条就是"重启不重弹"。**"""
     one = _reminder("a", AT - 10)
     assert due_now([one], {"a"}, AT) == ()
-    assert due_now([one], set(), AT) == (one,)
+    assert due_now([one], set(), AT) == (Occurrence(reminder=one, at=one.due_at),)
 
 
 def test_next_due_at_is_the_earliest_pending() -> None:
@@ -299,8 +307,8 @@ def fired(tmp_path: Path) -> FiredStore:
 
 
 def test_marking_then_reading_back(fired: FiredStore) -> None:
-    fired.mark_fired("a", AT)
-    assert fired.fired_ids() == frozenset({"a"})
+    fired.mark_occurrences([_occ("a", AT)], AT)
+    assert fired.fired_keys() == frozenset({"a"})
 
 
 def test_the_sidecar_survives_a_restart(fired: FiredStore) -> None:
@@ -309,23 +317,23 @@ def test_the_sidecar_survives_a_restart(fired: FiredStore) -> None:
     没有这一条，``fired_ids()`` 可以返回一个进程内的内存集合、测试全绿，而重新
     启动之后一切重来——那正是这个 sidecar 存在的理由。
     """
-    fired.mark_fired("a", AT)
-    fired.mark_fired("b", AT)
+    fired.mark_occurrences([_occ("a", AT)], AT)
+    fired.mark_occurrences([_occ("b", AT)], AT)
     restarted = FiredStore(fired.path)
-    assert restarted.fired_ids() == frozenset({"a", "b"})
+    assert restarted.fired_keys() == frozenset({"a", "b"})
 
 
 def test_an_empty_sidecar_is_an_empty_set(fired: FiredStore) -> None:
     """还没响过任何一条是常态，不是错误——同 :meth:`ReminderStore.all`。"""
-    assert fired.fired_ids() == frozenset()
+    assert fired.fired_keys() == frozenset()
 
 
 def test_marking_the_same_id_twice_is_harmless(fired: FiredStore) -> None:
     """重复标记是无害的，所以崩溃后重放**不必先查一遍**——"先查再写"在一个只追加
     的文件上本来也防不住竞态。"""
-    fired.mark_fired("a", AT)
-    fired.mark_fired("a", AT + 1)
-    assert fired.fired_ids() == frozenset({"a"})
+    fired.mark_occurrences([_occ("a", AT)], AT)
+    fired.mark_occurrences([_occ("a", AT + 1)], AT + 1)
+    assert fired.fired_keys() == frozenset({"a"})
 
 
 @pytest.mark.parametrize("line", ['"就一个字符串"', "[1, 2, 3]", "{}", '{"reminder_id": 7}', "{"])
@@ -335,23 +343,23 @@ def test_broken_sidecar_lines_are_skipped(fired: FiredStore, line: str) -> None:
     反过来的实现（一行坏就整份打不开）会让所有提醒在下次启动时**一起重弹**，
     而症状指不到那一行上。
     """
-    fired.mark_fired("好", AT)
+    fired.mark_occurrences([_occ("好", AT)], AT)
     with fired.path.open("a", encoding="utf-8", newline="\n") as handle:
         handle.write(line + "\n")
-    assert fired.fired_ids() == frozenset({"好"})
+    assert fired.fired_keys() == frozenset({"好"})
 
 
 def test_mark_all_writes_every_id(fired: FiredStore) -> None:
     """错过的一批一次标完。**一次打开文件**：二十次打开/关闭里任何一次失败都会留下
     一半已标一半没标的状态，而那正是"有些弹了两次、有些一次没弹"。"""
-    fired.mark_all_fired(["a", "b", "c"], AT)
-    assert fired.fired_ids() == frozenset({"a", "b", "c"})
+    fired.mark_occurrences([_occ(name, AT) for name in ("a", "b", "c")], AT)
+    assert fired.fired_keys() == frozenset({"a", "b", "c"})
 
 
 def test_mark_all_with_nothing_does_not_create_the_file(tmp_path: Path) -> None:
     """空批次不建文件：还没错过任何东西时不该在数据目录里留下一份空的账。"""
     store = FiredStore(tmp_path / "fired.jsonl")
-    store.mark_all_fired([], AT)
+    store.mark_occurrences([], AT)
     assert store.path.is_file() is False
 
 
@@ -366,22 +374,22 @@ def test_the_sidecar_is_not_the_register(tmp_path: Path) -> None:
     book = ReminderStore(tmp_path / "reminders.jsonl")
     fired = FiredStore(tmp_path / "reminders.fired.jsonl")
     _record(book)
-    fired.mark_fired("a", AT)
+    fired.mark_occurrences([_occ("a", AT)], AT)
     assert len(book.all()) == 1, "登记簿里只有提醒，没有 fired 行"
-    assert fired.fired_ids() == frozenset({"a"})
+    assert fired.fired_keys() == frozenset({"a"})
 
 
 # ── 错过的一堆收成一句 ─────────────────────────────────────────────────────
 
 
 def test_missed_summary_lists_them_in_order() -> None:
-    missed = [_reminder("a", AT, "买牛奶"), _reminder("b", AT, "交材料")]
+    missed = [_occ_of(_reminder("a", AT, "买牛奶")), _occ_of(_reminder("b", AT, "交材料"))]
     assert missed_summary(missed) == "买牛奶、交材料"
 
 
 def test_missed_summary_counts_the_overflow() -> None:
     """超过上限的折成"还有 N 条"——**不静默丢**，但也不必一次说五遍。"""
-    missed = [_reminder(str(index), AT, f"第{index}件") for index in range(8)]
+    missed = [_occ_of(_reminder(str(index), AT, f"第{index}件")) for index in range(8)]
     summary = missed_summary(missed, limit=3)
     assert summary == "第0件、第1件、第2件；还有 5 条"
 
@@ -397,3 +405,201 @@ def test_the_fired_path_is_its_own_file(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert fired_path == tmp_path / "reminders.fired.jsonl"
     assert fired_path != paths.reminders_path(), "两本账必须是两个文件"
     assert fired_path.is_file() is False, "同 reminders_path：文件不在这里创建"
+
+
+def _occ_of(reminder: Reminder) -> Occurrence:
+    return Occurrence(reminder=reminder, at=reminder.due_at)
+
+
+def _occ(reminder_id: str, at: float) -> Occurrence:
+    """一条**一次性**的到点。改 ``repeat`` 的时候记得：键的形状跟着变（见
+    :func:`fired_key` 与 ``FiredStore.fired_keys`` 那条不变量）。"""
+    return Occurrence(
+        reminder=Reminder(reminder_id=reminder_id, text=reminder_id, due_at=at, created_at=AT),
+        at=at,
+    )
+
+
+def _at(year: int, month: int, day: int, hour: int = 22, minute: int = 30) -> float:
+    """某个本地时刻。**不从 epoch 常量硬编**：星期几要靠日历算，而那是这里最容易
+    写错的一格（``tm_wday`` 的 0 是周一，ISO 的 1 是周一）。"""
+    return datetime(year, month, day, hour, minute).timestamp()
+
+
+def _repeating(reminder_id: str, due_at: float, repeat: str, *, text: str = "该睡了") -> Reminder:
+    return Reminder(reminder_id=reminder_id, text=text, due_at=due_at, created_at=AT, repeat=repeat)
+
+
+# ── 重复 ────────────────────────────────────────────────────────────────────
+
+
+def test_a_daily_reminder_fires_again_the_next_day() -> None:
+    """**"每天"的核心判据。** 一次性那条响过就永久出局，而这一条明天还得回来。"""
+    due = _at(2026, 3, 4)
+    one = _repeating("d", due, REPEAT_DAILY)
+
+    first = due_now([one], set(), due + 60)
+    assert len(first) == 1 and first[0].missed == 1
+
+    fired = {fired_key(one, first[0].at)}
+    again = due_now([one], fired, due + 86400 + 60)
+
+    assert len(again) == 1, "第二天没回来"
+    assert again[0].at > first[0].at
+
+
+def test_a_fired_one_shot_never_comes_back() -> None:
+    """对照组：同样过了两天，一次性的那条不回来。"""
+    due = _at(2026, 3, 4)
+    one = Reminder(reminder_id="o", text="交房租", due_at=due, created_at=AT)
+    fired = {fired_key(one, due)}
+
+    assert due_now([one], fired, due + 3 * 86400) == ()
+
+
+def test_a_daily_reminder_says_how_many_it_missed() -> None:
+    """**补一次，但把次数说出来。** 三条理由都指向同一个方向：同一条提醒的三次通知
+    内容完全相同（没有信息增量）、不静默丢（那个数就是承认它）、顺手避开 fired 账
+    三倍增长。"""
+    due = _at(2026, 3, 4)
+    one = _repeating("d", due, REPEAT_DAILY)
+
+    found = due_now([one], set(), due + 3 * 86400 + 60)
+
+    assert len(found) == 1, "折叠成一次"
+    assert found[0].missed == 4, "第 0/1/2/3 天，一共该响四次"
+    assert "错过了 4 次" in missed_summary(found)
+
+
+def test_a_weekly_reminder_keeps_the_same_weekday_and_clock() -> None:
+    """每周那条：落在同一个星期几、同一个时刻，一周只一次。"""
+    due = _at(2026, 3, 4, 20, 0)
+    one = _repeating("w", due, REPEAT_WEEKLY, text="游泳课")
+    base = time.localtime(due)
+
+    found = due_now([one], set(), due + 6 * 86400)
+
+    assert len(found) == 1
+    got = time.localtime(found[0].at)
+    assert got.tm_wday == base.tm_wday
+    assert (got.tm_hour, got.tm_min) == (20, 0)
+
+
+def test_a_weekly_reminder_without_weekdays_uses_the_due_day() -> None:
+    """``weekly`` 但没给 ``weekdays`` → 取 ``due_at`` 那一天的星期几。
+
+    这不是猜：它是这一行能算出来的唯一一件事实，也是用户说「每周三 22:30」时最可能
+    的意思（工具那边正是这么落的盘）。"""
+    due = _at(2026, 3, 4)
+    one = Reminder(reminder_id="w", text="游泳课", due_at=due, created_at=AT, repeat=REPEAT_WEEKLY)
+
+    assert one.weekdays == ()
+    assert time.localtime(next_occurrence(one, set())).tm_wday == time.localtime(due).tm_wday
+
+
+# ── 取消 ────────────────────────────────────────────────────────────────────
+
+
+def test_a_cancelled_reminder_never_fires() -> None:
+    """两级都要挡：到点那一步、以及"下一次什么时候醒"那一步。**少了后一条，定时器
+    会一直为一条永远不会响的提醒设表。**"""
+    one = _reminder("a", AT - 10)
+
+    assert due_now([one], set(), AT, cancelled={"a"}) == ()
+    assert next_due_at([one], set(), cancelled={"a"}) is None
+
+
+def test_the_cancelled_path_is_its_own_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """**第三本账、第三个文件。** 混进登记簿会让它的契约变成假的（那个文件装的是
+    "还没被提醒的事情"），而重写老行更不行——它是只追加的。"""
+    monkeypatch.setenv("AXO_DATA", str(tmp_path))
+    cancelled = paths.reminders_cancelled_path()
+
+    assert cancelled == tmp_path / "reminders.cancelled.jsonl"
+    assert cancelled not in (paths.reminders_path(), paths.reminders_fired_path())
+    assert cancelled.is_file() is False, "同另外两本：文件不在这里创建"
+
+
+# ── 两个键的形状 ────────────────────────────────────────────────────────────
+
+
+def test_the_two_key_shapes_do_not_collide() -> None:
+    """一次性的是裸 id（与老行逐字节相容），重复的是复合键。**复合键里那一次的计划
+    时刻就是这一次的身份**——用"实际响的时刻"会在延迟之后对不上，于是同一次响两遍。"""
+    once = _reminder("a", AT)
+    many = _repeating("a", AT, REPEAT_DAILY)
+
+    assert fired_key(once, AT) == "a"
+    assert fired_key(many, AT) == f"a@{int(AT)}"
+    assert fired_key(many, AT) != fired_key(many, AT + 86400)
+
+
+# ── 读坏数据的方向 ──────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("stored", ["everyday", "DAILY", "hourly", 7, None, [], True])
+def test_an_unknown_repeat_reads_as_once(stored: object) -> None:
+    """**方向与 ``due_at`` 相反，这是刻意的。** 给一条没有时间的提醒编时间是造出一条
+    用户从没约过的提醒（所以缺就丢行）；而给一个不认识的 ``repeat`` 猜"每天"只会让它
+    响得比用户约的多——通知风暴的结局是用户把通知关掉，那时**所有**提醒一起失效。"""
+    payload = {
+        "reminder_id": "a",
+        "text": "记住",
+        "due_at": AT,
+        "created_at": AT,
+        "repeat": stored,
+    }
+
+    one = Reminder.from_dict(payload)
+
+    assert one is not None
+    assert one.repeat == REPEAT_ONCE
+
+
+@pytest.mark.parametrize(
+    "stored,expected",
+    [
+        ([0, 7], (0,)),  # 越界的丢掉，不 % 7 圆过去
+        ([-1, 2], (2,)),
+        ([1, "2", 1], (1,)),  # 不是整数的丢掉；重复的去掉
+        ([True], ()),
+        ("周三", ()),  # 根本不是列表
+        (None, ()),
+    ],
+)
+def test_out_of_range_weekdays_are_dropped(stored: object, expected: tuple[int, ...]) -> None:
+    payload = {
+        "reminder_id": "a",
+        "text": "游泳课",
+        "due_at": AT,
+        "created_at": AT,
+        "repeat": REPEAT_WEEKLY,
+        "weekdays": stored,
+    }
+
+    one = Reminder.from_dict(payload)
+
+    assert one is not None
+    assert one.weekdays == expected
+
+
+def test_a_plain_line_has_no_repeat_keys_on_disk() -> None:
+    """**老行的键集合一个都不变。** 两个新字段非空才写——这是"以后加字段不会让老行
+    变成一坨空键"那条范式的执行点。"""
+    once = _reminder("a", AT)
+    assert set(once.to_dict()) == {"reminder_id", "text", "due_at", "created_at"}
+
+    many = _repeating("b", AT, REPEAT_DAILY)
+    assert set(many.to_dict()) == {"reminder_id", "text", "due_at", "created_at", "repeat"}
+
+    weekly = Reminder(
+        reminder_id="c",
+        text="游泳课",
+        due_at=AT,
+        created_at=AT,
+        repeat=REPEAT_WEEKLY,
+        weekdays=(0, 2),
+    )
+    assert weekly.to_dict()["weekdays"] == [0, 2]

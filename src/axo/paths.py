@@ -39,6 +39,7 @@ __all__ = [
     "memory_db_path",
     "portable_data_root",
     "portable_pointer_path",
+    "reminders_cancelled_path",
     "reminders_fired_path",
     "reminders_path",
     "sessions_dir",
@@ -312,3 +313,19 @@ def reminders_fired_path() -> Path:
     "不想丢一行就重写整个文件"正是 JSONL 想避免的那件事。
     """
     return data_dir() / "reminders.fired.jsonl"
+
+
+def reminders_cancelled_path() -> Path:
+    """**被取消掉**的提醒 id（``agent.reminders.CancelledStore``）。
+
+    **第三本账，不是把取消写进登记簿。** ``reminders.jsonl`` 的契约是"还没被提醒的
+    事情"，往里掺第三种记录会让那句话变成假的；而重写老行更不行——那个文件是只追加
+    的（没有 WAL、没有备份，重写一次就是一次全损）。
+
+    于是三本账各说一件事：``reminders.jsonl`` = 登记了这件事，
+    ``reminders.fired.jsonl`` = 这一次响过了，这一本 = 这条撤了。
+
+    > **再加第四本之前，先把这三本合成一本事件账。** 三本是"三件事各自发生过"，
+    > 四本就是我们其实需要一本次序账了。
+    """
+    return data_dir() / "reminders.cancelled.jsonl"

@@ -89,7 +89,7 @@ def test_a_missed_reminder_fires_when_the_program_starts(tmp_path: Any, qapp: An
     assert len(seen) == 1, "启动时收掉错过的那些，是这条路径存在的理由"
     assert seen[0][0] == "due"
     assert "买牛奶" in seen[0][1]
-    assert one.reminder_id in fired.fired_ids()
+    assert one.reminder_id in fired.fired_keys()
 
 
 def test_it_does_not_fire_twice(tmp_path: Any, qapp: Any) -> None:
@@ -120,7 +120,7 @@ def test_the_sidecar_is_written_before_the_alert(tmp_path: Any, qapp: Any) -> No
     scheduler = ReminderScheduler(reminders=reminders, fired=fired, now=Clock(1000.0))
     one = reminders.add("买牛奶", due_at=900.0, created_at=800.0)
     at_alert_time: list[frozenset[str]] = []
-    scheduler.due.connect(lambda *_args: at_alert_time.append(fired.fired_ids()))
+    scheduler.due.connect(lambda *_args: at_alert_time.append(fired.fired_keys()))
 
     scheduler.start()
 
@@ -213,7 +213,7 @@ def test_a_backlog_arrives_as_one_message(tmp_path: Any, qapp: Any) -> None:
     assert seen[0][0] == "missed"
     assert "3" in seen[0][1]
     for each in ids:
-        assert each in fired.fired_ids(), "聚合了但没标 fired，下次启动会再来一遍"
+        assert each in fired.fired_keys(), "聚合了但没标 fired，下次启动会再来一遍"
 
 
 def test_an_on_time_reminder_is_not_in_the_backlog(tmp_path: Any, qapp: Any) -> None:
@@ -228,7 +228,7 @@ def test_an_on_time_reminder_is_not_in_the_backlog(tmp_path: Any, qapp: Any) -> 
     scheduler.start()
 
     assert len(seen) == 1
-    assert future.reminder_id not in fired.fired_ids()
+    assert future.reminder_id not in fired.fired_keys()
 
 
 # ── 表排在什么时候 ─────────────────────────────────────────────────────────
