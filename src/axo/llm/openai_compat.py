@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import re
+import ssl
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -217,14 +218,32 @@ def _raise_for_status(response: httpx.Response, *, what: str, api_key: str = "")
     raise ChatBackendError(f"{what}失败：HTTP {response.status_code} {detail}{hint}")
 
 
-def _wrap_transport_error(
-    exc: httpx.RequestError, base_url: str, *, what: str, api_key: str = ""
-) -> None:
-    raise ChatBackendError(
-        _redact(
-            f"{what}失败：连不上 {base_url}。原始错误：{type(exc).__name__}: {exc}",
-            api_key,
+def _wrap_transport_error(exc: Exception, base_url: str, *, what: str, api_key: str = "") -> None:
+    """把传输层的异常收成一句人话。**TLS 那一类要单独说。**
+
+    2026-10-12 实测（用户的机器）：他问一句「能听到吗」，界面上回来的是
+
+        对话过程中出现未预期的错误：SSLError: [X509] BIO lib (_ssl.c:4106)
+
+    ``httpx`` 通常把 TLS 失败包成 ``ConnectError``（那是 ``RequestError``，原来就收得住），
+    但**有些路径上它会漏出一个裸的 ``ssl.SSLError``**——而那句原文对用户毫无用处：既没说是
+    哪个地址，也没说能做什么。
+
+    这台机器上这一类的成因写在 README 的排障一节：**系统代理或网络中间设备**拦了那个主机名
+    （实测那台机器配着 ``127.0.0.1:7890``，Windows 的系统代理开关被来回切）。所以这里把它
+    指出来，并给一个真能试的动作——**而不是让人去换模型或重填密钥**，那两件都改不动它。
+    """
+    detail = f"{type(exc).__name__}: {exc}"
+    if isinstance(exc, ssl.SSLError) or isinstance(exc.__cause__, ssl.SSLError):
+        hint = (
+            "\n\n**TLS 握手没成功。** 这通常不是地址或密钥的问题，而是**这台机器上的代理"
+            "或网络中间设备**拦了它：先把系统代理关掉（或者把那个主机名加进直连规则）再试"
+            "一次。详见 README 的排障那一节。"
         )
+    else:
+        hint = ""
+    raise ChatBackendError(
+        _redact(f"{what}失败：连不上 {base_url}。原始错误：{detail}{hint}", api_key)
     ) from exc
 
 
@@ -246,7 +265,7 @@ def list_remote_models(
     with _client(base_url, api_key) as client:
         try:
             response = client.get("/models")
-        except httpx.RequestError as exc:
+        except (httpx.RequestError, ssl.SSLError) as exc:
             _wrap_transport_error(exc, base_url, what="列出云端模型", api_key=api_key)
         _raise_for_status(response, what="列出云端模型", api_key=api_key)
     return _parse_models(response.text)
@@ -356,7 +375,7 @@ def query_context_window(
             if not response.is_success:
                 return _DEFAULT_CLOUD_CONTEXT_WINDOW
             entries = _parse_models(response.text)
-    except (httpx.RequestError, ChatBackendError, ValueError):
+    except (httpx.RequestError, ssl.SSLError, ChatBackendError, ValueError):
         return _DEFAULT_CLOUD_CONTEXT_WINDOW
 
     for entry in entries:
@@ -388,7 +407,7 @@ def probe(base_url: str = DEFAULT_OPENAI_BASE_URL, *, api_key: str = "") -> tupl
             entries = _parse_models(response.text)
     except ChatBackendError as exc:
         return False, str(exc)
-    except (httpx.RequestError, ValueError) as exc:
+    except (httpx.RequestError, ssl.SSLError, ValueError) as exc:
         return False, _redact(f"连不上 {base_url}：{type(exc).__name__}: {exc}", api_key)
     if not api_key:
         return True, f"连上了，列出 {len(entries)} 个模型——但还没填 API key，对话会被拒。"
@@ -465,7 +484,7 @@ class OpenAICompatChatBackend:
                 with client.stream("POST", "/chat/completions", json=payload) as response:
                     _raise_for_status(response, what=f"对话（{self.model}）", api_key=self.api_key)
                     yield from _iter_sse_chunks(response)
-            except httpx.RequestError as exc:
+            except (httpx.RequestError, ssl.SSLError) as exc:
                 _wrap_transport_error(
                     exc, self.base_url, what=f"对话（{self.model}）", api_key=self.api_key
                 )

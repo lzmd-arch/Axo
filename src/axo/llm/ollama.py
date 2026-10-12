@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import ssl
 import uuid
 from collections.abc import Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -163,11 +164,21 @@ def _raise_for_status(response: httpx.Response, *, what: str) -> None:
     raise ChatBackendError(f"{what}失败：HTTP {response.status_code} {detail}{hint}")
 
 
-def _wrap_transport_error(exc: httpx.RequestError, host: str, *, what: str) -> None:
-    raise ChatBackendError(
-        f"{what}失败：连不上 {host}。Ollama 是否在运行？（启动命令：ollama serve）"
-        f" 原始错误：{type(exc).__name__}: {exc}"
-    ) from exc
+def _wrap_transport_error(exc: Exception, host: str, *, what: str) -> None:
+    """把传输层的异常收成一句人话。**TLS 那一类要单独说**（同云端那一份）。
+
+    对 ``http://127.0.0.1:11434`` 来说 TLS 失败很罕见，但 ``allow_remote`` 打开之后
+    连的是别人的机器，那一类就真会到。说"Ollama 是否在运行"在那时是**误导**——
+    它会给用户一个改不动它的动作。
+    """
+    detail = f"{type(exc).__name__}: {exc}"
+    if isinstance(exc, ssl.SSLError) or isinstance(exc.__cause__, ssl.SSLError):
+        hint = (
+            "TLS 握手没成功。这通常不是服务没起来，而是**这台机器上的代理或网络中间设备**拦了它。"
+        )
+    else:
+        hint = "Ollama 是否在运行？（启动命令：ollama serve）"
+    raise ChatBackendError(f"{what}失败：连不上 {host}。{hint} 原始错误：{detail}") from exc
 
 
 def short_model_name(name: str) -> str:
@@ -225,7 +236,7 @@ def list_local_models(
     with _client(host, allow_remote) as client:
         try:
             response = client.get("/api/tags")
-        except httpx.RequestError as exc:
+        except (httpx.RequestError, ssl.SSLError) as exc:
             _wrap_transport_error(exc, host, what="列出本地模型")
         _raise_for_status(response, what="列出本地模型")
 
@@ -420,7 +431,7 @@ class OllamaChatBackend:
                 with client.stream("POST", "/api/chat", json=payload) as response:
                     _raise_for_status(response, what=f"对话（{self.model}）")
                     yield from _iter_ndjson_chunks(response)
-            except httpx.RequestError as exc:
+            except (httpx.RequestError, ssl.SSLError) as exc:
                 _wrap_transport_error(exc, self.host, what=f"对话（{self.model}）")
 
     def _build_payload(self, request: ChatRequest) -> dict[str, Any]:
@@ -745,7 +756,7 @@ def probe_embedding_dim(
     with _client(host, allow_remote) as client:
         try:
             response = client.post("/api/embed", json={"model": model, "input": [_DIM_PROBE_TEXT]})
-        except httpx.RequestError as exc:
+        except (httpx.RequestError, ssl.SSLError) as exc:
             _wrap_transport_error(exc, host, what=f"探测嵌入模型（{model}）")
         if not response.is_success:
             body = response.text.strip()[:300]
@@ -829,7 +840,7 @@ class OllamaEmbeddingBackend:
                         "/api/embed",
                         json={"model": self.model, "input": window},
                     )
-                except httpx.RequestError as exc:
+                except (httpx.RequestError, ssl.SSLError) as exc:
                     _wrap_transport_error(exc, self.host, what=f"嵌入（{self.model}）")
                 _raise_for_status(response, what=f"嵌入（{self.model}）")
                 batches.append(_parse_embeddings(response.text, expected=len(window), dim=self.dim))

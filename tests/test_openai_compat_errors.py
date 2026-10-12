@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import ssl
 from typing import Any
 
 import httpx
@@ -197,3 +198,41 @@ def test_probe_never_raises_on_an_untrusted_address() -> None:
 
     assert ok is False
     assert "https" in detail
+
+
+def test_a_tls_failure_says_what_to_do_about_it() -> None:
+    """裸的 ``ssl.SSLError`` 也要收成一句人话，而且**要指对方向**。
+
+    2026-10-12 实测（用户的机器）：他问一句「能听到吗」，界面上回来的是
+
+        对话过程中出现未预期的错误：SSLError: [X509] BIO lib (_ssl.c:4106)
+
+    既没说是哪个地址，也没说能做什么。``httpx`` 通常把 TLS 失败包成 ``ConnectError``
+    （那个原来就收得住），但有些路径上会漏出一个裸的 ``ssl.SSLError``。
+
+    **方向必须是"代理或中间设备"**：这台机器上那一条的成因就是这个（实测配着
+    ``127.0.0.1:7890``）。写成"换模型"或"重填密钥"的话，用户会把力气花在两件改不动它的
+    事情上——而那正是这句话存在的意义。
+    """
+    exc = ssl.SSLError("[X509] BIO lib (_ssl.c:4106)")
+    with pytest.raises(ChatBackendError) as caught:
+        _wrap_transport_error(exc, "https://api.deepseek.com/v1", what="对话（x）", api_key=_KEY)
+
+    text = str(caught.value)
+    assert "连不上 https://api.deepseek.com/v1" in text
+    assert "TLS" in text
+    assert "代理" in text
+    assert _KEY not in text
+
+
+def test_an_ordinary_transport_error_does_not_get_the_tls_sentence() -> None:
+    """反空转：普通连不上**不该**被贴上 TLS 那句话。
+
+    少了这一条，一个"每一条传输错误都说是 TLS"的实现也能全绿——而那时用户会去关代理，
+    关掉之后发现还是连不上，于是不再相信界面上的任何一句话。
+    """
+    exc = httpx.ConnectError("connection refused")
+    with pytest.raises(ChatBackendError) as caught:
+        _wrap_transport_error(exc, "https://api.deepseek.com/v1", what="对话（x）")
+
+    assert "TLS" not in str(caught.value)
