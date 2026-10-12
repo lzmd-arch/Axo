@@ -48,6 +48,11 @@ wallpapers/
 config.toml
 !config.example.toml
 
+# 便携数据位置的指针文件（paths.py 的 _PORTABLE_NAME）。程序**只读不写**它，所以
+# 它只会由人手工放在程序目录旁；而开发态那个"程序目录"就是仓库根，于是它可能出现在
+# 这里。内容是一行别人机器上的绝对路径，不该进库。
+axo-data.txt
+
 # Python
 __pycache__/
 *.py[cod]

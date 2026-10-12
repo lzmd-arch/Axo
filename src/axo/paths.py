@@ -6,13 +6,25 @@
 换个地方 clone 就"失忆"；以及最隐蔽的——把库提交进版本控制，私人对话内容
 连同 embedding 一起进了远端。
 
-因此顺序是：环境变量 ``AXO_DATA`` → 系统用户数据目录。仓库里的
-``data/`` 只在开发时通过环境变量显式指过去，且已在 .gitignore 里。
+因此顺序是（**四档，从上往下第一个说了算**）：
+
+1. 环境变量 ``AXO_DATA``——开发逃生口，也是全部测试与打包自检的隔离开关；
+2. 程序目录旁的便携指针文件 :data:`_PORTABLE_NAME`（**只读**，见
+   :func:`portable_data_root`）；
+3. :func:`set_data_root` 钉进来的那个（界面里选的，存在注册表里，由 Qt 层告知）；
+4. 系统用户数据目录。
+
+**这一层不许 import Qt。** 第 3 档的值住在注册表里，读它要用 ``QSettings``，而
+``ui/settings_store.py`` 已经 import 了本模块——反过来 import 就是环。所以本模块
+只负责"被告诉一个根"，由 ``ui/data_root.py`` 在启动时读注册表再告知。
+
+仓库里的 ``data/`` 只在开发时通过环境变量显式指过去，且已在 .gitignore 里。
 """
 
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 __all__ = [
@@ -20,11 +32,17 @@ __all__ = [
     "consolidation_events_path",
     "consolidation_last_path",
     "data_dir",
+    "data_root_source",
+    "default_data_dir",
+    "env_data_root",
     "graph_path",
     "memory_db_path",
+    "portable_data_root",
+    "portable_pointer_path",
     "reminders_fired_path",
     "reminders_path",
     "sessions_dir",
+    "set_data_root",
     "snapshot_dir",
     "wallpapers_dir",
 ]
@@ -32,23 +50,125 @@ __all__ = [
 _ENV_OVERRIDE = "AXO_DATA"
 _APP_DIR_NAME = "axo"
 
+_PORTABLE_NAME = "axo-data.txt"
+"""程序目录旁那个"这一份程序用哪个数据目录"的指针文件。
+
+**只读，从不创建、从不修改。** 那三条限制是刻意的，各自挡住一件事：程序目录可能
+根本写不了（装在 ``Program Files`` 里）；"程序不往自己旁边写文件"是发行说明里
+写过的承诺，而打包的发布闸门会扫产物树；开发态那个"程序目录"是仓库根，那里有
+一整族禁止写入的守卫（见 ``tests/test_repo_hygiene.py``）。
+
+内容是一行绝对路径，``#`` 开头当注释。想便携就自己放一份。
+"""
+
+_override: Path | None = None
+"""进程内的一次性覆盖（第 3 档）。**只在启动时、建任何 store 之前设一次。**
+
+这一层每个函数都是**当场现算**的（没有缓存，这是有意的），所以中途改它会让已经
+建好的东西留在旧根、之后新建的落在新根——那种"一半一半"比"改不了"难查得多。
+界面里改位置走的是"写标记 + 重启"，见 ``ui/data_root.py``。
+"""
+
+
+def env_data_root() -> Path | None:
+    """环境变量 ``AXO_DATA`` 指的那个目录；没设就是 ``None``。
+
+    单列出来是给界面用的：设了它的时候界面里那两个改位置的按钮不生效（它优先级
+    最高），而一个点了没反应的按钮必须有一句话解释。
+    """
+    raw = os.environ.get(_ENV_OVERRIDE)
+    if not raw:
+        return None
+    return Path(raw).expanduser()
+
+
+def default_data_dir() -> Path:
+    """不含任何覆盖的默认根目录（第 4 档）。
+
+    Windows: ``%LOCALAPPDATA%``（不进漫游配置——记忆库可能有几百 MB，跟着域账号
+    漫游会把登录拖垮）；其它平台按 XDG 惯例。
+
+    单列出来是为了让界面能说"恢复默认位置"而**不必猜**默认值是什么。
+    """
+    local_appdata = os.environ.get("LOCALAPPDATA")
+    if local_appdata:
+        return Path(local_appdata) / _APP_DIR_NAME
+    return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / _APP_DIR_NAME
+
+
+def portable_pointer_path() -> Path | None:
+    """第 2 档那个指针文件**应该**在哪（不保证它存在）。
+
+    冻结态是 ``axo.exe`` 所在目录；源码态是仓库根。两个都不是"当前工作目录"——
+    从桌面快捷方式起、或者 ``cd`` 到别处再起，工作目录都不一样，把指针挂在那上面
+    等于让它在不同起法下指向不同文件。
+    """
+    if getattr(sys, "frozen", False):
+        base = Path(sys.executable).resolve().parent
+    else:
+        # paths.py 在 src/axo/ 下：parents[0]=src/axo、[1]=src、[2]=仓库根。
+        base = Path(__file__).resolve().parents[2]
+    return base / _PORTABLE_NAME
+
+
+def portable_data_root() -> Path | None:
+    """读便携指针文件；没有、读不出、或内容不是绝对路径，一律 ``None``。
+
+    **坏内容当没有，不抛。** 这个文件是用户手写的（见 :data:`_PORTABLE_NAME`），
+    而"用户在程序旁边放了一个格式不对的文件"不该让程序起不来。取第一条有效行；
+    那一条不是绝对路径就整份作废——相对路径的含义取决于工作目录，对 GUI 而言那是
+    一次**静默的位置变更**，比"没设"危险得多。
+    """
+    pointer = portable_pointer_path()
+    try:
+        text = pointer.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        candidate = Path(stripped).expanduser()
+        return candidate if candidate.is_absolute() else None
+    return None
+
+
+def set_data_root(root: Path | str | None) -> None:
+    """把数据根钉在 ``root``；``None`` = 取消覆盖、回到原规则。
+
+    **不要用它去盖过环境变量**——盖不过。上面那四档的次序是定死的，
+    ``AXO_DATA`` 与便携文件都在这一档之上，所以设了它们的时候这个函数等于没设。
+    界面靠 :func:`data_root_source` 把这件事说清楚。
+    """
+    global _override
+    _override = Path(root).expanduser() if root is not None else None
+
+
+def data_root_source() -> str:
+    """:func:`data_dir` 现在听谁的：``"env"`` / ``"portable"`` / ``"stored"`` / ``"default"``。
+
+    与 :func:`data_dir` 用同一套判据、同一个次序，**分两个函数写是为了让界面能说
+    出理由**——"位置是 `D:\\AxoData`"和"位置是 `D:\\AxoData`，因为你在设置里选过"
+    是两句不同的话，而只有后者能解释"为什么我点了没反应"。
+    """
+    if env_data_root() is not None:
+        return "env"
+    if portable_data_root() is not None:
+        return "portable"
+    if _override is not None:
+        return "stored"
+    return "default"
+
 
 def data_dir() -> Path:
     """记忆终端的数据根目录，不存在则创建。"""
-    override = os.environ.get(_ENV_OVERRIDE)
-    if override:
-        root = Path(override).expanduser()
-    else:
-        # Windows: %LOCALAPPDATA%（不进漫游配置——记忆库可能有几百 MB，跟着
-        # 域账号漫游会把登录拖垮）；其它平台按 XDG 惯例。
-        local_appdata = os.environ.get("LOCALAPPDATA")
-        if local_appdata:
-            root = Path(local_appdata) / _APP_DIR_NAME
-        else:
-            root = (
-                Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
-                / _APP_DIR_NAME
-            )
+    root = env_data_root()
+    if root is None:
+        root = portable_data_root()
+    if root is None:
+        root = _override
+    if root is None:
+        root = default_data_dir()
     root.mkdir(parents=True, exist_ok=True)
     return root
 
