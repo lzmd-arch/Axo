@@ -69,7 +69,14 @@ from ..agent.catalog import default_tools
 from ..agent.gate import APPROVAL_TIMEOUT_S
 from ..agent.proactive import build_reminder_messages
 from ..agent.reminders import Alert, CancelledStore, FiredStore, ReminderStore
-from ..agent.router import HELP_TEXT, Register, RegisterState, RoutedTurn, route_turn
+from ..agent.router import (
+    HELP_TEXT,
+    SCREEN_MARKERS,
+    Register,
+    RegisterState,
+    RoutedTurn,
+    route_turn,
+)
 from ..agent.tools import Capture, ToolContext, ToolRegistry
 from ..asr import Transcription
 from ..llm.base import ChatBackendError, ChatRequest
@@ -1627,6 +1634,7 @@ class MainWindow(QMainWindow):
         if self._turn_uses_tools:
             registry = self._tools()
             if len(registry):
+                self._explain_the_missing_screen_tool()
                 self._start_agent_turn(assembly, registry)
                 return
             # 一个工具都没有的任务轮——**说明为什么**再按普通对话走。默默降级的话，
@@ -1680,6 +1688,53 @@ class MainWindow(QMainWindow):
         if not name:
             return False
         return "vision" in self._model_caps.get(str(name), ())
+
+    def _explain_the_missing_screen_tool(self) -> None:
+        """这一句要看屏幕，而这一轮的工具表里没有那个工具 —— **把为什么说出来**。
+
+        2026-10-12 实测（用户的机器）：他问「先帮我确认一下，你现在能看到我的屏幕吗」，
+        模型答「看不到。我没有屏幕、窗口这类接口——你没接给我」。**模型说的是实话**：
+        ``look_at_screen`` 只在当前模型自报看得见图时才登记（见 :meth:`_model_can_see`），
+        而他当时用的是**云端**后端——那边问不到能力，tool 行也装不了图
+        （``llm/openai_compat.py`` 见到图会明确拒绝）。
+
+        问题在于**界面上一个字都没说为什么**：那句话读起来像"这个功能根本不存在"，
+        而它其实做完了、就在那儿等着一个看得见图的模型。用户问的正是"我给你做了这个
+        功能，你找一找有没有"——他连"它为什么不出现"都无从查起。
+
+        **只在"这一句确实在说屏幕"时出现**，判据借路由自己那张词表
+        （``router.SCREEN_MARKERS``）。另起一张的话，两处迟早不一致，而症状是"有时候
+        解释、有时候不解释"——那比不解释更难查。
+
+        看不见图时那个工具**一定**不在表里（``_tools()`` 只认这一个判据），所以这里
+        不去表里找一遍、也不收工具表当参数：那句话只说"为什么"，不说"表里有什么"。
+
+        **这一轮的正文从 ``self._pending_text`` 拿**：这个方法是在装配好的那一刻被调的
+        （``_on_assembly_ready``），而那个栈帧里没有 ``text`` 这个名字——正文是随请求
+        一起传过去的。写错的表现是这一句**永远不出现**，而且不报错（早先一版就是这么
+        写的，ruff 的 F821 拦下了它）。
+        """
+        if self._model_can_see():
+            return
+        if not any(marker in self._pending_text for marker in SCREEN_MARKERS):
+            return
+        if self._backend_settings.is_cloud:
+            self.chat_view.append_message(
+                "system",
+                "**这一轮看不了屏幕。**\n\n"
+                "屏幕识别要一个能看图的模型，而**云端后端装不了图**"
+                "（OpenAI 兼容的那条协议里，工具结果只能带文字）。"
+                "换成本机的模型就行：`ollama pull minicpm-v:8b`，"
+                "再在顶栏的下拉框里选中它。",
+            )
+            return
+        name = str(self.model_combo.currentData() or "当前这个模型")
+        self.chat_view.append_message(
+            "system",
+            f"**这一轮看不了屏幕。**\n\n"
+            f"屏幕识别要一个能看图的模型，而 **{name}** 自报的能力里没有 `vision`。"
+            "换一个看得见的再问一次（本机 8 GB 显存这一档：`ollama pull minicpm-v:8b`）。",
+        )
 
     def _start_agent_turn(self, assembly: Assembly, registry: ToolRegistry) -> None:
         """起一轮带工具的请求。"""

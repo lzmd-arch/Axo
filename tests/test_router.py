@@ -37,6 +37,7 @@ from axo.agent.router import (
     DEFAULT_HYSTERESIS,
     HELP_TEXT,
     MODEL_CLASSIFY_DEFAULT,
+    SCREEN_MARKERS,
     ModelRole,
     ParsedTurn,
     Register,
@@ -905,3 +906,20 @@ def test_a_bare_slash_switch_does_advance_the_state() -> None:
     route_turn("/task", state)
 
     assert state.register is Register.TASK
+
+
+def test_every_screen_marker_really_lands_in_the_task_register() -> None:
+    """``SCREEN_MARKERS`` 里每一个说法都要真的把那一句判成 task。
+
+    这张表**现在有两个读者**：路由（决定这一轮声明不声明工具）与主窗口（"这一句在说屏幕，
+    而这一轮没有那个工具"时给用户一句解释，见
+    ``MainWindow._explain_the_missing_screen_tool``）。共用一份是为了不漂，但共用也有
+    一个前提——**它真的管用**。哪天有人挪走一个词、而界面那边照旧按它判断，症状是
+    "解释出现了、工具却没打算给"，或者反过来：解释不出现，而用户看到的是"它说没有工具"。
+
+    2026-10-12 加 ``我屏幕`` 就是这条：用户问「我屏幕现在是什么」，表里只有 ``屏幕上``
+    与 ``我的屏幕``，于是那一句落进闲聊语域、一个工具都不声明。
+    """
+    for marker in SCREEN_MARKERS:
+        routed = route_turn(f"{marker}现在是什么", RegisterState())
+        assert routed.uses_tools is True, f"「{marker}」现在判不成 task 了"
