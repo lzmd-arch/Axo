@@ -128,6 +128,22 @@ class ChatMessage:
     name: str | None = None
     tool_calls: tuple[ToolCall, ...] = ()
     tool_call_id: str | None = None
+    images: tuple[str, ...] = ()
+    """随这条消息一起送出去的图，**base64 字符串**（不带 ``data:`` 前缀）。
+
+    现在只有一个来源：``look_at_screen`` 的返回行带着一张屏幕截图，模型在这一轮之后的
+    请求里能看到它。**它只活在那一轮的工作尾巴里**——那个工具的结果标了
+    ``replayable=False``（它是快照），于是不回放、逐字稿里也只剩一行文字，**图永远
+    不落盘**。
+
+    用 base64 而不是路径：后端要的就是这个形状（Ollama 的 ``images`` 字段实测收它），
+    而"给一条路径让后端自己去读"会把**后端的文件系统可见性**变成一条隐含契约——
+    本机后端看得见、云端后端看不见，那种差别不该藏在一条消息里。
+
+    **哪些角色能带**：实测 Ollama 在 ``user`` 与 ``tool`` 行上都收；OpenAI 兼容协议
+    只认 ``user`` 的 content 分片，所以那边的后端见到图会**抛**（见
+    ``llm/openai_compat.py``），而不是悄悄丢掉。
+    """
 
     def __post_init__(self) -> None:
         # 只校验工具相关的这两条不变量。它们不是风格偏好，是协议层的硬需求：

@@ -27,6 +27,7 @@ __all__ = [
     "CONVERSATION_BASE",
     "DEFAULT_RESERVE_OUTPUT",
     "GENERATION_PROMPT",
+    "IMAGE_TOKENS",
     "PER_MESSAGE_OVERHEAD",
     "TokenBudget",
     "TokenMeter",
@@ -80,6 +81,26 @@ DEFAULT_RESERVE_OUTPUT = 2048
 """
 
 
+IMAGE_TOKENS = 1536
+"""一条图在上下文里的代价。**先验值——没有标定。**
+
+**它与上面那四个不是一类东西，别混着读。** 那四个是差值法**量**出来的（同一个文本发三次，
+差出来的就是包装），而且四条互相印证；这一个本机量不了：**没有能看图的模型**（`qwen3-4b`
+的 capabilities 里没有 `vision`）。量法已经有了，只差一个模型：同一个文本发两次，一次带图
+一次不带，比对服务端回的 `prompt_eval_count` —— 与 `tools/calibrate_tokens.py` 的差值法
+同一套。
+
+取 1536 的理由只有一条：一屏文字缩到长边 1600 之后，按 28×28 分块大致落在这一档；而它
+**偏保守**（同 :data:`PER_MESSAGE_OVERHEAD` 那句——包多算的代价是少注入一条记忆，包少算的
+代价是服务端静默截断最早的消息）。
+
+**上限是硬的。** 它必须明显小于 :func:`~axo.session.assemble.layer_ceiling` 给 L5 的额度
+（本机 ``num_ctx`` 16384 时约 2.8k），否则一张图会把整个工具尾巴挤掉——而"挤掉"在服务端
+那侧表现出来是**静默截断最早的消息**，正是装配器与循环两处文档反复点名的最坏形态。
+``tests/test_budget.py`` 有一条断言钉着这件事。
+"""
+
+
 @dataclass(frozen=True)
 class TokenMeter:
     """一处算清所有 token 代价。
@@ -105,6 +126,11 @@ class TokenMeter:
         total = estimate_tokens(message.content) + self.per_message_overhead
         if message.tool_calls:
             total += self.tool_calls(message.tool_calls)
+        if message.images:
+            # 按张算，不按字节：一张 1600 宽的截图与一张 800 宽的差在**分块数**上，
+            # 而那与 base64 长度不是线性的（PNG 的压缩率取决于画面内容）。用字节数
+            # 折算会得到一个"文字多一点的截图反而更便宜"的结论。
+            total += IMAGE_TOKENS * len(message.images)
         return total
 
     def tool_calls(self, calls: Iterable[object]) -> int:

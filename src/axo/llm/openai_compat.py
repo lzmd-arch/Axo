@@ -532,6 +532,18 @@ def _build_message(message: ChatMessage) -> dict[str, Any]:
 
     这两处不对称是**协议本身的**，所以它只能活在后端层。
     """
+    if message.images:
+        # **明说，不静默丢。** 这个协议里只有 ``user`` 消息能带图（``content`` 要写成
+        # 分片数组），而屏幕识别的图挂在 ``tool`` 行上——丢掉它的话，模型会收到一条
+        # "你看过屏幕"却看不见图的记录，然后开始编。
+        #
+        # 走到这里说明上游的登记漏了（云端的模型能力恒为"问不到"，所以那个工具在
+        # 云端本来就不该被登记）。抛而不是降级：这条路径上没有任何一方能从"少一张图"
+        # 里恢复出正确的行为。
+        raise ChatBackendError(
+            "这一条消息带着图，而 OpenAI 兼容协议只允许 user 消息带图（content 分片），"
+            "tool 行装不了。屏幕识别只支持本机 Ollama 后端。"
+        )
     payload: dict[str, Any] = {"role": message.role, "content": message.content}
     if message.name:
         payload["name"] = message.name

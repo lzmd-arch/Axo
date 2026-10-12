@@ -477,6 +477,11 @@ def _build_message(message: ChatMessage) -> dict[str, Any]:
         ]
     if message.tool_call_id:
         payload["tool_call_id"] = message.tool_call_id
+    # **非空才写**（同上面那三个字段）：不带图的请求与加这个字段之前逐字节一致。
+    # 实测过 Ollama 收 ``tool`` 行上的 ``images``——1×1 PNG 试下来报的是"这个模型
+    # 不支持图像输入"，那是能力问题，不是字段问题。
+    if message.images:
+        payload["images"] = list(message.images)
     return payload
 
 

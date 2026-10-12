@@ -172,6 +172,22 @@ def test_a_tool_result_carries_its_call_id() -> None:
     assert built["role"] == "tool"
 
 
+def test_an_image_on_a_message_is_refused_not_dropped() -> None:
+    """**这个协议装不了 tool 行上的图**，所以见到就抛。
+
+    为什么不能"悄悄丢掉"：丢的话模型会收到一条"你看过屏幕"却看不见图的记录，然后开始
+    编——而那正是这条链上最贵的一种错。为什么会出现：云端后端的模型能力**恒为"问不到"**，
+    所以 ``look_at_screen`` 在云端本来就不该被登记；走到这里是上游登记漏了，一个能立刻
+    看见的异常比一次静默降级值钱。
+    """
+    message = ChatMessage(
+        role="tool", content="截了一张屏幕图。", tool_call_id="c1", images=("QUJD",)
+    )
+
+    with pytest.raises(ChatBackendError):
+        _build_message(message)
+
+
 def test_non_ascii_arguments_are_not_escaped_into_puzzles() -> None:
     """``ensure_ascii=False``。转义本身是合法的，但它在日志与错误信息里读起来像乱码，
     而排查工具调用问题时人正是要读那一串。"""

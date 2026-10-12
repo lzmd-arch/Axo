@@ -16,9 +16,11 @@ from __future__ import annotations
 import pytest
 
 from axo.llm.base import ChatMessage, ToolCall
+from axo.session.assemble import Layer, layer_ceiling
 from axo.session.budget import (
     CONVERSATION_BASE,
     GENERATION_PROMPT,
+    IMAGE_TOKENS,
     PER_MESSAGE_OVERHEAD,
     TokenBudget,
     TokenMeter,
@@ -193,3 +195,51 @@ def test_the_ledger_record_is_complete() -> None:
     record = TokenBudget(window=16384, reserve_output=2048).to_dict()
     assert set(record) == {"window", "reserve_output", "input_limit", "tolerance", "usable"}
     assert record["usable"] < record["input_limit"]
+
+
+# ── 图：先验常数与它的上限 ──────────────────────────────────────────────────
+#
+# 这个常数与上面那两个**不是一类东西**：那两个是差值法量出来的，这一个本机量不了
+# （没有能看图的模型）。所以这里钉的不是"它准不准"，而是两件能钉的事：**它怎么进
+# 公式**，以及**它不会把工具尾巴整个吃掉**。
+
+
+def test_an_image_adds_a_fixed_cost_per_image(meter: TokenMeter) -> None:
+    """一张图 = 一个定值，两张 = 两倍；不带图的那一条**逐 token 不变**。
+
+    按张算而不是按 base64 长度折算：一张 1600 宽的截图与一张 800 宽的差在**分块数**上，
+    而那与编码后的字节数不是线性的（PNG 压缩率取决于画面内容）。按字节折算会得出
+    "画面复杂一点的截图反而更贵"这种没法解释的结论。
+    """
+    text = "截了一张屏幕图。"
+    plain = ChatMessage(role="tool", content=text, tool_call_id="c1")
+    one = ChatMessage(role="tool", content=text, tool_call_id="c1", images=("QUJD",))
+    two = ChatMessage(role="tool", content=text, tool_call_id="c1", images=("QUJD", "REVG"))
+
+    assert meter.message(one) == meter.message(plain) + IMAGE_TOKENS
+    assert meter.message(two) == meter.message(plain) + 2 * IMAGE_TOKENS
+
+
+def test_one_image_never_eats_the_whole_tool_tail() -> None:
+    """**一张图的计价必须明显小于 L5 的额度。**
+
+    这是这个先验值唯一的硬约束（``IMAGE_TOKENS`` 的 docstring 写了理由）：超了的话，
+    工具尾巴会被一张图挤空，而"挤掉"在服务端那一侧是**静默截断最早的消息**——那正是
+    装配器与循环两处文档反复点名的最坏形态。
+
+    拿本机那个窗口（``num_ctx`` 16384、给生成留 2048）算，L5 的额度是 **2580**，
+    而一张图按 :data:`IMAGE_TOKENS` 记 **1536**——**吃掉约六成**。这条断言要求的是
+    "留得下正文"（而不是"刚好小于"）：尾巴里除了图还有工具结果那几句。
+
+    **两张就装不下了**（3072 > 2580），所以"一轮里最多带一张"不是省事，是算出来的；
+    真正执行它的是 ``agent/loop.py`` 里那个"图 + 正文超过额度就不带这张图、并在回灌里
+    说明"的判断——那一条要等 ``look_at_screen`` 落地才有得测，这里先把数钉住。
+    """
+    budget = TokenBudget(window=16384, reserve_output=2048)
+
+    ceiling = layer_ceiling(budget, Layer.TOOLS)
+
+    assert ceiling > IMAGE_TOKENS, f"一张图 {IMAGE_TOKENS} ≥ L5 额度 {ceiling}"
+    assert IMAGE_TOKENS / ceiling < 2 / 3, (
+        f"一张图吃掉 {IMAGE_TOKENS / ceiling:.0%} 的尾巴额度——正文就没地方放了"
+    )

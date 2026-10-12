@@ -296,6 +296,25 @@ def test_build_message_writes_tool_call_id_on_tool_rows() -> None:
     assert payload["tool_call_id"] == "abc123"
 
 
+def test_build_message_passes_images_through_only_when_present() -> None:
+    """图随消息走，而**没有图的请求与加这个字段之前逐字节一致**。
+
+    这条"非空才写"与 ``name``/``tool_call_id`` 同一写法，也是 ``ChatRequest`` 那句
+    承诺（"不带工具的请求与加这个字段之前逐字节一致"）在消息这一层的对应物。
+
+    形状用 base64 字符串（实测 Ollama 收）：这一条锁的是**字段名与形状**，因为那种错
+    不会报错——服务端不认识这个键时只是当没有，而模型那边表现为"它说看过屏幕却什么都
+    说不出"。
+    """
+    with_images = _build_message(
+        ChatMessage(role="tool", content="截了一张屏幕图。", tool_call_id="c1", images=("QUJD",))
+    )
+    assert with_images["images"] == ["QUJD"]
+
+    without = _build_message(ChatMessage(role="tool", content="9:00", tool_call_id="c1"))
+    assert "images" not in without
+
+
 def test_round_trip_of_a_real_call() -> None:
     """夹具里的真实调用 → 回灌序列化 → 仍是可配对的形状。
 
