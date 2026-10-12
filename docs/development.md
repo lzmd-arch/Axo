@@ -332,7 +332,7 @@ src/
       chat_view.py      网页对话区：QWebChannel 桥 + 外观三件套 + 人设卡片 + 确认卡片
       agent_worker.py   AgentWorker(QObject)：Qt 信号 ↔ 纯层的桥（gui 腿）
       tray.py           系统托盘：程序化画的图标 + 三项菜单 + 一条气泡
-      reminder_scheduler.py 单发 QTimer：到点了发信号（**不认识窗口，也不认识托盘**）
+      reminder_scheduler.py 单发 QTimer：到点了发一个 `Alert`（**不认识窗口，也不认识托盘**）
       consolidation_scheduler.py 单发 QTimer：周期到了发信号（与提醒**各一个**，不打架）
       web/              对话区前端（index.html / css/app.css / js/app.js）
       memory_window.py  记忆界面（独立窗口）
@@ -389,7 +389,8 @@ tests/
   test_ui_tray.py      托盘：不可用时全无操作、图标不是空的、两项菜单真的接上了信号
   test_ui_window_icon.py 窗口图标：窗口与应用两级都装上了、画的是那一支主色、换外观那条路真的调它（ast）
   test_ui_close_to_tray.py 关窗两支：真值表、隐藏时给一次提示、`_quit` 先置位再关
-  test_ui_reminder_scheduler.py 到点只响一次、先落盘再弹、重启不重弹、错过的收成一句
+  test_ui_reminder_scheduler.py 到点只响一次、先落盘再弹、重启不重弹、错过的收成一句、
+                            取消过的两处都不认（不响 + 不占着表）、重复的第二天还回来
   test_recall_graph.py 联想通道：`graph_weight=0` 逐位相同、扩散取 max 不取 sum、有 weight 无图的备注
   test_ui_memory_worker.py `GraphWorker`：大库不遍历、`force` 真的重建、坏文件当没图、写盘失败不丢图
   test_ui_graph_chain.py 联想开关与图从设置页走到召回配置（未绑定方法 + 人造 self）

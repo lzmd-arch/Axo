@@ -196,6 +196,13 @@ def _at_same_clock(base: float, days: int) -> float:
     **不是 ``base + days * 86400``。** 那个写法在有夏令时的时区里会把"每天 22:30"
     在换季那天变成 21:30 或 23:30——而"每天几点"这句话的语义是**墙上时间**，不是
     "隔了 86400 秒"。
+
+    **Windows 上另有一个边界**：``datetime.timestamp()`` 对 1970 年前后的**本地**
+    时刻会抛 ``OSError``（``mktime`` 只吃 1970 之后的本地时间，而东八区的
+    ``epoch + 1000`` 已经落在 1970-01-01 08:16，回算成 UTC 就在 1970 之前）。
+    真实的 ``due_at``（用户约的那些）永远在 2020 之后，所以这只在**测试**里用合成
+    epoch 常数时会撞上——重复日程的测试请用真实日期（同
+    ``tests/test_agent_reminders.py`` 的 ``_at``）。
     """
     parts = time.localtime(base)
     moved = datetime(

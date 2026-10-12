@@ -66,7 +66,7 @@ from memcore.store import MemoryStore
 
 from ..agent.catalog import default_tools
 from ..agent.gate import APPROVAL_TIMEOUT_S
-from ..agent.reminders import CancelledStore, FiredStore, ReminderStore
+from ..agent.reminders import Alert, CancelledStore, FiredStore, ReminderStore
 from ..agent.router import HELP_TEXT, Register, RegisterState, RoutedTurn, route_turn
 from ..agent.tools import ToolContext, ToolRegistry
 from ..llm.base import ChatBackendError, ChatRequest
@@ -463,16 +463,22 @@ class MainWindow(QMainWindow):
         self._tray.consolidate_requested.connect(self._on_manual_consolidation)
         self._tray.quit_requested.connect(self._quit)
         #: 定时触发。**它的前提是上面那个托盘**：关窗即退的进程在"到点了"那一刻已经
-        #: 不在了（见 ``ui/reminder_scheduler.py`` 的模块文档）。它算好标题与正文就
-        #: 发信号——不认识窗口也不认识托盘，显示在下面那个槽里。
+        #: 不在了（见 ``ui/reminder_scheduler.py`` 的模块文档）。它把这一批到点包成
+        #: 一个 :class:`~axo.agent.reminders.Alert` 就发信号——不认识窗口也不认识
+        #: 托盘，显示在下面那个槽里。
+        #:
+        #: **三本账都传进去**：登记簿、响过的、取消过的。第三本不传的话，用户撤掉的
+        #: 那条到点照旧弹——而那个参数刻意没有默认值，正是为了让"忘了传"当场炸掉。
         #:
         #: ``start()`` 不在这里，在 ``__init__`` 的**最后**：启动时错过的那些是
         #: **同步**发出来的，而槽要往 ``chat_view`` 里写。
         self._scheduler = ReminderScheduler(
-            reminders=self._reminders, fired=self._reminders_fired, parent=self
+            reminders=self._reminders,
+            fired=self._reminders_fired,
+            cancelled=self._reminders_cancelled,
+            parent=self,
         )
-        self._scheduler.due.connect(self._on_reminder_fired)
-        self._scheduler.missed.connect(self._on_reminder_fired)
+        self._scheduler.fired.connect(self._on_reminder_fired)
 
         #: 周期巩固的表。**与上面那个并存、不打架**：两个独立 ``QTimer``、两个不同的
         #: 槽、没有共享可变状态（见 ``ui/consolidation_scheduler.py`` 的模块文档）。
@@ -1713,8 +1719,8 @@ class MainWindow(QMainWindow):
             # 登记是工具自己落的盘，走到这里时文件里已经有了。
             self._scheduler.reschedule()
 
-    @Slot(str, str)
-    def _on_reminder_fired(self, title: str, body: str) -> None:
+    @Slot(object)
+    def _on_reminder_fired(self, alert: Alert) -> None:
         """到点了（或启动时收掉了一批错过的）：**两处都要说**。
 
         * **对话区一条**：用户回看时它在那儿。窗口可能是藏着的，而这条消息本来就
@@ -1724,9 +1730,16 @@ class MainWindow(QMainWindow):
 
         **不用模态框**：它挡住用户正在做的事，而这条消息要的是"知道一下"，不是
         "停下来处理"。收到这条消息时用户可能正在别的窗口里打字。
+
+        **两处说的是同一句话**（``alert.heading()`` / ``alert.body()``）。同一句话
+        写两遍，两份迟早会分叉——而分叉的那天没人会发现，因为这两处只在"到点了"
+        那一刻出现。
+
+        措辞不在这个槽里定：:class:`~axo.agent.reminders.Alert` 在纯层，"一条还是
+        一堆、是不是错过"这三个判据因此逐条可断言（见 ``agent/reminders.py``）。
         """
-        self.chat_view.append_message("system", f"**{title}**\n\n{body}")
-        self._tray.show_message(title, body)
+        self.chat_view.append_message("system", f"**{alert.heading()}**\n\n{alert.body()}")
+        self._tray.show_message(alert.heading(), alert.body())
 
     @Slot(str, str, str)
     def _on_approval_needed(self, call_id: str, tool_name: str, summary: str) -> None:

@@ -25,6 +25,7 @@ from typing import Any
 import pytest
 
 from axo.agent.gate import APPROVAL_TIMEOUT_S
+from axo.agent.reminders import Alert, Occurrence, Reminder
 from axo.llm.base import ChatMessage, ToolCall
 from axo.ui.main_window import MainWindow
 
@@ -116,6 +117,23 @@ class Stub:
 
     def _append(self, message: Any) -> None:
         self.stored.append(message)
+
+
+def reminder_alert(*texts: str, late: bool = False) -> Alert:
+    """一条（或一堆）到点，**按纯层那个 :class:`Alert` 的形状造**。
+
+    不手搓一个只有 ``heading``/``body`` 的替身：这个槽的全部职责就是"把 Alert 自己
+    那两句话原样送到两处"，替身会把"标题究竟怎么来的"一起替掉——而那正是上一版
+    （标题由 Qt 那一侧现拼）搬进纯层时要解决的东西。
+    """
+    items = tuple(
+        Occurrence(
+            reminder=Reminder(reminder_id=f"r{index}", text=text, due_at=1000.0, created_at=900.0),
+            at=1000.0,
+        )
+        for index, text in enumerate(texts)
+    )
+    return Alert(items=items, late=late)
 
 
 def statuses(stub: Stub) -> list[str]:
@@ -336,9 +354,13 @@ def test_a_reminder_is_told_in_both_places(qapp: Any) -> None:
     """
     stub = Stub()
 
-    stub._on_reminder_fired("提醒", "买牛奶")
+    stub._on_reminder_fired(reminder_alert("买牛奶"))
 
-    assert stub.chat_view.calls == [("appendMessage", "system", "**提醒**\n\n买牛奶", None)]
+    # 正文的形状（``**标题**`` + 空行 + 正文）在这里**写死**，不从 ``Alert`` 现算：
+    # 现算的话两边共用同一个表达式，形状改了这条测试跟着改，等于什么都没钉。
+    assert stub.chat_view.calls == [
+        ("appendMessage", "system", "**提醒**" + "\n\n" + "买牛奶", None)
+    ]
     assert stub._tray.messages == [("提醒", "买牛奶")]
 
 
@@ -351,10 +373,32 @@ def test_a_backlog_of_reminders_is_one_message_not_many(qapp: Any) -> None:
     """
     stub = Stub()
 
-    stub._on_reminder_fired("3 条提醒到点了", "甲、乙、丙")
+    stub._on_reminder_fired(reminder_alert("甲", "乙", "丙"))
 
     assert len(stub.chat_view.calls) == 1
     assert len(stub._tray.messages) == 1
+    _kind, _role, text, _meta = stub.chat_view.calls[-1]
+    assert "3 条提醒到点了" in text
+    for each in ("甲", "乙", "丙"):
+        assert each in text, "聚合的那一句里少了一条"
+
+
+def test_the_two_places_say_the_same_words(qapp: Any) -> None:
+    """两处说的是**同一句**，而且都来自 :class:`Alert` 自己。
+
+    这个槽能犯的错是"顺手改一处"：气泡里写正文、对话区里写标题，或者其中一处自己
+    拼一句话。改完两边都还在响，只是说的不是一回事——而它被发现的时机是"用户照着
+    气泡去找那句话，在对话区里找不到"。
+    """
+    stub = Stub()
+    one = reminder_alert("该睡了", "交房租")
+
+    stub._on_reminder_fired(one)
+
+    _kind, _role, text, _meta = stub.chat_view.calls[-1]
+    title, body = stub._tray.messages[-1]
+    assert (title, body) == (one.heading(), one.body())
+    assert one.heading() in text and one.body() in text
 
 
 # ── 逐字稿 ─────────────────────────────────────────────────────────────────
