@@ -17,13 +17,16 @@ import time
 
 import pytest
 
+from axo.agent.catalog import GetTimeTool
 from axo.agent.gate import (
     ApprovalDecision,
     ApprovalRequest,
     ApprovalSlot,
     build_request,
     resolve_decision,
+    summarize,
 )
+from axo.agent.tools import Tool
 from axo.llm.base import ToolCall
 
 
@@ -71,6 +74,71 @@ def test_a_request_carries_the_call_id_the_ui_has_to_send_back() -> None:
     assert request.round_index == 2
     assert request.arguments == {"ids": ["m1"]}
     assert "m1" in request.summary
+
+
+class _StatedTool:
+    """一个"没有参数、但要自己说明范围"的工具替身。
+
+    **只有一个可选属性**——这正是要点：那句话不进 ``Tool`` 协议（见
+    :func:`test_the_sentence_is_not_part_of_the_tool_protocol`），所以"有这个属性"
+    就是全部的形状。
+    """
+
+    def __init__(self, text: str = "") -> None:
+        if text:
+            self.approval_summary = text
+
+
+def test_a_tool_without_arguments_can_state_its_own_scope() -> None:
+    """**没有参数的工具，那句话由它自己说。**
+
+    模板对空参数什么都生成不出来（只有 ``工具名（无参数）``），而"它到底要做什么"恰恰
+    是用户点「允许」时唯一要看的东西。这一条是给 ``look_at_screen`` 那种工具留的出口：
+    它的范围（整块屏幕）是**固定**的，不该靠参数表达、也表达不出来。
+    """
+    one = ToolCall(id="c1", name="look_at_screen", arguments={})
+    tool = _StatedTool("把整块屏幕的内容交给模型看一次（Axo 自己的窗口会被裁掉）")
+
+    assert summarize(one, tool=tool) == "把整块屏幕的内容交给模型看一次（Axo 自己的窗口会被裁掉）"
+    assert build_request(one, tool=tool).summary == summarize(one, tool=tool)
+
+
+def test_a_tool_without_arguments_and_without_a_sentence_falls_back() -> None:
+    """没写那句话的工具仍然是旧形状。**这条是向后兼容的判据**：九个既有工具都没有这个
+    属性，而它们一张卡片都不该变。
+
+    空串与纯空白也一律回落——一个"写了但没写东西"的属性不该把卡片变成一行空白。
+    """
+    one = ToolCall(id="c1", name="get_time", arguments={})
+
+    assert summarize(one) == "get_time（无参数）"
+    assert summarize(one, tool=None) == "get_time（无参数）"
+    assert summarize(one, tool=_StatedTool()) == "get_time（无参数）"
+    assert summarize(one, tool=_StatedTool("   ")) == "get_time（无参数）"
+
+
+def test_the_statement_never_overrides_the_arguments() -> None:
+    """**只在参数为空时用它。** 有参数的工具照旧按参数说——那句话是"模板说不出话"时的
+    补充，不是替换。替换的话，``write_memory`` 那张卡片会永远只写一句笼统的话，而
+    "要写的是哪一条"正是用户要看的东西（``summarize`` 的 docstring 就是这条纪律）。
+    """
+    one = ToolCall(id="c1", name="write_memory", arguments={"content": "用户喜欢美式"})
+    tool = _StatedTool("我要写一条记忆")
+
+    assert "用户喜欢美式" in summarize(one, tool=tool)
+    assert summarize(one, tool=tool) != "我要写一条记忆"
+
+
+def test_the_sentence_is_not_part_of_the_tool_protocol() -> None:
+    """它**不进** ``Tool`` 协议。
+
+    那个协议是 ``@runtime_checkable`` 的，而 ``isinstance`` 对协议成员只查
+    ``hasattr``——往里加一个成员，等于要求**每一个**工具都长这个属性，九个既有工具
+    会当场不满足协议（``test_tools_satisfy_the_protocol`` 会红）。所以读的一侧用
+    ``getattr``，读不到就回落。
+    """
+    assert isinstance(GetTimeTool(), Tool)
+    assert not hasattr(GetTimeTool(), "approval_summary")
 
 
 def test_a_decision_is_a_plain_string_so_it_can_be_recorded() -> None:

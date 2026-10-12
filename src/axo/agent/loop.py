@@ -404,7 +404,9 @@ def run_agent_loop(
             total_calls += 1
             approved = True
             if registry.needs_approval(tool_call.name):
-                ask = build_request(tool_call, round_index=index)
+                # 把工具一起递过去：**没有参数的工具只能自己说清范围**
+                # （``gate.summarize``），而这句话的读者是正要点头的那个人。
+                ask = build_request(tool_call, round_index=index, tool=registry.get(tool_call.name))
                 yield ApprovalRequested(ask)
                 # ``None`` = 超时/取消/通道没了 → 拒绝。fail-closed 的理由见 gate.py。
                 approved = resolve_decision(await_approval(ask)) is ApprovalDecision.GRANT

@@ -344,6 +344,26 @@ def test_gated_tool_asks_first_and_runs_on_grant(store: MemoryStore) -> None:
     assert spy.calls == [{"content": "用户喜欢美式"}]
 
 
+def test_the_card_carries_what_a_no_argument_tool_says_about_itself(store: MemoryStore) -> None:
+    """没有参数的工具，卡片上那句话来自**工具自己**（``gate.summarize`` 的出口）。
+
+    这条测的是**接线**：``gate`` 自己那几条测试证明不了"循环真的把工具递过去了"。没递
+    的话，``look_at_screen`` 那张卡片会打印 ``look_at_screen（无参数）``——而用户正是
+    照着那句话点「允许」的，那等于让他为一件没写清楚的事点头。
+    """
+    spy = SpyTool(name="look_at_screen", requires_approval=True)
+    spy.approval_summary = "把整块屏幕的内容交给模型看一次"
+    backend = ScriptedBackend(
+        script=[[tool_chunk(call("look_at_screen"))], [text_chunk("那我不看了")]]
+    )
+
+    events, _ = drive(backend, ToolRegistry([spy]), store, answer=ApprovalDecision.DENY)
+
+    ask = next(e.request for e in events if isinstance(e, ApprovalRequested))
+    assert ask.summary == "把整块屏幕的内容交给模型看一次"
+    assert spy.calls == [], "拒绝了却还是执行了"
+
+
 def test_gated_tool_denied_is_not_run_and_the_denial_is_fed_back(store: MemoryStore) -> None:
     """拒绝要**回灌**，不只是不执行。
 

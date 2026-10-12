@@ -138,24 +138,43 @@ def _render_value(value: Any) -> str:
     return text
 
 
-def summarize(call: ToolCall) -> str:
+def summarize(call: ToolCall, *, tool: object | None = None) -> str:
     """从参数模板化生成一句"将要发生什么"。
 
     **不是**"调用 write_memory"这种把工具名重复一遍的话——那对用户没有信息量。
     用户需要看到的是内容：要写的是一条什么记忆、要忘的是哪一条、要读的是哪个文件。
+
+    **没有参数的工具是这条规则的例外**：模板什么也生成不出来（只会打印
+    ``工具名（无参数）``），而"它到底要做什么"恰恰是用户点「允许」时唯一要看的东西。
+    所以这类工具**自己带一句话**（``approval_summary``），这里在参数为空时用它。
+
+    ``tool`` 是那个工具对象，用 ``getattr`` 读、**不进 ``Tool`` 协议**：那个协议是
+    ``@runtime_checkable`` 的，往里加成员等于要求十个工具都长这个属性
+    （``isinstance`` 只查有没有这个属性），而它只对"要说明范围"的那一个有意义。
+    与 ``requires_approval`` 一样，这句话仍然是**工具自己声明的**——不是闸门里的
+    第二张表。
     """
     if not call.arguments:
+        stated = getattr(tool, "approval_summary", "")
+        if isinstance(stated, str) and stated.strip():
+            return stated.strip()
         return f"{call.name}（无参数）"
     parts = [f"{key}：{_render_value(value)}" for key, value in call.arguments.items()]
     return "；".join(parts)
 
 
-def build_request(call: ToolCall, *, round_index: int = 0) -> ApprovalRequest:
-    """把一次工具调用变成一次问询。"""
+def build_request(
+    call: ToolCall, *, round_index: int = 0, tool: object | None = None
+) -> ApprovalRequest:
+    """把一次工具调用变成一次问询。
+
+    ``tool`` 只为了 :func:`summarize` 那句"没有参数时由工具自己说"。调用方
+    （``agent/loop.py``）手里有注册表，所以它给得出；不给也能跑（回落旧行为）。
+    """
     return ApprovalRequest(
         call_id=call.id,
         tool_name=call.name,
-        summary=summarize(call),
+        summary=summarize(call, tool=tool),
         arguments=dict(call.arguments),
         round_index=round_index,
     )
