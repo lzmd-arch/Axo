@@ -60,8 +60,8 @@ def _dark_qss() -> str:
 # ── 预设 ────────────────────────────────────────────────────────────────────
 
 
-def test_three_presets_with_unique_keys() -> None:
-    assert len(PRESETS) == 3
+def test_presets_have_unique_keys() -> None:
+    assert len(PRESETS) == 4
     keys = [item.key for item in PRESETS]
     labels = [item.label for item in PRESETS]
     assert len(set(keys)) == len(keys)
@@ -89,7 +89,7 @@ def test_light_preset_colours_are_readable_on_light_bg(preset) -> None:
 
 
 def test_light_preset_colours_are_in_the_same_band() -> None:
-    """三支浅色值的对比度要彼此相当。
+    """四支浅色值的对比度要彼此相当。
 
     不齐的话，**换预设会顺带改变"浅色下文字有多清楚"**——一个用户没在调、也不该
     被顺带改掉的量。这里不钉死具体数值（那会让调色变得很难），只钉住它们落在同一个
@@ -98,7 +98,7 @@ def test_light_preset_colours_are_in_the_same_band() -> None:
     ratios = [
         contrast_ratio(parse_hex(item.light_accent), parse_hex(LIGHT_TOKENS.bg)) for item in PRESETS
     ]
-    assert max(ratios) - min(ratios) < 1.5, f"三支浅色值差了 {max(ratios) - min(ratios):.2f}"
+    assert max(ratios) - min(ratios) < 1.5, f"四支浅色值差了 {max(ratios) - min(ratios):.2f}"
 
 
 @pytest.mark.parametrize("preset", PRESETS, ids=lambda p: p.key)
