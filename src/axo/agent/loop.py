@@ -59,7 +59,7 @@ from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 
 from ..llm.base import ChatBackend, ChatMessage, ChatRequest, ToolCall
-from ..session.budget import TokenBudget, TokenMeter
+from ..session.budget import IMAGE_TOKENS, TokenBudget, TokenMeter
 from .gate import (
     ApprovalDecision,
     ApprovalRequest,
@@ -223,6 +223,11 @@ Event = RoundStarted | TextDelta | ApprovalRequested | ToolFinished | MessagesAp
 # ── 截断与尾巴管理 ─────────────────────────────────────────────────────────
 
 _CLIP_NOTE = "\n\n[…工具结果过长，已截断：完整内容约 {tokens} token。需要更多请缩小范围再调一次。…]"
+
+_IMAGE_DROPPED_NOTE = (
+    "\n\n（这次截到的图没有带进来：它自己就占了工具结果的全部额度。"
+    "请如实告诉用户你看不到屏幕，不要凭猜描述。）"
+)
 
 _WRAP_UP_NOTE = ChatMessage(
     role="system",
@@ -421,7 +426,22 @@ def run_agent_loop(
                 pair_no_replay.append((tool_call.id, "denied"))
             elif not outcome.replayable:
                 pair_no_replay.append((tool_call.id, "stale"))
-            fed, clipped = _clip_to_tokens(outcome.content, tools_ceiling, meter)
+            # **先给图留位置，再裁正文。** 图裁不动（``_clip_to_tokens`` 只处理文本），
+            # 所以顺序反过来的话正文会先把额度占满、图被挤掉，而模型读到的正文却自称
+            # 带着图——那正是这一条链上最容易发生的一种编。
+            images = outcome.images
+            if images and IMAGE_TOKENS * len(images) >= tools_ceiling:
+                # 一张图自己就超过了这一份额度（只在小窗口上才会发生，见
+                # ``budget.IMAGE_TOKENS`` 那条"上限是硬的"）。**不静默丢**。
+                images = ()
+                clipped_by_budget = True
+            else:
+                clipped_by_budget = False
+            fed, clipped = _clip_to_tokens(
+                outcome.content, max(0, tools_ceiling - IMAGE_TOKENS * len(images)), meter
+            )
+            if clipped_by_budget:
+                fed += _IMAGE_DROPPED_NOTE
             yield ToolFinished(
                 call_id=tool_call.id,
                 name=tool_call.name,
@@ -431,7 +451,11 @@ def run_agent_loop(
                 denied=not approved,
                 clipped=clipped,
             )
-            row = ChatMessage(role="tool", content=fed, tool_call_id=tool_call.id)
+            # **图只活在这一次往返里。** 落逐字稿的那条路只存 ``content``、L5 回放
+            # 重建行时也不带 ``images``（``session/assemble.py`` 的 ``_tool_pair``），
+            # 所以带图的工具**必须**标 ``replayable=False``——那一条由工具自己保证，
+            # 这里只是把图交出去。
+            row = ChatMessage(role="tool", content=fed, tool_call_id=tool_call.id, images=images)
             tail.append(row)
 
         # **整对发出去，发在驱逐之前。** 顺序是刻意的：先发再驱逐，所以"记录里有

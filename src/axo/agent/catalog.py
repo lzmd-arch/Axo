@@ -1,10 +1,15 @@
-"""九个具体工具的内容。
+"""十个具体工具的内容。
 
-前四个（``get_time`` / ``search_memory`` / ``read_memory`` / ``read_file``）
-**结构上不可能造成损失**：读时钟、读记忆、读文件，没有一条会改变任何东西。
+读的那一族（``get_time`` / ``search_memory`` / ``read_memory`` / ``read_file`` /
+``list_reminders``）**结构上不可能造成损失**：读时钟、读记忆、读文件、读那本提醒账，
+没有一条会改变任何东西。
 
-后三个（``write_memory`` / ``forget_memory`` / ``set_reminder``）都会改变状态，
-所以 :attr:`requires_approval` 为真，每次调用都要用户点一次头。它们与另外四个的
+改状态的那一族（``write_memory`` / ``forget_memory`` / ``set_reminder`` /
+``cancel_reminder``）都会改变状态，所以 :attr:`requires_approval` 为真，每次调用都要
+用户点一次头。``look_at_screen`` **不改任何状态，也一样要点头**——它的判据不是"改不改
+状态"，而是"这一步之后有没有东西离开了用户的机器"：整块屏幕的内容会交给模型看一次，
+那是一次**不可撤回**的信息披露，而文件沙箱那条路在这里用不上（屏幕没有路径，见
+``docs/agent.md``）。由此推出一条硬规矩：**永远不许出现"记住这次授权"的选项**。它们与另外四个的
 分界写在 ``requires_approval`` 这一个字段上、由 :mod:`~axo.agent.gate`
 读——**不在这里再写一张"哪些要确认"的表**，两张表迟早会不一致。
 
@@ -36,6 +41,7 @@
 
 from __future__ import annotations
 
+import base64
 import time
 from collections.abc import Sequence
 from datetime import datetime
@@ -59,6 +65,7 @@ from .reminders import (
     weekday_name,
 )
 from .tools import (
+    Capture,
     Tool,
     ToolArgumentError,
     ToolContext,
@@ -845,14 +852,81 @@ class CancelReminderTool:
         )
 
 
-def default_tools(*, read_root: Sequence[Path] = ()) -> tuple[Tool, ...]:
-    """九个工具。
+class LookAtScreenTool:
+    """看一眼用户**当前的屏幕**。**过闸门，而且一次一授权。**
 
-    ``read_file`` **只在配了可读目录时才登记**。这不只是安全考虑，也是一笔实用账：
-    工具声明每一轮都要重发（Step 0 实测三个工具约 311 token/轮），把一个注定会
-    失败的工具有效地告诉模型"你可以读文件"，只会换来它去试一次然后被拒。
+    为什么是"一次一授权"而不是"记一次就一直能看"：这一次点头是**全部的约束**。文件
+    那条路上还有沙箱（``agent/fs.py`` 把请求解析到可读根之内），而屏幕没有文件名、
+    没有目录、没有边界——内容里有密码、有别人的窗口、有用户正打到一半的那句话。
+    所以这个工具**不允许**有任何"以后别再问了"的选项：一旦有，这道闸门就从"每次都要
+    人做的一个动作"退化成"填过一次的表单"。
 
-    另外八个不受这个开关影响——它们要的东西（``ctx.writer`` / ``ctx.reminders`` /
+    **它的结果一定是 ``replayable=False``**：截图是某一刻的快照（同 ``get_time``/
+    ``read_file``），而更要紧的是**图本身回放不了**——逐字稿只存正文，L5 重建行的
+    时候也造不出图。不标的话，下一轮模型会收到一条"你看过屏幕"却没有图的记录，然后
+    开始编。
+
+    **一轮里只带得进一张图**：图在工具尾巴的额度里占约六成（``budget.IMAGE_TOKENS``），
+    两张就装不下。第二张不会报错，只是**不会进上下文**（循环那边会说明）——所以描述里
+    明说了"不要连着调两次"。
+    """
+
+    spec: ClassVar[ToolSpec] = ToolSpec(
+        name="look_at_screen",
+        description=(
+            "看一眼用户**当前屏幕上是什么**（整块屏幕，Axo 自己的窗口会被裁掉）。"
+            "用户明确让你看屏幕（「你看一下我的屏幕上写了什么」）、或者你确实需要屏幕上的"
+            "信息才能回答时用它。**不要用它去确认你从对话里就能知道的事**，也**不要连着"
+            "调两次**——一轮里只有第一张图带得进上下文。"
+        ),
+        parameters={"type": "object", "properties": {}},
+    )
+    requires_approval: ClassVar[bool] = True
+    #: 卡片上那句话。这个工具**没有参数**，模板生成不出任何有用的话
+    #: （``gate.summarize`` 那边用它，见那里"没有参数的工具"那一段）。
+    approval_summary: ClassVar[str] = (
+        "把整块屏幕的内容交给模型看一次（Axo 自己的窗口会被裁掉，其余一切都看得见）"
+    )
+
+    def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+        capture = ctx.capture
+        if capture is None:
+            return ToolOutcome.failure(
+                "这次运行没有接上截图通道，看不了屏幕。请如实告诉用户这一条**没有**看成。",
+                replayable=False,
+            )
+        shot: Capture = capture()
+        if not shot.ok:
+            return ToolOutcome.failure(
+                f"这一次没有截到屏幕：{shot.reason}。请如实告诉用户，不要猜屏幕上有什么。",
+                replayable=False,
+            )
+        assert shot.png is not None  # ok 为真就一定有图
+        encoded = base64.b64encode(shot.png).decode("ascii")
+        size = f"{shot.width}×{shot.height}"
+        return ToolOutcome.success(
+            f"截了一张屏幕图（{size}），随这条结果一起给你。",
+            detail=f"屏幕截图 {size}",
+            replayable=False,
+            images=(encoded,),
+        )
+
+
+def default_tools(*, read_root: Sequence[Path] = (), vision: bool = False) -> tuple[Tool, ...]:
+    """十个工具。
+
+    **两个工具按条件登记**，判据是"这个环境里它根本不可能成功"：
+
+    * ``read_file`` 要有可读目录。这不只是安全考虑，也是一笔实用账：工具声明每一轮
+      都要重发（Step 0 实测三个工具约 311 token/轮），把一个注定会失败的工具有效地
+      告诉模型"你可以读文件"，只会换来它去试一次然后被拒。
+    * ``look_at_screen`` 要**当前的模型看得见图**（``vision``）。同一条账，而且多一层：
+      模型看不见图时登记它，除了白烧一段 prompt，还会**弹一张注定白点的确认卡片**——
+      用户点完头才发现什么都不会发生。``vision`` 由调用方从后端报的 ``capabilities``
+      里算（见 ``ui/main_window.py`` 的 ``_tools()``）；**问不到能力时不登记**：
+      "看不到工具"是可见且可解释的，而"登记了但每次必败"是把一次静默失败叠在提示词上。
+
+    另外八个不受这两个开关影响——它们要的东西（``ctx.writer`` / ``ctx.reminders`` /
     ``ctx.fired`` / ``ctx.cancellations``）是**运行时装配**的，不是用户配置。装配期
     真的缺了（只跑只读工具的运行）时，工具自己会在 ``run`` 里回一句"没有配置"
     （见各自的实现），而不是在这里被悄悄摘掉：那种"有时在有时不在"的工具表会让模型
@@ -871,4 +945,6 @@ def default_tools(*, read_root: Sequence[Path] = ()) -> tuple[Tool, ...]:
         ListRemindersTool(),
         CancelReminderTool(),
         *((ReadFileTool(),) if read_root else ()),
+        # 追加，不插队（见上面那条"顺序就是声明顺序"）。
+        *((LookAtScreenTool(),) if vision else ()),
     )

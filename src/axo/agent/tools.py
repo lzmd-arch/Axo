@@ -68,6 +68,29 @@ class ToolArgumentError(ValueError):
 
 
 @dataclass(frozen=True)
+class Capture:
+    """一次截图的收成。**成功与失败都是它**，工具那边不处理异常。
+
+    ``png`` 非空 = 拿到了图；否则 ``reason`` 是一句人话（屏幕是黑的、没有截图通道、
+    没等到界面线程回话…）。把"为什么没截到"做成数据而不是异常，是因为这几种收场在
+    工具那一侧要做的是同一件事——**如实告诉模型这一条没看成**，而异常的差别只该体现
+    在 ``reason`` 那句话里。
+
+    ``width`` / ``height`` 是**交出去那张图**的尺寸（裁过、缩过之后的），只用于回灌
+    与卡片页脚：模型据此知道它看到的不是原始分辨率。
+    """
+
+    png: bytes | None = None
+    reason: str = ""
+    width: int = 0
+    height: int = 0
+
+    @property
+    def ok(self) -> bool:
+        return self.png is not None
+
+
+@dataclass(frozen=True)
 class ToolContext:
     """一次工具调用能碰到的东西。
 
@@ -97,6 +120,10 @@ class ToolContext:
             的登记时刻），于是"写进去的时间戳是多少"在测试里是可控的。
         read_root: ``read_file`` 的沙箱根。**默认空元组 = 该工具被禁用**——见
             :mod:`~axo.agent.fs` 与 ``catalog`` 里的说明。
+        capture: 截一张屏幕。**注入的**，与 ``writer``/``reminders`` 同一姿态：那一头
+            要跨线程回界面线程取一张图（见 ``ui/agent_worker.py``），而这一层不该知道
+            Qt 长什么样。为 ``None`` 时 ``look_at_screen`` 回一句"这次没有截图通道"——
+            与只读工具在没有库时的那句话同形。
     """
 
     store: MemoryStore
@@ -109,6 +136,7 @@ class ToolContext:
     call_id: str = ""
     clock: Callable[[], datetime] = datetime.now
     read_root: tuple[Path, ...] = ()
+    capture: Callable[[], Capture] | None = None
 
 
 @dataclass(frozen=True)
@@ -124,6 +152,12 @@ class ToolOutcome:
         content: 回灌正文。失败时是一句能指导下一步的说明。
         detail: 给人看的补充（异常栈、账本附注）。**不进模型上下文**——栈进上下文
             只会白烧 token 并让模型开始道歉。
+        images: 随结果一起**回灌给模型的图**（base64 的 PNG，不带 ``data:`` 前缀）。
+            现在只有 ``look_at_screen`` 用。它**只活在这一次工具往返里**：落逐字稿的
+            那条路只存 ``content``、L5 回放也重建不出图（``assemble._tool_pair`` 造行
+            时不带 ``images``），所以带图的工具**必须**同时标 ``replayable=False``——
+            否则下一轮模型会收到一条"你看过屏幕"却没有图的记录，然后开始编。
+            ``tests/test_agent_tools.py`` 有一条断言替这件事站岗。
         replayable: **这次结果值不值得在后续轮次里回放**。``False`` 的会连同它那一
             对落进逐字稿时标 :attr:`~axo.session.store.Message.no_replay`，
             由 L5 跳过。两种情形要标 ``False``：
@@ -141,15 +175,30 @@ class ToolOutcome:
     content: str
     detail: str = ""
     replayable: bool = True
+    images: tuple[str, ...] = ()
 
     @classmethod
-    def success(cls, content: str, *, detail: str = "", replayable: bool = True) -> ToolOutcome:
-        return cls(ok=True, content=content, detail=detail, replayable=replayable)
+    def success(
+        cls,
+        content: str,
+        *,
+        detail: str = "",
+        replayable: bool = True,
+        images: tuple[str, ...] = (),
+    ) -> ToolOutcome:
+        return cls(ok=True, content=content, detail=detail, replayable=replayable, images=images)
 
     @classmethod
-    def failure(cls, reason: str, *, detail: str = "", replayable: bool = True) -> ToolOutcome:
+    def failure(
+        cls,
+        reason: str,
+        *,
+        detail: str = "",
+        replayable: bool = True,
+        images: tuple[str, ...] = (),
+    ) -> ToolOutcome:
         """失败。``reason`` 会原样回灌，所以它要写成对模型有用的句子。"""
-        return cls(ok=False, content=reason, detail=detail, replayable=replayable)
+        return cls(ok=False, content=reason, detail=detail, replayable=replayable, images=images)
 
 
 @runtime_checkable

@@ -73,6 +73,7 @@ class SpyTool:
         raiser: BaseException | None = None,
         parameters: dict[str, Any] | None = None,
         replayable: bool = True,
+        images: tuple[str, ...] = (),
     ) -> None:
         self.spec = ToolSpec(
             name=name,
@@ -84,14 +85,14 @@ class SpyTool:
         self._render = render
         self._raiser = raiser
         self._replayable = replayable
+        self._images = images
 
     def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
         self.calls.append(arguments)
         if self._raiser is not None:
             raise self._raiser
-        if self._render is not None:
-            return ToolOutcome.success(self._render(arguments), replayable=self._replayable)
-        return ToolOutcome.success("替身工具的结果", replayable=self._replayable)
+        text = self._render(arguments) if self._render is not None else "替身工具的结果"
+        return ToolOutcome.success(text, replayable=self._replayable, images=self._images)
 
 
 @pytest.fixture
@@ -342,6 +343,40 @@ def test_gated_tool_asks_first_and_runs_on_grant(store: MemoryStore) -> None:
     assert len(asks) == 1
     assert asks[0].request.tool_name == "write_memory"
     assert spy.calls == [{"content": "用户喜欢美式"}]
+
+
+def test_a_tool_row_carries_its_images_into_the_next_request(store: MemoryStore) -> None:
+    """带图的工具，图要真的进**下一次请求**的那一行。
+
+    回灌正文写着"随这条结果一起给你"却真的没有图的话，模型会照着一句空话编——所以判据
+    不看事件、看请求体：``backend.requests[-1]`` 里那条 tool 行的 ``images``。
+    """
+    spy = SpyTool(name="look_at_screen", images=("QUJD",), replayable=False)
+    backend = ScriptedBackend(script=[[tool_chunk(call("look_at_screen"))], [text_chunk("看到了")]])
+
+    drive(backend, ToolRegistry([spy]), store)
+
+    row = next(m for m in backend.requests[-1].messages if m.role == "tool")
+    assert row.images == ("QUJD",)
+
+
+def test_an_image_that_does_not_fit_is_dropped_and_said_so(store: MemoryStore) -> None:
+    """图**先占额度、正文再裁**；一张图自己就超了额度时**不带它，并说明**。
+
+    顺序反过来（先裁正文、再塞图）的话，图要么把额度撑爆、要么被静默丢掉——而静默丢掉
+    的结局是模型收到一句"随这条结果一起给你"却没有图，然后开始描述一块它没看见的屏幕。
+    这条用一个很小的额度把那一支逼出来（真机上它只在很小的窗口上发生）。
+    """
+    spy = SpyTool(name="look_at_screen", images=("QUJD",), replayable=False)
+    backend = ScriptedBackend(
+        script=[[tool_chunk(call("look_at_screen"))], [text_chunk("我没看到")]]
+    )
+
+    events, _ = drive(backend, ToolRegistry([spy]), store, ceiling=100)
+
+    row = next(m for m in backend.requests[-1].messages if m.role == "tool")
+    assert row.images == (), "额度不够还是把图塞进去了"
+    assert "没有带进来" in row.content, "丢了图却没说——模型会以为屏幕是空的"
 
 
 def test_the_card_carries_what_a_no_argument_tool_says_about_itself(store: MemoryStore) -> None:

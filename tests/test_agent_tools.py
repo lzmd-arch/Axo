@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,7 @@ from axo.agent.catalog import (
     MAX_WRITE_CHARS,
     ForgetMemoryTool,
     GetTimeTool,
+    LookAtScreenTool,
     ReadFileTool,
     ReadMemoryTool,
     SearchMemoryTool,
@@ -38,6 +40,7 @@ from axo.agent.catalog import (
 )
 from axo.agent.reminders import ReminderStore
 from axo.agent.tools import (
+    Capture,
     Tool,
     ToolArgumentError,
     ToolContext,
@@ -213,6 +216,96 @@ def test_read_file_appears_once_a_root_is_configured(tmp_path: Path) -> None:
     ]
 
 
+def test_look_at_screen_is_registered_only_when_the_model_can_see(tmp_path: Path) -> None:
+    """``look_at_screen`` **按模型能力登记**（``default_tools(vision=...)``）。
+
+    与 ``read_file`` 那条是同一条账：模型看不见图时把它登记上去，除了白烧一段 prompt，
+    还会**弹一张注定白点的确认卡片**——用户点完头才发现什么都不会发生。所以判据放在
+    登记这一处，而不是让工具自己回一句"我看不见"。
+
+    顺序也是钉子：它**追加在最后**（提示缓存靠稳定前缀，插队会让所有请求的前缀失效）。
+    """
+    without = [tool.spec.name for tool in default_tools()]
+    with_vision = [tool.spec.name for tool in default_tools(vision=True)]
+
+    assert "look_at_screen" not in without
+    assert with_vision == [*without, "look_at_screen"]
+
+
+def test_exactly_five_tools_ask_for_confirmation_when_the_model_can_see(tmp_path: Path) -> None:
+    """看得见图的模型多一个要点头的工具——**而它不改任何状态**。
+
+    它进来的判据与那四个不同：不是"它改了状态"，而是**整块屏幕的内容会交给模型看一次**
+    （一次不可撤回的信息披露，而且屏幕没有路径可判，文件沙箱那条路用不上）。这条断言
+    把"多一个要点头的"写死，免得下一个人照着"只拦改状态的"那条规则把它摘掉。
+    """
+    asking = [
+        tool.spec.name
+        for tool in default_tools(read_root=(Path(),), vision=True)
+        if tool.requires_approval
+    ]
+
+    assert asking == [
+        "write_memory",
+        "forget_memory",
+        "set_reminder",
+        "cancel_reminder",
+        "look_at_screen",
+    ]
+
+
+def test_look_at_screen_hands_the_image_back_with_the_result() -> None:
+    """截到的图**随结果回灌**，而且是 base64（后端要的形状）。
+
+    ``content`` 里必须带上尺寸：模型据此知道它看到的不是原始分辨率，而"我看到的是一张
+    缩过的图"这件事**它自己看不出来**。``detail`` 是给卡片页脚的，不进模型上下文。
+    """
+    ctx = ToolContext(
+        store=MemoryStore(":memory:"),
+        capture=lambda: Capture(png=b"PNG", width=1600, height=900),
+    )
+
+    outcome = LookAtScreenTool().run({}, ctx)
+
+    assert outcome.ok is True
+    assert outcome.images == (base64.b64encode(b"PNG").decode("ascii"),)
+    assert "1600×900" in outcome.content
+    assert "1600×900" in outcome.detail
+    assert outcome.replayable is False, "带图的工具必须标不可回放（图回放不了）"
+
+
+def test_look_at_screen_says_so_when_there_is_no_capture_channel() -> None:
+    """没有截图通道时回一句人话，**不是抛**。
+
+    与只读工具在没有库时那句话同形（``ctx.writer is None`` 那一族）：装配期缺东西是
+    正常状态，而模型需要的是一句能转述给用户的话。
+    """
+    outcome = LookAtScreenTool().run({}, ToolContext(store=MemoryStore(":memory:")))
+
+    assert outcome.ok is False
+    assert "没有接上截图通道" in outcome.content
+    assert outcome.images == ()
+
+
+def test_look_at_screen_passes_the_reason_back_verbatim() -> None:
+    """截不到的**原因**（锁屏、全黑…）来自界面那一侧，原样转述给模型。
+
+    这一条要紧的是"不要猜屏幕上有什么"那句也跟着回去：一次没截到的调用最容易的坏结局
+    是模型开始描述一块它没看见的屏幕。
+    """
+    ctx = ToolContext(
+        store=MemoryStore(":memory:"),
+        capture=lambda: Capture(reason="屏幕看起来是黑的（可能是锁屏或独占全屏）"),
+    )
+
+    outcome = LookAtScreenTool().run({}, ctx)
+
+    assert outcome.ok is False
+    assert "锁屏" in outcome.content
+    assert "不要猜" in outcome.content
+    assert outcome.replayable is False, "失败也是那一刻的事实"
+
+
 def test_exactly_four_tools_ask_for_confirmation() -> None:
     """闸门只拦**改变状态**的那四个。
 
@@ -257,6 +350,13 @@ def test_the_two_snapshot_tools_mark_their_results_as_not_replayable(
 
     assert GetTimeTool().run({}, ctx).replayable is False
     assert ReadFileTool().run({"path": "备忘.txt"}, ctx).replayable is False
+    # 屏幕这一条**更硬**：图本身回放不了（逐字稿只存正文、L5 重建行时不带图），所以
+    # 不标 False 的症状不是"旧数据"，而是"模型收到一条自称看过屏幕却没有图的记录"。
+    shot_ctx = ToolContext(
+        store=store,
+        capture=lambda: Capture(png=b"PNG", width=800, height=600),
+    )
+    assert LookAtScreenTool().run({}, shot_ctx).replayable is False
     # 反空转：检索的结果**照旧**可以回放——查过的记忆下一轮还查得到，不必重查。
     assert SearchMemoryTool().run({"query": "灯"}, ctx).replayable is True
 
