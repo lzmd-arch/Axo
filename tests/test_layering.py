@@ -131,6 +131,9 @@ _PURE_LAYERS = (
     # 登录时那一次"看一眼有没有到点的提醒"。它收三本账与一个可注入的通知函数，
     # 于是整条逻辑（含"通知弹不出来"那一支）在核心腿里能用假件逐条断言。
     "axo/headless.py",
+    # 语音识别。**vosk 是函数内 import**，所以"没装那个 extra 也能 import 本模块"是
+    # 一条可断言的事实——而那正是核心腿能在没有模型、没有 audio 的机器上跑它的前提。
+    "axo/asr.py",
     "axo/session",
     "axo/ui/color.py",
     "axo/ui/theme.py",

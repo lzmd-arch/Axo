@@ -28,6 +28,7 @@ import sys
 from pathlib import Path
 
 __all__ = [
+    "VOICE_MODEL_NAME",
     "consolidation_dir",
     "consolidation_events_path",
     "consolidation_last_path",
@@ -42,6 +43,7 @@ __all__ = [
     "reminders_cancelled_path",
     "reminders_fired_path",
     "reminders_path",
+    "voice_model_dir",
     "sessions_dir",
     "set_data_root",
     "snapshot_dir",
@@ -329,3 +331,21 @@ def reminders_cancelled_path() -> Path:
     > 四本就是我们其实需要一本次序账了。
     """
     return data_dir() / "reminders.cancelled.jsonl"
+
+
+#: 语音识别模型的名字（也是它解压后的目录名）。换模型时**这一行与 `asr` 里那句人话
+#: 一起改**——它们是同一个事实的两处说法。
+VOICE_MODEL_NAME = "vosk-model-small-cn-0.22"
+
+
+def voice_model_dir() -> Path:
+    """语音识别模型放在哪儿。
+
+    **在数据根底下**：于是它跟着"用户把数据搬到别的盘"一起走——代价是搬迁时多搬 42 MB，
+    好处是"这个程序的东西都在一个文件夹里"这条不破。把这个选择写在这里，是为了让它成为
+    一件**定下来的事**，而不是某天有人发现搬迁变慢时的一个谜。
+
+    与 :func:`memory_db_path` 一样**不创建**：还没下模型是常态，先建一个空目录只会让
+    "目录在、模型不在"与"什么都没有"变成两种要分开处理的状态。
+    """
+    return data_dir() / "models" / VOICE_MODEL_NAME
