@@ -25,15 +25,15 @@ from typing import Any
 
 __all__ = ["Message", "Session", "SessionStore", "new_session_id"]
 
-_SCHEMA = 3
+_SCHEMA = 4
 """逐字稿的格式版本。
 
 **1 → 2 只是多了三个可选字段**（``tool_calls`` / ``tool_call_id`` / ``tool_name``），
-**2 → 3 只多了一个**（``no_replay``）。两次都是一行老数据都没有重写：
-:meth:`Message.to_dict` 是"非空才写"的，所以 schema-1/2 的行在 schema-3 的文件里
-**逐字节不变**；:meth:`Message.from_dict` 缺键就给默认值，于是同一个读者天然能读三个
-版本。**没有迁移脚本，也不需要有**——逐字稿可以几百兆，重写既慢又给"崩溃丢整段"开
-一次口子，而 schema-3 需要的只是"新行多一个键"。
+**2 → 3 只多了一个**（``no_replay``），**3 → 4 同样只多了一个**（``proactive``）。
+三次都是一行老数据都没有重写：:meth:`Message.to_dict` 是"非空才写"的，所以老行在
+新版本的文件里**逐字节不变**；:meth:`Message.from_dict` 缺键就给默认值，于是同一个
+读者天然能读四个版本。**没有迁移脚本，也不需要有**——逐字稿可以几百兆，重写既慢又给
+"崩溃丢整段"开一次口子，而新版本需要的只是"新行多一个键"。
 
 反方向（更旧的构建读新版本的文件）理论安全，因为老字段的形状一个都没动；但那条路
 **没有自动化护栏**——测不了"一个不存在的旧构建"。写在这里是为了让下一个人知道这是
@@ -139,6 +139,20 @@ class Message:
     一直缺的一位：它记了"调了什么工具"，没记"它怎么结束的"。
     """
 
+    proactive: bool = False
+    """这一行是**她主动开口**说的，不是回答用户哪句话。
+
+    来源只有一个：提醒到点那一刻由模型生成的那一句（见
+    :func:`~axo.agent.proactive.build_reminder_messages` 与 ``MainWindow`` 的
+    :meth:`_on_speech_finished`）。**它那一轮没有对应的 ``user`` 行**，所以回看时
+    这一位是唯一能说清"她为什么突然说了这么一句"的东西——没有它，那条例会在历史里
+    长得像一句没人问过的回答。
+
+    **不为它新造一个 ``role``。** ``session/assemble.py`` 的 ``_to_chat`` 对 role 是
+    照搬的，一个它不认识的 role 会被原样搬进上下文——于是历史里多出一条"来历不明的
+    消息"，而模型对它的解释没有任何约束。role 仍然是 ``assistant``：她说的就是她说的。
+    """
+
     @property
     def title_hint(self) -> str:
         """用这条消息给会话起标题（取第一条用户消息）。"""
@@ -163,6 +177,9 @@ class Message:
             payload["tool_name"] = self.tool_name
         if self.no_replay is not None:
             payload["no_replay"] = self.no_replay
+        # 同一条"非空才写"：老行（``proactive`` 为假）逐字节不变。
+        if self.proactive:
+            payload["proactive"] = True
         return payload
 
     @classmethod
@@ -178,6 +195,7 @@ class Message:
             tool_call_id=_optional_str(payload.get("tool_call_id")),
             tool_name=_optional_str(payload.get("tool_name")),
             no_replay=_optional_str(payload.get("no_replay")),
+            proactive=bool(payload.get("proactive", False)),
         )
 
 

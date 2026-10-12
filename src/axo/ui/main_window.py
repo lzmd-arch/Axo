@@ -38,7 +38,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal, Slot
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -66,6 +66,7 @@ from memcore.store import MemoryStore
 
 from ..agent.catalog import default_tools
 from ..agent.gate import APPROVAL_TIMEOUT_S
+from ..agent.proactive import build_reminder_messages
 from ..agent.reminders import Alert, CancelledStore, FiredStore, ReminderStore
 from ..agent.router import HELP_TEXT, Register, RegisterState, RoutedTurn, route_turn
 from ..agent.tools import ToolContext, ToolRegistry
@@ -98,6 +99,7 @@ from ..memory import (
     clear_user_persona,
     ensure_builtin_anchor,
     needs_persona,
+    persona_texts,
     set_user_persona,
     user_anchor,
 )
@@ -203,6 +205,45 @@ _LEDGER_PLACEHOLDER = (
 _GRAPH_CHANNEL_WEIGHT = 0.25
 
 
+SPEECH_TIMEOUT_MS = 20_000
+"""她开口那一轮最多等多久（毫秒）。**它挡的是一个具体的硬杀，不是体验优化。**
+
+后端卡住时 ``httpx`` 的读超时是 300 秒，而进程收尾只等 3 秒
+（:data:`~axo.ui.thread_tracking.THREAD_WAIT_MS`）——一个还在跑的线程在析构时会让 Qt
+直接 ``qFatal``（Windows 上退出码 ``0xC0000409``，没有回溯、没有 stderr）。
+二十秒到了就翻 ``stop()`` 那个布尔，线程在下一片之后退出去，"退出时还赖着一个线程"
+这件事就不再可能。顺带它也是产品判断：到点那一刻等二十秒还没有一句话，用户早就不看
+这个窗口了。
+
+**它与实测耗时贴得很近，这不是巧合也不是余量充足**：本机 ``qwen3-4b`` 开着思考时那一句
+要 3–15 秒（见 :data:`SPEECH_MAX_TOKENS`）。所以这个表不是"卡住了"的判据，而是
+"再等下去就该由程序说"的判据——真卡住的那种（后端读超时 300 秒）它当然也挡得住。
+"""
+
+SPEECH_MAX_TOKENS = 512
+"""她那一句最多生成多少 token。**这个数是被"思考"顶上去的，不是话变长了。**
+
+2026-10-12 拿本机 ``qwen3-4b`` 实测：这个模型默认开着思考，而**思考走的是同一个额度**。
+给 160 时四次里四次把额度全用在思考上、正文一个字都不剩（界面看到的会是空回复 →
+降级）；给 512 之后六次里四次说出一句正常的话（``'晚安，记得做个好梦。'``），
+剩下的最坏一次 14.6 秒。1024 并没有更好（同样 5/6），只是把最坏耗时翻了一倍。
+
+**刻意不像 ``tools/smoke_agent.py`` 那样传 ``extra={"think": False}``。** 那确实快得多
+（0.2 秒、六次里四次说人话），但 ``think`` 是 Ollama 特有的键，而
+``llm/openai_compat.py`` 会把 ``extra`` 原样发进请求体顶层——云端后端未必认这个字段。
+更要紧的是：**这个程序里其它每一轮都没有关思考**，只在"她开口"这一轮关掉，等于让同一
+个模型在两条路上有两种推理行为，而那种差别只会在某次答非所问里露出来。
+"""
+
+_PROACTIVE_TITLE = "提醒"
+"""她主动开口那条气泡的标题（网页侧渲染成气泡上方那行小字）。
+
+**必须是常量，而且只能有这一处。** 回看那一路（:func:`display_rows`）手上只有逐字稿
+那一行，而那一行只有一个 ``proactive`` 布尔——它拼不出"这一次是几条、是不是错过"。
+"live 与 reload 画得一样"是那个函数的全部意义，所以这一格不装当次的措辞。
+"""
+
+
 def _last_run_note() -> str:
     """设置页「巩固」那一段的默认那句话：**上一轮是什么时候跑的**。
 
@@ -257,6 +298,16 @@ def display_rows(messages: Sequence[Message]) -> list[dict[str, Any]]:
             continue
         meta: dict[str, Any] = {}
         text = message.content
+        role = message.role
+        if message.proactive:
+            # 她主动开口那一句。**只把角色名换掉**，其余（正文、标题）与当时屏幕上
+            # 那一条逐字段相同——网页那边按 role 拼类名（``msg-proactive``），于是
+            # 回看时它的颜色与当时一样，而不是变成一条普通回答。
+            #
+            # 标题取常量而不取当次的措辞：这一行里没有"这一次是几条、是不是错过"这些
+            # 事实（``proactive`` 只是个布尔），从这里现推会推出一个与当时不同的标题。
+            role = "proactive"
+            meta["title"] = _PROACTIVE_TITLE
         if message.role == "tool":
             name = message.tool_name or "未知工具"
             if message.no_replay == "denied":
@@ -267,7 +318,7 @@ def display_rows(messages: Sequence[Message]) -> list[dict[str, Any]]:
                 text = "这一步没有执行——它需要你点头，而没有得到允许。"
             else:
                 meta["title"] = f"工具结果 · {name}"
-        rows.append({"role": message.role, "text": text, "meta": meta})
+        rows.append({"role": role, "text": text, "meta": meta})
     return rows
 
 
@@ -479,6 +530,26 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         self._scheduler.fired.connect(self._on_reminder_fired)
+
+        #: 「到点由她开口」那一轮。**它是一次请求，但不是一轮对话**：没有 user 行、
+        #: 不进记忆库、不动 ``_streaming``、也不锁输入框（逐条见
+        #: :meth:`_on_speech_finished`）。两个线程成员由 :meth:`_track` 按
+        #: ``slot="speak"`` 拼出来，这里先给空值是为了让"她没在说"这件事在任何一刻
+        #: 都读得出来——包括 :meth:`_shutdown` 那条随时可能进来的路上。
+        self._speak_thread: QThread | None = None
+        self._speak_worker: ChatWorker | None = None
+        #: **这一轮还算不算数。** 让路（用户抢先开口、超时）不是把成员置空，而是把
+        #: 这一位翻掉——**那个 worker 此刻可能还跑在工作线程里，丢引用会要命**，
+        #: 详见 :meth:`_retire_speech`。
+        self._speak_live = False
+        #: 她这一轮说的是**哪一条**。降级那一路要靠它把提醒补出来。
+        self._speak_alert: Alert | None = None
+        #: 等她开口的表。**单发**，而且只在真有那一轮时才转（理由见
+        #: :data:`SPEECH_TIMEOUT_MS`）。放在这里、不放进 :meth:`_track`：它管的是
+        #: "等多久算太久"，与线程那一对的生命周期不是同一件事。
+        self._speak_timeout = QTimer(self)
+        self._speak_timeout.setSingleShot(True)
+        self._speak_timeout.timeout.connect(self._time_out_speech)
 
         #: 周期巩固的表。**与上面那个并存、不打架**：两个独立 ``QTimer``、两个不同的
         #: 槽、没有共享可变状态（见 ``ui/consolidation_scheduler.py`` 的模块文档）。
@@ -1353,6 +1424,13 @@ class MainWindow(QMainWindow):
         return route_turn(text, self._router_state)
 
     def _on_submit(self, text: str) -> None:
+        # **用户开口 = 她让路。** 这一句排在下面 ``_streaming`` 那一支**之前**：
+        # 生成中再提交会被忽略，但"她正在说"与生成是两件事——她说话**不锁输入框**
+        # （那正是这一条链的立论），所以用户完全可能在她说到一半时开口。
+        #
+        # ``tell=True`` 是必需的：她是被抢话打断的，而那条提醒**真的响过**。不补一句
+        # 由程序说的，用户这一轮的气泡就会把"刚刚发生过什么"整个顶掉。
+        self._stop_speech(tell=True)
         if self._streaming:
             # 生成中还能提交，说明界面状态与后端脱节了；直接忽略比排队更安全
             return
@@ -1721,25 +1799,243 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_reminder_fired(self, alert: Alert) -> None:
-        """到点了（或启动时收掉了一批错过的）：**两处都要说**。
+        """到点了（或启动时收掉了一批错过的）：**先保证这件事留下痕迹，再谈说得好不好**。
 
-        * **对话区一条**：用户回看时它在那儿。窗口可能是藏着的，而这条消息本来就
-          是"发生过什么"的一部分。
-        * **托盘一条气泡**：这是"现在就要知道"唯一的通道。窗口藏在托盘里时状态栏
-          没人看得见，只写对话区等于没提醒。
+        顺序就是这条链的全部设计：
 
-        **不用模态框**：它挡住用户正在做的事，而这条消息要的是"知道一下"，不是
-        "停下来处理"。收到这条消息时用户可能正在别的窗口里打字。
+        ① **托盘气泡**——永远、立刻、不依赖任何别的东西。它是"现在就要知道"唯一一条
+           不经过模型的通道：模型没起来、正忙、用户把"由她开口"关了，它都照发。
+        ② **把窗口叫出来**（:meth:`_wake_up`）——按窗口现在是什么样子决定怎么叫。
+        ③ **由她说一句**——可以失败、可以不做，而上面两步不许。
 
-        **两处说的是同一句话**（``alert.heading()`` / ``alert.body()``）。同一句话
-        写两遍，两份迟早会分叉——而分叉的那天没人会发现，因为这两处只在"到点了"
-        那一刻出现。
+        **不许由她开口的四种情形**，每一种都有它自己的理由：
 
-        措辞不在这个槽里定：:class:`~axo.agent.reminders.Alert` 在纯层，"一条还是
-        一堆、是不是错过"这三个判据因此逐条可断言（见 ``agent/reminders.py``）。
+        * ``alert.late``：启动时收掉的那一批。``start()`` 排在 ``__init__`` 最后，而
+          ``_refresh_models()`` 是异步的——那一刻 ``self._backend`` 几乎必然是
+          ``None``；而且它本来就是**错过**，由程序说比由她补一句"到点了"更诚实。
+          这条判据的来由是时序，不是取舍，所以它写在代码里而不是设置里。
+        * 还没有后端：没得选，只能由程序说。
+        * 用户正问到一半（``_streaming``）：那时候她的气泡会长在用户这一轮的流里，
+          而用户等的是自己那个问题的答案。
+        * **她已经在说另一件**：两条提醒前后脚到点。第二句降级成程序说的那条，而不是
+          排队——排队会让"她说了什么"与"现在是几点"对不上。
+
+        措辞不在这里定：:class:`~axo.agent.reminders.Alert` 在纯层。
         """
-        self.chat_view.append_message("system", f"**{alert.heading()}**\n\n{alert.body()}")
         self._tray.show_message(alert.heading(), alert.body())
+        self._wake_up()
+        if alert.late or self._backend is None or self._streaming or self._speak_live:
+            self._tell_reminder(alert)
+            return
+        self._start_reminder_speech(alert)
+
+    def _tell_reminder(self, alert: Alert, *, note: str = "") -> None:
+        """**由程序**把这条提醒说出来——她没能开口时的落点。
+
+        走的是这条链原本那条 ``system`` 通道，所以"由她开口"整个坏掉时，界面退化成的
+        样子与上一版**逐字相同**。这正是不怕它坏的理由：提醒本身从不依赖模型。
+
+        Args:
+            note: 她没能开口的原因，补在正文下面一行。**只有"试过但失败了"才给**
+                （模型报错、只吐了空白、超时）——那些是用户看不见的失效，不说就是静默
+                丢弃。而"按设计不由她开口"的那四种（错过、没模型、正忙、她已经在说）
+                一律不给：它们是常规状态，每次解释一句会把这行字变成噪音。
+        """
+        text = f"**{alert.heading()}**" + "\n\n" + alert.body()
+        if note:
+            text += "\n\n" + f"（这一句本该由她开口，{note}）"
+        self.chat_view.append_message("system", text)
+
+    def _wake_up(self) -> None:
+        """到点了：**按窗口现在是什么样子**决定怎么叫，判据是"打扰他多少"。
+
+        * **正开着**（可见）：**绝不抢焦点**，只在任务栏上闪一下。用户可能正在别的
+          窗口里打字，而这条消息要的是"知道一下"、不是"停下来处理"——抢焦点会把他
+          正敲的那半句话打断，那比"晚看三秒"贵得多。
+        * **最小化**：``showNormal()`` 恢复，但**不** ``activateWindow()``：它已经回到
+          屏幕上了，用户看得见，抢焦点就只剩打断这一件事。
+        * **藏在托盘里**（不可见）：**这才需要真的叫出来**——``show()`` + ``raise_()``
+          + ``activateWindow()`` 三样都要，少一样就是 :meth:`_on_tray_show` 那段注释
+          里的老毛病（窗口出现在别的窗口底下，用户以为没反应）。
+
+        **启动那一批（``late``）也走它。** 那时候窗口本来就要显示，多叫一次是无害的；
+        而给"叫醒"单开一档判据，等于让"什么时候叫醒"与"什么时候开口"分成两处决定——
+        那两件事在这里恰好只有一处（见 :meth:`_on_reminder_fired`）。
+        """
+        if self.isMinimized():
+            self.showNormal()
+            return
+        if not self.isVisible():
+            self.show()
+            self.raise_()
+            self.activateWindow()
+            return
+        self._flash_taskbar()
+
+    def _flash_taskbar(self) -> None:
+        """在任务栏上闪一下（Windows 上就是 ``FlashWindowEx``）。**可覆盖的测试缝。**
+
+        ``QApplication.alert`` 要一个真的 ``QWidget``，而这些槽的测试替身不是一个窗口
+        ——gui 测试一律不构造真的 ``MainWindow``（理由见 ``ui/agent_worker.py`` 与
+        ``thread_tracking`` 里那两段事故史）。缝留在这里、而不是把整条 :meth:`_wake_up`
+        变成桩：三档判据是这一版的正文，只有最后这一下是无从断言的系统调用。
+        """
+        QApplication.alert(self)
+
+    def _start_reminder_speech(self, alert: Alert) -> None:
+        """起"她开口"那一轮——**全程序唯一一轮不是回答用户的请求**。
+
+        复用 :class:`~axo.ui.chat_worker.ChatWorker`：一次流式请求、三个信号、
+        ``stop()`` 只翻一个布尔、不带工具。换一个 worker 的代价写在计划书里——起一整轮
+        对话会把提醒正文当成"用户说过的一句话"写进记忆库，而复用 ``AgentWorker`` 会在
+        无人值守的屏幕上挂一张没人在看的确认卡片。所以这里只写"什么时候起、结果落到哪、
+        失败了怎么办"。
+        """
+        assert self._backend is not None, "调用方已经查过后端在不在"
+        request = ChatRequest(
+            messages=build_reminder_messages(
+                alert=alert,
+                # 人格锚**原样带**，与 :meth:`_on_submit` 用的是同一个函数：同一份字节
+                # 这条纪律对"她主动说的那句"同样成立。
+                persona=persona_texts(self._memory),
+                model_id=self._backend.model_id,
+            ),
+            max_tokens=SPEECH_MAX_TOKENS,
+        )
+        self._speak_alert = alert
+        self._speak_live = True
+        thread = QThread(self)
+        worker = ChatWorker(self._backend, request)
+        # **不接 ``chunk``。** 她的话整段出现，不是逐字长出来的：网页侧的 ``pushToken``
+        # 把流式气泡的角色写死成了 ``assistant``，要在她的气泡里长字就得给那个方法加一个
+        # 参数，那是契约变更——这一版明确不改 JS（见 ``ui/chat_view.py`` 的契约表与
+        # :meth:`_on_speech_finished`）。代价是生成那十几秒屏幕上没有动静（实测 3–15 秒，
+        # 见 :data:`SPEECH_MAX_TOKENS`），换来的是零 JS 改动与一条不会认错角色的流。
+        worker.finished.connect(self._on_speech_finished)
+        worker.failed.connect(self._on_speech_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        self._track(thread, worker, what="提醒开口线程", slot="speak")
+        self._speak_timeout.start(SPEECH_TIMEOUT_MS)
+        thread.start()
+
+    def _retire_speech(self) -> Alert | None:
+        """让这一轮**作废**，返回她说的是哪一条（没在说就 ``None``）。
+
+        **这里不许把 ``_speak_worker`` 置空，一个引用都不许丢。** 这不是洁癖，是实测
+        换来的：那个对象的所有权在 Python 手上（``ChatWorker`` 构造时没有父对象），而
+        让路那两条路（用户抢先开口、二十秒超时）**都发生在它可能还跑在工作线程里的
+        时候**——丢掉最后一个引用会让它的 C++ 对象在 ``run()`` 执行到一半时被析构，
+        于是 ``finished`` 再也发不出来，``thread.quit()`` 也就永远不会被调用，那个线程
+        一直挂在它自己的事件循环里。收尾只等它 3 秒
+        （:data:`~axo.ui.thread_tracking.THREAD_WAIT_MS`），等不到就是下一次
+        ``0xC0000409``。
+
+        症状长这样：那条路径单独跑全绿，两条连着跑，"等她说完"就永远等不到了——
+        ``tests/test_ui_agent_slots.py::test_a_stale_speech_result_is_dropped``
+        正是当场抓到它的那一条。
+
+        **引用由 :func:`~axo.ui.thread_tracking.track` 的 ``release`` 闭包摘掉**：它在
+        ``thread.finished`` 之后才跑，那才是这一轮真正结束的时刻。而这一位
+        （:attr:`_speak_live`）干的是另一件事——让迟到的 ``finished`` 说话不算数。
+        """
+        self._speak_timeout.stop()
+        self._speak_live = False
+        alert = self._speak_alert
+        self._speak_alert = None
+        return alert
+
+    @Slot(str, dict)
+    def _on_speech_finished(self, text: str, statistics: dict[str, Any]) -> None:
+        """她那一句生成完了：**进逐字稿、画进对话区**。
+
+        这一轮**不是一轮对话**，逐条说清楚（每一条都对着一个具体的后果）：
+
+        * **她的话进逐字稿**（``assistant`` + ``proactive=True``），**那一轮没有
+          ``user`` 行**——所以回看时那一行不会长得像"一句没人问过的回答"。
+        * **不写记忆库。** 这是最硬的一条：走 :meth:`_remember` 会把提醒正文当成
+          "用户说过的一句话"入库，或者把上一轮用户那句话再写一遍。
+        * **不动 ``turn_seq``**：不加 user 行，那个数就不变，两个溯源指针不会漂。
+        * **不动 ``_streaming``、不锁输入框**：她说话期间用户**必须**能照常打字——
+          "你还在跟我说话，我才能提"是这条链的立论。
+        """
+        if not self._speak_live or self.sender() is not self._speak_worker:
+            # 一次**已经被让掉**的开口（用户抢先说了话、或者超时把它收掉了）。她的
+            # finished 是排队来的，往往在用户那一轮开始之后才送到——收下它就会把
+            # 上一件事的一句话插进这一轮中间，而它看起来像她答非所问。
+            #
+            # 两个条件缺一不可：**光比对象认不出"被让掉"**——让路那两条路刻意不丢
+            # 引用（见 :meth:`_retire_speech`），所以那一次发回来的还是同一个 worker。
+            return
+        alert = self._retire_speech()
+        if not text.strip():
+            # **空回复不是"她说了句空话"，是这一次开口没发生。** 模型偶尔只吐空白
+            # （整段被 think 吃掉、或者被 max_tokens 卡在第一个 token 上），那时最要紧
+            # 的仍然是"这条提醒别消失"。
+            if alert is not None:
+                self._tell_reminder(alert, note="模型这次没有说出话来")
+            return
+        self._append(
+            Message(
+                role="assistant",
+                content=text,
+                proactive=True,
+                # 与用户那一轮同形：token 数进逐字稿（回看时不显示，但账要在）。
+                prompt_tokens=statistics.get("prompt_tokens"),
+                completion_tokens=statistics.get("completion_tokens"),
+            )
+        )
+        self.chat_view.append_message("proactive", text, {"title": _PROACTIVE_TITLE})
+
+    @Slot(str)
+    def _on_speech_failed(self, detail: str) -> None:
+        """她那一句没生成出来：**不重试，但那条提醒照旧要说**。
+
+        不重试是刻意的：到点这件事的正文是那条提醒，而它已经在托盘气泡里发过了；
+        重试一次等于让一个可能正卡着的后端再来一遍，而用户等的是"知道一下"。
+        """
+        if self.sender() is not self._speak_worker:
+            return
+        alert = self._retire_speech()
+        if alert is not None:
+            # 失败**要说出来**（同 :meth:`_remember` 那条纪律），但说在提醒下面一行：
+            # 这条气泡的正文是那条提醒，不是模型的错误。
+            self._tell_reminder(alert, note=f"模型没能开口：{detail}")
+
+    @Slot()
+    def _time_out_speech(self) -> None:
+        """等太久了：收掉这一轮，改成由程序说。
+
+        见 :data:`SPEECH_TIMEOUT_MS`。这里**必须真的 ``stop()``**，不能只是把界面切回
+        降级：那样这个线程还挂在后端上等（读超时是 300 秒），而用户此时关窗，收尾只等
+        3 秒——那正是 ``0xC0000409`` 的配方。
+        """
+        if self._speak_worker is None:
+            return  # 已经不在说了（finished 刚回来，或者用户抢先开了口）
+        self._speak_worker.stop()
+        alert = self._retire_speech()
+        if alert is not None:
+            self._tell_reminder(alert, note="等了二十秒还没说完")
+
+    def _stop_speech(self, *, tell: bool) -> None:
+        """让她让路（:meth:`_on_submit` 的第一件事）。
+
+        Args:
+            tell: 要不要**由程序把这条提醒补说一遍**。用户抢先开口时必须为真：她那一轮
+                是被抢话打断的，而**那条提醒是真的响过的**——不补这一句，对话区里就
+                什么都没有，只剩一条会自己消失的托盘气泡。
+
+        她被打断时那半句话**整段丢掉**：这一版她的话整段出现（见
+        :meth:`_start_reminder_speech`），一个字都还没显示过，留下来只会是一条半截
+        气泡。真正不能丢的是那条提醒——所以降级那一句在下面**同步**落，而不是等那个
+        排队回来的 ``finished``（它会被上面那道发送者校验挡住）。
+        """
+        if self._speak_worker is None:
+            return
+        self._speak_worker.stop()
+        alert = self._retire_speech()
+        if tell and alert is not None:
+            self._tell_reminder(alert)
 
     @Slot(str, str, str)
     def _on_approval_needed(self, call_id: str, tool_name: str, summary: str) -> None:
@@ -2900,6 +3196,14 @@ class MainWindow(QMainWindow):
         self._shutting_down = True
         if self._chat_worker is not None:
             self._chat_worker.stop()
+        if self._speak_worker is not None:
+            # **这一句最容易漏，漏了也最难查。** 她那一轮的线程可能正挂在一次
+            # 后端读上（超时 300 秒），而下面只等 3 秒——它不停下来就是下一次
+            # ``0xC0000409``。20 秒那个表挡的是"用户还开着窗口"的那段时间，
+            # 挡不住"他此刻就关窗"，所以这里必须自己再说一遍。
+            self._speak_worker.stop()
+            # 表也停掉：收尾之后才响的一枪没有东西接得住（同下面两块表）。
+            self._speak_timeout.stop()
         if self._agent_worker is not None:
             # 收尾这条路上，``AgentWorker.stop()`` 的第二件事（``slot.cancel()``）是
             # **必需**的，不是优化：一个正卡在等确认上的工作线程除了它没有任何东西

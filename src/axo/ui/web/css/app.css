@@ -380,6 +380,13 @@ body.has-wallpaper #scrim {
   white-space: pre-wrap;
 }
 
+/* 她主动开口那一句（提醒到点，见 agent/proactive.py）。**底色与 .msg-assistant 同一支**
+   ——她说的就是她说的，不该长得像警示；区别只在左边那一道强调色：这一整条气泡不是
+   任何问题的回答，回看时要能一眼认出来。 */
+.msg-proactive .msg-body {
+  border-left: 3px solid var(--accent);
+}
+
 /* 确认卡片。左边一道强调色，与对话内容一眼分得开——它是一件**等你动手**的东西，
    而对话流里其余每一件都不是。 */
 .msg-tool-confirm .msg-body {

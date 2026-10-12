@@ -47,10 +47,11 @@ def test_append_creates_header_then_messages(store: SessionStore) -> None:
     # 首行之后每行一条，追加写——不是每轮重写整个文件
     lines = store._path(session.session_id).read_text(encoding="utf-8").splitlines()
     assert len(lines) == 3
-    # 写死 3 而不是引用 ``_SCHEMA``：这条测试要在**改版本号时红一次**，逼人停下来
+    # 写死 4 而不是引用 ``_SCHEMA``：这条测试要在**改版本号时红一次**，逼人停下来
     # 想清楚"旧文件还读得回来吗"。引用常量的话它就永远绿，等于没有这条测试。
-    # （2 → 3 那次它确实红了，下面那一节"schema 1/2 → 3"就是当场补的。）
-    assert json.loads(lines[0])["schema"] == 3
+    # （2 → 3 那次它确实红了，下面那一节"schema 1/2 → 3"就是当场补的；3 → 4
+    # 那次也红了，补的是下面那一节"3 → 4"。）
+    assert json.loads(lines[0])["schema"] == 4
     assert json.loads(lines[1])["content"] == "第一条"
     assert json.loads(lines[2])["content"] == "第二条"
 
@@ -307,6 +308,50 @@ def test_the_no_replay_reason_lands_and_reads_back(store: SessionStore) -> None:
     # 空串归成"没有"，与 ``_optional_str`` 对 ``tool_call_id`` 的处理同源：一个空的
     # 原因字符串说不出任何事，让它冒充"有原因"会让 L5 跳过一个本该回放的对。
     assert Message.from_dict({"role": "tool", "content": "x", "no_replay": ""}).no_replay is None
+
+
+# ── schema 3 → 4：她主动开口的那一行 ────────────────────────────────────────
+#
+# 加字段这件事本身与上面那一节同形（老行不动、老读者读得回来），不需要再证一遍。
+# 这一节只补那一节证不到的一件事：**这个字段的默认方向**。
+
+
+def test_a_proactive_row_lands_and_reads_back(store: SessionStore) -> None:
+    """她主动说的那句落地并读回；同一份文件里普通回答**一个键都不多**。
+
+    多写一个 ``"proactive": false`` 的代价不是几个字节：它是"非空才写"这条约定上的
+    一个洞，而那条约定正是"老行逐字节不变"的全部依据（见
+    ``test_a_plain_row_gains_no_new_keys``）。
+    """
+    session = store.load(new_session_id())
+    store.append(session, Message(role="assistant", content="该睡了。", proactive=True))
+    store.append(session, Message(role="assistant", content="好，我查一下。"))
+
+    reloaded = store.load(session.session_id)
+
+    assert reloaded.messages[0].proactive is True
+    assert reloaded.messages[1].proactive is False
+    raw = (store.root / f"{session.session_id}.jsonl").read_text(encoding="utf-8").splitlines()
+    assert json.loads(raw[1])["proactive"] is True
+    assert "proactive" not in json.loads(raw[2])
+    assert "proactive" not in Message(role="assistant", content="普通回答").to_dict()
+
+
+def test_a_row_without_the_key_is_not_proactive() -> None:
+    """缺键 → **不是**她主动说的。**这个默认方向是刻意的。**
+
+    schema-4 之前的每一行都是回答用户哪句话，那些行里既没有这个键、也不该在回看时
+    变成"她主动开口"。默认成真更坏的还在后面：``display_rows`` 是按这一位分岔的，
+    于是整份历史会一夜之间换一副长相，而没有任何一条数据变过。
+    """
+    assert Message.from_dict({"role": "assistant", "content": "老的回答"}).proactive is False
+    # 真值照真读（``bool(...)``，与同一族里的 ``interrupted`` 一个写法）。**不另立
+    # 一套严格判定**：这一位只由本程序写，读到 ``1`` 说明文件被人动过；那种时候
+    # "按真值渲染"与"当成假"代价一样小，而与 ``interrupted`` 分头写两套判据，
+    # 代价是下一个读这两个字段的人要多想一次它们为什么不一样。
+    assert (
+        Message.from_dict({"role": "assistant", "content": "x", "proactive": 1}).proactive is True
+    )
 
 
 def test_tool_rows_land_and_read_back(store: SessionStore) -> None:

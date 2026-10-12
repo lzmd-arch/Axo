@@ -299,6 +299,7 @@ src/
       catalog.py      七个具体工具（内容）
       fs.py           read_file 的沙箱校验与读取
       reminders.py    ReminderStore 落盘 + FiredStore（谁到点了 / 谁已经响过）
+      proactive.py    「到点由她开口」那一轮的提示词：一条 system，人格锚 + 环境 + 说明（纯）
       trace.py        工具轨迹：把「这一轮做过什么」收成条目 meta 里的一小段（纯）
       loop.py         agent 循环：事件生成器，不是阻塞函数
       gate.py         确认策略 + ApprovalSlot（跨线程握手，无一行 Qt）
@@ -385,6 +386,7 @@ tests/
   test_ui_router_wire.py  语域路由真的接进了对话回合（跑 `_route` + ast 守卫，见「一个回合只判一次」）
   test_ui_elided_label.py 顶栏状态文字：省略号、样式表取色、以及**真顶栏到底给了它多少宽度**
   test_agent_trace.py  工具轨迹：参数取自逐字稿、配不上也留步、截断与 `result_chars`
+  test_agent_proactive.py 她开口那一轮的提示词：只有一条 system、人格锚逐字带、身份那句话在正文前面
   test_memory_policy.py `TaskPolicy`：有轨迹合成一条，**没轨迹时与 `PerItemPolicy` 逐字段相同**
   test_ui_tray.py      托盘：不可用时全无操作、图标不是空的、两项菜单真的接上了信号
   test_ui_window_icon.py 窗口图标：窗口与应用两级都装上了、画的是那一支主色、换外观那条路真的调它（ast）

@@ -13,7 +13,7 @@ JS 与 Python 的契约（两边都是**只增不改**，否则旧前端会静�
     JS   → Python   window.bridge.send(text)                          一条聊天消息
                     window.bridge.answer_persona(text)               首启人设卡片的答案；"" = 不写
                     window.bridge.tool_confirm(call_id, granted)     确认卡片上的一次点击
-    Python → JS     window.ChatHost.appendMessage(role, text, meta)   role: user|assistant|system|tool
+    Python → JS     window.ChatHost.appendMessage(role, text, meta)   role: user|assistant|system|tool|proactive
                     window.ChatHost.pushToken(text)                  流式增量
                     window.ChatHost.endMessage()                     一片回复结束
                     window.ChatHost.setBusy(busy)                    生成中
@@ -30,6 +30,21 @@ JS 与 Python 的契约（两边都是**只增不改**，否则旧前端会静�
 **这份清单漏过一次 ``setWallpaper``**（加它的时候没同步），于是那个方法在两侧之间
 没有任何书面的存在证明。补全它不只是文档洁癖：这张表是"改哪边要动哪边"的唯一索引，
 漏一项就意味着下一次改签名时没人会想到去改对面。
+
+**``proactive`` 是一个新角色，而不是给 ``assistant`` 加一个开关。** 她到点主动说的
+那一句（见 ``agent/proactive.py``）与"回答用户"是同一张嘴说的两件事，回看时要能一眼
+分开：
+
+* 混进 ``.msg-assistant``，回看时读到的是"这是你问来的"——而那一轮**没有 user 行**；
+* 用 ``.msg-system``，那是**危险色**（与 ``tool`` 一样的报错配色），而她说得没错什么；
+* 两边都不属于，于是给它一支自己的类名（底色仍是助手那一支：她说的就是她说的），
+  只在左边加一道强调色。
+
+**JS 那一侧一项都没加。** ``makeBubble`` 拼的是 ``"msg msg-" + role``，``meta.title``
+本来就会被渲染成气泡上方那行小字——所以新角色在这个网页里**天然可用**，Python 侧
+只要把 role 传对。这也是为什么她的话是**整段出现**而不是逐字长出来的：``pushToken``
+建气泡时把角色写死成了 ``assistant``，要让流式也认角色就得给那个方法加一个参数，
+而这份契约是只增不改的（见 ``ui/main_window.py`` 的 ``_start_reminder_speech``）。
 
 **命名各自照顾被调用方**：Python → JS 那一侧是 camelCase，因为定义在 JS 里
 （``setPersonaState``、``pushToken``）；JS → Python 那一侧是 snake_case，因为定义在

@@ -1,4 +1,5 @@
-"""任务语域在 ``MainWindow`` 上挂的那六个槽：卡片画不画、点击算不算、逐字稿写不写。
+"""``MainWindow`` 上挂的那两族槽：任务语域的六个（卡片画不画、点击算不算、逐字稿写不写），
+以及"到点由她开口"的九个（什么时候开口、开口失败怎么办、叫醒窗口的三档）。
 
 **不构造真的 ``MainWindow``**（它一连 Ollama、起几个线程、加载 WebEngine）。这里
 把 ``MainWindow`` 的六个方法**赋成类属性**给一个只带那几个属性的替身——
@@ -20,14 +21,20 @@
 from __future__ import annotations
 
 import os
+import time
+from collections.abc import Callable
 from typing import Any
 
 import pytest
+from fakes import ScriptedBackend, text_chunk
+from PySide6.QtCore import QCoreApplication, QEvent, QObject
 
 from axo.agent.gate import APPROVAL_TIMEOUT_S
 from axo.agent.reminders import Alert, Occurrence, Reminder
 from axo.llm.base import ChatMessage, ToolCall
-from axo.ui.main_window import MainWindow
+from axo.session.store import Message
+from axo.ui.main_window import SPEECH_TIMEOUT_MS, MainWindow, display_rows
+from memcore.store import MemoryStore
 
 pytestmark = pytest.mark.gui
 
@@ -96,8 +103,44 @@ class FakeTray:
         self.messages.append((title, body))
 
 
-class Stub:
-    """那六个槽，以及它们碰得到的三样东西（``chat_view`` / ``_streaming`` / ``_append``）。"""
+#: 一条消息里标题与正文之间那个空行。写成常量是因为**它出现在断言里**：那一行是
+#: 渲染契约的一部分（``**标题**`` 独占一段），拼错了在屏幕上看得出来，在测试里拼错
+#: 了却会变成一条"看起来在测格式"的空断言。
+_PARA = "\n\n"
+
+
+class FakeTimer:
+    """单发表的替身：只记"排过多久、停过几次"。"""
+
+    def __init__(self) -> None:
+        self.started_with: list[int] = []
+        self.stops = 0
+
+    def start(self, ms: int) -> None:
+        self.started_with.append(ms)
+
+    def stop(self) -> None:
+        self.stops += 1
+
+
+class FakeSpeechWorker:
+    """``ChatWorker`` 那一半：只记"被叫停过"。"""
+
+    def __init__(self) -> None:
+        self.stops = 0
+
+    def stop(self) -> None:
+        self.stops += 1
+
+
+class Stub(QObject):
+    """那些槽，以及它们碰得到的东西。
+
+    **它是一个 ``QObject`` 而不是普通类。** 这一版"到点由她开口"要起一个真线程
+    （``QThread(self)`` 要求父对象是 QObject），还要在槽里做 ``sender()`` 校验——
+    两样都要求替身是个 QObject。仍然**不构造真的 ``MainWindow``**：那个东西会连
+    Ollama、起几个线程、加载 WebEngine（见本文件开头那段）。
+    """
 
     _on_tool_round_started = MainWindow._on_tool_round_started
     _on_tool_finished = MainWindow._on_tool_finished
@@ -106,17 +149,83 @@ class Stub:
     _on_tool_messages = MainWindow._on_tool_messages
     _on_tool_round_finished = MainWindow._on_tool_round_finished
     _on_reminder_fired = MainWindow._on_reminder_fired
+    _on_submit = MainWindow._on_submit
+    _tell_reminder = MainWindow._tell_reminder
+    _wake_up = MainWindow._wake_up
+    _start_reminder_speech = MainWindow._start_reminder_speech
+    _retire_speech = MainWindow._retire_speech
+    _on_speech_finished = MainWindow._on_speech_finished
+    _on_speech_failed = MainWindow._on_speech_failed
+    _time_out_speech = MainWindow._time_out_speech
+    _stop_speech = MainWindow._stop_speech
+    _track = MainWindow._track
 
-    def __init__(self, *, streaming: bool = True, worker: FakeWorker | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        streaming: bool = True,
+        worker: FakeWorker | None = None,
+        backend: Any = None,
+        memory: Any = None,
+    ) -> None:
+        super().__init__()
         self.chat_view = Recorder()
         self._streaming = streaming
         self._agent_worker = worker
         self._scheduler = FakeScheduler()
         self._tray = FakeTray()
         self.stored: list[Any] = []
+        #: 她开口那一轮**不许**碰到的东西。用替身挡住而不是省掉：省掉的话，
+        #: 一次误调的 `_remember` 会因为 AttributeError 而红在别的地方，而这里要断言
+        #: 的是"它根本没被调过"。
+        self.remembered: list[Any] = []
+        # ── 她开口那一档 ──
+        self._backend = backend
+        self._memory = memory
+        self._speak_thread: Any = None
+        self._speak_worker: Any = None
+        # 这一轮还算不算数。**让路 = 翻这一位，不是把上面两个成员置空**（那会
+        # 析构一个可能还在跑的对象，见 `MainWindow._retire_speech`）。
+        self._speak_live = False
+        self._speak_alert: Alert | None = None
+        self._speak_timeout = FakeTimer()
+        self._live_threads: list[Any] = []
+        # 窗口状态：默认"正开着"。三档叫醒各由一条测试改这两个值。
+        self.visible = True
+        self.minimized = False
+        self.window_calls: list[str] = []
+        self.flashes = 0
 
     def _append(self, message: Any) -> None:
         self.stored.append(message)
+
+    def _remember(self, reply_text: str, **kwargs: Any) -> None:
+        self.remembered.append((reply_text, kwargs))
+
+    # ── 窗口三态与任务栏闪烁（真窗口才有，替身只记） ──
+
+    def isVisible(self) -> bool:
+        return self.visible
+
+    def isMinimized(self) -> bool:
+        return self.minimized
+
+    def show(self) -> None:
+        self.window_calls.append("show")
+        self.visible = True
+
+    def showNormal(self) -> None:
+        self.window_calls.append("showNormal")
+        self.minimized = False
+
+    def raise_(self) -> None:
+        self.window_calls.append("raise")
+
+    def activateWindow(self) -> None:
+        self.window_calls.append("activateWindow")
+
+    def _flash_taskbar(self) -> None:
+        self.flashes += 1
 
 
 def reminder_alert(*texts: str, late: bool = False) -> Alert:
@@ -536,3 +645,297 @@ def test_a_plain_chat_turn_leaves_the_status_alone(qapp: Any) -> None:
     )
 
     assert stub.chat_view.calls == []
+
+
+# ── 到点由她开口 ───────────────────────────────────────────────────────────
+#
+# 这一族测的是**"她真的会开口"与"开口失败时提醒不许消失"这两件事同时成立**。
+# 前一半要一次真的线程与真的信号（假件替不掉：要证的正是接线本身），后一半全在
+# 降级那条路上，逐条可断言。
+
+
+def _wait_until(qapp: Any, until: Callable[[], bool], *, ms: int = 3000) -> bool:
+    """转事件循环直到 ``until()`` 为真或超时。
+
+    真起线程的那几条只能这样等：worker 的 ``finished`` 是从工作线程发回来的**排队**
+    信号，不转事件循环它永远送不到。
+    """
+    deadline = time.monotonic() + ms / 1000
+    ok = False
+    while time.monotonic() < deadline:
+        qapp.processEvents()
+        if until():
+            ok = True
+            break
+        time.sleep(0.01)
+    # **把排队的延迟删除也排干，再走。** ``track`` 的收尾是三步排队送来的
+    # （``worker.deleteLater`` → ``release``（清单在这里变空）→ ``thread.deleteLater``），
+    # 所以上面那个判据在**第二步**就为真了。剩下的那两条延迟删除要是留到下一个测试去
+    # 处理，它们就会在另一个测试的事件循环里落地——那时这些对象的 Python 包装器早已
+    # 回收，Qt 当场 ``abort``（实测：单独的测试全绿，两个连着跑就崩在第二个）。
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    qapp.processEvents()
+    return ok or until()
+
+
+def _speaking_stub(qapp: Any, **script: Any) -> tuple[Stub, ScriptedBackend]:
+    """一个能开口的替身：有后端、有库、并按脚本吐一句。"""
+    backend = ScriptedBackend(**script)
+    stub = Stub(streaming=False, backend=backend, memory=MemoryStore(":memory:"))
+    return stub, backend
+
+
+def test_she_speaks_when_everything_is_ready(qapp: Any) -> None:
+    """条件齐了：她真的开口，而且**只做这一件事**。
+
+    一次开口要落到三处，而每一处漏掉都是一类具体的坏：
+
+    * **托盘气泡**照旧（它不经过模型，是"现在就要知道"唯一可靠的通道）；
+    * **对话区一条 ``proactive``**——不是 ``assistant``：那一轮没有 user 行，混进
+      助手的气泡里，回看时读到的是"这是你问来的"；
+    * **逐字稿一行**（``assistant`` + ``proactive=True``），**且不进记忆库**、
+      **不动 ``_streaming``**：走 ``_remember`` 会把提醒正文当成"用户说过的一句话"
+      入库，而锁输入框会毁掉"你还在跟我说话，我才能提"这条立论。
+    """
+    stub, backend = _speaking_stub(qapp, script=[[text_chunk("该睡了，早点休息。", done=True)]])
+    alert = reminder_alert("该睡了")
+
+    stub._on_reminder_fired(alert)
+
+    assert stub._tray.messages == [(alert.heading(), alert.body())]
+    assert _wait_until(qapp, lambda: not stub._live_threads), "那一轮没跑完"
+    assert stub._speak_timeout.started_with == [SPEECH_TIMEOUT_MS], "20 秒那块表没排上"
+
+    assert stub.chat_view.calls[-1] == (
+        "appendMessage",
+        "proactive",
+        "该睡了，早点休息。",
+        {"title": "提醒"},
+    )
+    assert len(stub.stored) == 1
+    line = stub.stored[0]
+    assert (line.role, line.content, line.proactive) == ("assistant", "该睡了，早点休息。", True)
+    assert stub.remembered == [], "她主动说的那句进了记忆库——它会变成'用户说过的一句话'"
+    assert stub._streaming is False, "她开口那一轮锁住了输入框"
+    assert backend.calls == 1
+    # 请求是**一条 system + 一条事件行**（见 ``agent/proactive.py`` 模块文档：
+    # 只有 system 时这个模型一个字都说不出来），而**不带工具**。
+    assert backend.roles(0) == ["system", "user"]
+    assert backend.tools_declared(0) == ()
+
+
+def test_a_late_reminder_is_never_spoken(qapp: Any) -> None:
+    """启动时收掉的那一批**一律降级**，一条请求都不发。
+
+    取舍的唯一来由是时序：``scheduler.start()`` 排在 ``__init__`` 最后，而模型列表是
+    异步拉的——那一刻后端几乎必然是 ``None``。语义上它本来就是"错过"，由程序说比由她
+    补一句"到点了"更诚实。
+    """
+    stub, backend = _speaking_stub(qapp, script=[[text_chunk("不该出现", done=True)]])
+    alert = reminder_alert("该睡了", late=True)
+
+    stub._on_reminder_fired(alert)
+
+    assert backend.calls == 0, "错过的那一批也去问模型了"
+    _kind, role, text, _meta = stub.chat_view.calls[-1]
+    assert (role, text) == ("system", "**错过了一条提醒**" + _PARA + "该睡了")
+
+
+def test_it_does_not_speak_over_the_user(qapp: Any) -> None:
+    """用户正问到一半：**降级**，不插嘴。
+
+    那时候她的气泡会长在用户这一轮的流里，而用户等的是自己那个问题的答案。
+    """
+    stub, backend = _speaking_stub(qapp, script=[[text_chunk("不该出现", done=True)]])
+    stub._streaming = True
+
+    stub._on_reminder_fired(reminder_alert("该睡了"))
+
+    assert backend.calls == 0
+    assert stub.chat_view.calls[-1][1] == "system"
+
+
+def test_it_does_not_speak_while_she_is_already_speaking(qapp: Any) -> None:
+    """两条提醒前后脚到点：第二条由程序说，**不排队**。
+
+    排队会让"她说了什么"与"现在是几点"对不上——第二句开口时，第一件早就过去了。
+    """
+    stub, backend = _speaking_stub(qapp, script=[[text_chunk("不该出现", done=True)]])
+    busy = FakeSpeechWorker()
+    stub._speak_worker = busy
+    stub._speak_live = True
+
+    stub._on_reminder_fired(reminder_alert("该睡了"))
+
+    assert backend.calls == 0
+    assert busy.stops == 0, "第二条不该把第一条掐掉"
+    assert stub.chat_view.calls[-1][1] == "system"
+
+
+# ── 开口失败：提醒不许跟着消失 ─────────────────────────────────────────────
+
+
+def test_an_empty_reply_falls_back_to_the_program(qapp: Any) -> None:
+    """模型只吐了空白 → **由程序说**，而且说出原因。
+
+    空回复不是"她说了句空话"，是这一次开口没发生。用户看不见的失效必须留一行字，
+    否则"她有时开口、有时不开口"就成了一件没有解释的事。
+    """
+    stub, _backend = _speaking_stub(qapp, script=[[text_chunk("   ", done=True)]])
+
+    stub._on_reminder_fired(reminder_alert("该睡了"))
+
+    assert _wait_until(qapp, lambda: not stub._live_threads)
+    assert stub.stored == [], "空回复不该进逐字稿"
+    _kind, role, text, _meta = stub.chat_view.calls[-1]
+    assert role == "system" and "该睡了" in text and "没有说出话来" in text
+
+
+def test_a_failed_speech_falls_back_to_the_program(qapp: Any) -> None:
+    """后端报错 → 不重试，但**那条提醒照旧要说**，并带上原因。"""
+    stub, backend = _speaking_stub(qapp, script=[[]], raise_at=0)
+
+    stub._on_reminder_fired(reminder_alert("该睡了"))
+
+    assert _wait_until(qapp, lambda: not stub._live_threads)
+    assert backend.calls == 1, "失败之后又试了一次"
+    _kind, role, text, _meta = stub.chat_view.calls[-1]
+    assert role == "system" and "该睡了" in text and "模型没能开口" in text
+
+
+def test_the_timeout_tells_and_stops(qapp: Any) -> None:
+    """二十秒到了：**叫停那一轮**，并由程序把提醒说出来。
+
+    叫停这件事不是体验问题：那个线程还挂在后端上（读超时 300 秒），而收尾只等 3 秒
+    ——它不停下来就是下一次 ``0xC0000409``。
+    """
+    stub = Stub(streaming=False, backend=object(), memory=MemoryStore(":memory:"))
+    alert = reminder_alert("该睡了")
+    worker = FakeSpeechWorker()
+    stub._speak_worker = worker
+    stub._speak_live = True
+    stub._speak_alert = alert
+
+    stub._time_out_speech()
+
+    assert worker.stops == 1
+    assert stub._speak_live is False and stub._speak_alert is None
+    # **引用留着**：这一轮可能还跑在工作线程里，丢引用会析构一个正在执行的
+    # QObject（见 `MainWindow._retire_speech`）。摘引用是 `track` 的 `release`
+    # 闭包在 `thread.finished` 之后干的事。
+    assert stub._speak_worker is worker
+    assert stub._speak_timeout.stops == 1
+    assert "等了二十秒还没说完" in stub.chat_view.calls[-1][2]
+
+    # 幂等：表晚到的第二次、或者 finished 刚回来之后的那一次，都不该再说一遍。
+    stub._time_out_speech()
+    assert len(stub.chat_view.calls) == 1
+
+
+def test_a_stale_speech_result_is_dropped(qapp: Any) -> None:
+    """被让掉的那一轮，**迟到的 ``finished`` 不许落地**。
+
+    它的 ``finished`` 是排队来的，往往在用户那一轮开始之后才送到。收下它就会把上一件事
+    的一句话插进这一轮中间，而它看起来像她答非所问——所以那两个槽的第一句是发送者校验
+    （同 :meth:`_on_assembly_ready` 那条手法）。
+    """
+    stub, _backend = _speaking_stub(qapp, script=[[text_chunk("该睡了，早点休息。", done=True)]])
+
+    stub._on_reminder_fired(reminder_alert("该睡了"))
+    stub._stop_speech(tell=False)
+    assert _wait_until(qapp, lambda: not stub._live_threads), "那一轮没跑完"
+
+    assert stub.stored == [], "被让掉的那一句还是进了逐字稿"
+    assert not [call for call in stub.chat_view.calls if call[1:2] == ("proactive",)]
+
+
+def test_the_user_speaking_makes_her_stop(qapp: Any) -> None:
+    """用户开口 = 她让路，而且**由程序把那条提醒补说一遍**。
+
+    这一句补白是必需的：她那一轮被抢话打断了，而那条提醒**真的响过**。不补的话，用户
+    这一轮的气泡会把"刚刚发生过什么"整个顶掉，只剩一条会自己消失的托盘气泡。
+
+    ``_stop_speech`` 排在 ``_on_submit`` 的第一行、``_streaming`` 那一支**之前**：
+    生成中被忽略的那一次提交，也照样该让她让路。
+    """
+    stub = Stub(streaming=True, backend=object(), memory=MemoryStore(":memory:"))
+    alert = reminder_alert("该睡了")
+    worker = FakeSpeechWorker()
+    stub._speak_worker = worker
+    stub._speak_live = True
+    stub._speak_alert = alert
+
+    stub._on_submit("等一下")
+
+    assert worker.stops == 1
+    assert stub._speak_worker is worker, "让路把 worker 的引用丢了——那会析构一个还在跑的对象"
+    _kind, role, text, _meta = stub.chat_view.calls[-1]
+    assert role == "system" and "该睡了" in text
+    assert "本该由她开口" not in text, "按设计让路的那一次不该带原因——那是常规状态"
+
+
+# ── 叫醒窗口的三档 ─────────────────────────────────────────────────────────
+
+
+def test_an_open_window_is_only_flashed(qapp: Any) -> None:
+    """窗口正开着：**绝不抢焦点**，只在任务栏闪一下。
+
+    用户可能正在别的窗口里打字，而这条消息要的是"知道一下"、不是"停下来处理"。
+    """
+    stub = Stub()
+
+    stub._wake_up()
+
+    assert stub.window_calls == []
+    assert stub.flashes == 1
+
+
+def test_a_minimized_window_comes_back_without_stealing_focus(qapp: Any) -> None:
+    """最小化：恢复，但**不抢焦点**——它已经回到屏幕上了，用户看得见。"""
+    stub = Stub()
+    stub.minimized = True
+
+    stub._wake_up()
+
+    assert stub.window_calls == ["showNormal"]
+
+
+def test_a_hidden_window_is_really_called_out(qapp: Any) -> None:
+    """藏在托盘里：**三样都要**（show + raise + activate），少一样就是"点了没反应"。"""
+    stub = Stub()
+    stub.visible = False
+
+    stub._wake_up()
+
+    assert stub.window_calls == ["show", "raise", "activateWindow"]
+
+
+# ── live 与 reload 画得一样 ────────────────────────────────────────────────
+
+
+def test_the_row_is_the_same_when_read_back(qapp: Any) -> None:
+    """当时屏幕上的那一行与回看时算出来的那一行**逐字段相同**。
+
+    这是 :func:`~axo.ui.main_window.display_rows` 存在的全部意义，而 ``proactive``
+    是这一版新加的一支：live 传 ``proactive``、reload 传一个别的角色（或者反过来传了
+    一个 live 没传的标题），症状是"切一次会话，那条提醒换了副长相"——没有任何测试会红。
+    """
+    stub, _backend = _speaking_stub(qapp, script=[[text_chunk("该睡了，早点休息。", done=True)]])
+    stub._on_reminder_fired(reminder_alert("该睡了"))
+    assert _wait_until(qapp, lambda: not stub._live_threads)
+
+    _kind, live_role, live_text, live_meta = stub.chat_view.calls[-1]
+    (row,) = display_rows(stub.stored)
+
+    assert (row["role"], row["text"], row["meta"]) == (live_role, live_text, live_meta)
+
+
+def test_an_ordinary_reply_is_still_an_ordinary_row(qapp: Any) -> None:
+    """对照组：普通回答回看时**不长成她主动说的那条**。
+
+    ``proactive`` 那一支要是写成"凡 assistant 都换角色"，整份历史会一夜之间换一副
+    长相，而没有任何一条数据变过。
+    """
+    (row,) = display_rows([Message(role="assistant", content="好，我查一下。")])
+
+    assert row == {"role": "assistant", "text": "好，我查一下。", "meta": {}}
