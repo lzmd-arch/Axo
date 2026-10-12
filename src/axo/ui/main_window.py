@@ -425,7 +425,11 @@ class MainWindow(QMainWindow):
         #: ``read_file`` 允许读的目录。**默认空元组 = 那个工具被禁用**——"没配"不等于
         #: "给个默认目录"，理由见 :mod:`axo.agent.fs`。存在 ``QSettings``
         #: 的 ``tools/*`` 命名空间里，由设置窗口的「工具」页改。
-        self._read_roots: tuple[Path, ...] = self._settings_store.load_tools().read_roots
+        self._tool_settings: ToolSettings = self._settings_store.load_tools()
+        self._read_roots: tuple[Path, ...] = self._tool_settings.read_roots
+        #: 当前云端模型看不看得见图——**用户声明的**（云端问不到这个能力，见
+        #: :meth:`_model_can_see`）。本机不走这一位：那边 Ollama 自己会报。
+        self._cloud_vision: bool = self._tool_settings.cloud_vision
         #: 用不用**任务记忆**（:class:`~axo.memory.policy.TaskPolicy`）。
         #: 默认关，存在 ``QSettings`` 的 ``memory/*`` 里，由设置窗口的「记忆」页改。
         self._task_memory: bool = self._settings_store.load_memory().task_memory
@@ -1674,16 +1678,28 @@ class MainWindow(QMainWindow):
         return ToolRegistry(default_tools(read_root=self._read_roots, vision=self._model_can_see()))
 
     def _model_can_see(self) -> bool:
-        """当前模型能不能看图。**问不到就是看不见。**
+        """当前模型能不能看图。
 
-        来源是后端自报的 ``capabilities``（Ollama 的 ``/api/show`` 里会带 ``vision``）。
-        云端那一侧恒为"问不到"——OpenAI 的 ``/models`` 不报这个，而且那个协议里 tool 行
-        也装不了图（见 ``llm/openai_compat.py`` 里那条明确的拒绝）。
+        **本机问后端，云端问用户。**
 
-        **方向选的是"宁可不登记"**：模型看不见图时不登记，除了省一段 prompt，还省掉
-        **一张注定白点的确认卡片**（用户点完头才发现什么都不会发生）。反过来"登记了再
-        回一句我看不见"把一次静默失败叠在了提示词上，而它每次都要用户先点一次头。
+        本机：Ollama 的 ``/api/show`` 自报 ``capabilities`` 里有没有 ``vision``，这里读它。
+        **问不到就是看不见**——方向选的是"宁可不登记"：不登记除了省一段 prompt，还省掉
+        一张注定白点的确认卡片（用户点完头才发现什么都不会发生）。
+
+        云端：那条协议**不报能力**（``/models`` 什么都不说），所以判断只能来自用户那一格
+        （设置 → 工具 → 「当前模型看得见图」）。2026-10-12 之前这里对云端恒返回假，于是
+        屏幕识别在云端**永远不会出现**，而用户没有任何地方能纠正它——他拿
+        ``deepseek-flash``（官方支持图片输入的那个模型）问「你能不能看我的屏幕」，得到的
+        回答是「我没有屏幕接口」，而真相是那个工具根本没登记。
+
+        **它不是"云端能不能带图"的判据**：能不能带图是 ``llm/openai_compat.py`` 的事
+        （图写在 user 行的 content 分片里）。这一位只管登记不登记。
         """
+        if self._backend_settings.is_cloud:
+            # 云端问不到能力，所以判据是用户勾的那一格。**不看模型名字**：
+            # 按名字猜（有 vl/vision 就算）看起来省事，但猜错的方向是"模型收到一张它
+            # 看不了的图"，而那个失败发生在用户点完确认卡片之后。
+            return self._cloud_vision
         name = self.model_combo.currentData()
         if not name:
             return False
@@ -1722,10 +1738,10 @@ class MainWindow(QMainWindow):
             self.chat_view.append_message(
                 "system",
                 "**这一轮看不了屏幕。**\n\n"
-                "屏幕识别要一个能看图的模型，而**云端后端装不了图**"
-                "（OpenAI 兼容的那条协议里，工具结果只能带文字）。"
-                "换成本机的模型就行：`ollama pull minicpm-v:8b`，"
-                "再在顶栏的下拉框里选中它。",
+                "云端这条协议**不报**模型看不看得见图，所以要你自己说一句："
+                "**设置 → 工具 → 「当前模型看得见图」**勾上它。"
+                "（勾之前先确认那个模型真的收图——要换本机模型的话，"
+                "8 GB 显存这一档可以用 `ollama pull minicpm-v:8b`。）",
             )
             return
         name = str(self.model_combo.currentData() or "当前这个模型")
@@ -2678,7 +2694,7 @@ class MainWindow(QMainWindow):
                     # ——用户在云端配置下打开设置，看到的是「当前用本机」，于是他会
                     # 以为切云端根本没生效（而请求其实一直发在云端）。
                     backend=self._backend_settings,
-                    tools=ToolSettings(read_roots=self._read_roots),
+                    tools=self._current_tool_settings(),
                     memory=MemorySettings(
                         task_memory=self._task_memory,
                         graph_channel=self._graph_enabled,
@@ -2690,6 +2706,7 @@ class MainWindow(QMainWindow):
                 dialog.theme_changed.connect(self._on_theme_changed)
                 dialog.backend_changed.connect(self._on_backend_changed)
                 dialog.tools_changed.connect(self._on_tools_changed)
+                dialog.vision_changed.connect(self._on_cloud_vision_changed)
                 dialog.memory_changed.connect(self._on_memory_changed)
                 dialog.reminders_changed.connect(self._on_reminders_changed)
                 dialog.graph_rebuild_requested.connect(self._on_rebuild_graph)
@@ -2711,7 +2728,7 @@ class MainWindow(QMainWindow):
                     self._theme,
                     self._resolved,
                     self._backend_settings,
-                    tools=ToolSettings(read_roots=self._read_roots),
+                    tools=self._current_tool_settings(),
                     memory=MemorySettings(
                         task_memory=self._task_memory,
                         graph_channel=self._graph_enabled,
@@ -2823,7 +2840,30 @@ class MainWindow(QMainWindow):
         一轮里能读的目录不该在中途变。
         """
         self._read_roots = tuple(roots)
-        self._settings_store.save_tools(ToolSettings(read_roots=self._read_roots))
+        self._settings_store.save_tools(self._current_tool_settings())
+
+    def _current_tool_settings(self) -> ToolSettings:
+        """这一页的设置**从一处拼出来**。
+
+        原来两个构造点各写一份 ``ToolSettings(read_roots=self._read_roots)``——加一个
+        字段就要记得改两处，而漏掉的那一处症状是"设置窗口里勾了、主窗口不认"
+        （重开窗口那条路走的正是第二处）。所以拼装只有一个出处。
+        """
+        return ToolSettings(read_roots=self._read_roots, cloud_vision=self._cloud_vision)
+
+    @Slot(bool)
+    def _on_cloud_vision_changed(self, flag: bool) -> None:
+        """用户声明了"当前云端模型看得见图"。
+
+        **改一次就存一次**（同目录那一条）。不存的话，他勾完直接关掉窗口，下次启动又
+        变回"看不见"——而症状是"屏幕识别偶尔不见了"，很难追到一次设置窗口的操作。
+
+        **也不需要热切换**：工具集本来就每轮重建（见 :meth:`_tools`），下一轮提问就是
+        新的。而正在生成的那一轮不受影响，这也是对的——一轮里模型看不看得见图不该在
+        中途改变。
+        """
+        self._cloud_vision = bool(flag)
+        self._settings_store.save_tools(self._current_tool_settings())
 
     @Slot(object)
     def _on_reminders_changed(self, settings: ReminderSettings) -> None:

@@ -110,7 +110,7 @@ job 排除 `tests/test_ui_*`，而那两百多条里有两条守卫守的是本�
 > 三个地方都带着它：`.github/workflows/ci.yml`、`tools/ci_local.py`、pre-commit 的
 > `memcore-layering`。gui 腿那一条不要加——加了是 `fixture 'qtbot' not found`。
 >
-> 代价是核心腿末尾挂一行 `2006 passed, 1 skipped, 1 warning`，那条警告是
+> 代价是核心腿末尾挂一行 `2019 passed, 1 skipped, 1 warning`，那条警告是
 > `Unknown config option: qt_api`（插件没加载，所以它注册的 ini 键没人认领）。无害，
 > **别顺手加 `--strict-config` 把它变成错误**——那会让几条腿一起红，理由写在
 > `pyproject.toml` 那段注释里。
@@ -127,7 +127,7 @@ job 排除 `tests/test_ui_*`，而那两百多条里有两条守卫守的是本�
 > 的 LF 与库里的 LF 相符），而那个文件仍然是坏的。修法是让 git 重写一遍：
 > `rm run.bat && git checkout -- run.bat`。
 
-核心腿 **2007** 条（跑起来是 `2006 passed, 1 skipped`）、gui 腿 **509** 条，合计 2516。新增测试会让这三个数字变化；数条数用
+核心腿 **2020** 条（跑起来是 `2019 passed, 1 skipped`）、gui 腿 **514** 条，合计 2534。新增测试会让这三个数字变化；数条数用
 `--collect-only -q` 加一段求和（摘要行被 `addopts="-q"` 压掉了）：
 
 ```bash
@@ -337,8 +337,8 @@ worker 却是被 `started` 以 `Qt.DirectConnection` 直连进 `run()` 的——
 > **`--ignore` 不认通配符。** 它收的是**路径**。写成 `--ignore=tests/test_ui_*` 或
 > `--ignore=tests/test_ui_` 时它一条都排不掉，而且**不报错**——命令照常跑、照常
 > 全绿，只是"核心腿"里混进了 gui 测试。要通配就用 `--ignore-glob`（它要引号，
-> 否则由 shell 先展开）；按标记排则是 `-m "not gui"`。两条现在都给出 2007 条，
-> gui 腿是 509 条（数条数的办法见上面「跑测试与 CI」）。
+> 否则由 shell 先展开）；按标记排则是 `-m "not gui"`。两条现在都给出 2020 条，
+> gui 腿是 514 条（数条数的办法见上面「跑测试与 CI」）。
 
 **还有一个长得一样但性质不同的退出码**，只在冒烟脚本里出现：脚本自己在收尾前
 **没把事件队列排空**。窗口的 `show()`/`close()` 会投递事件，`deleteLater` 要等事件

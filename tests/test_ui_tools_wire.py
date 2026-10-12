@@ -20,7 +20,7 @@ from types import SimpleNamespace
 import pytest
 
 from axo.ui.main_window import MainWindow
-from axo.ui.settings_store import SettingsStore, ToolSettings
+from axo.ui.settings_store import BackendSettings, SettingsStore, ToolSettings
 
 pytestmark = pytest.mark.gui
 
@@ -56,6 +56,12 @@ def _window(**fields: object) -> SimpleNamespace:
         "_read_roots": (),
         "model_combo": _combo(""),
         "_model_caps": {},
+        # 后端那一份：**默认本机**。``_model_can_see`` 现在先问"是不是云端"——云端
+        # 那条路问不到能力，判据是用户声明的那一格（``_cloud_vision``）；本机照旧读
+        # ``_model_caps``。不给这一位的话，漏配的用例会当场 AttributeError 而不是
+        # 悄悄测成云端那一支。
+        "_backend_settings": BackendSettings(),
+        "_cloud_vision": False,
     }
     base.update(fields)
     window = SimpleNamespace(**base)
@@ -63,6 +69,11 @@ def _window(**fields: object) -> SimpleNamespace:
     # 照这个文件开头那条办法把**未绑定方法**接上去（包一层是为了让 ``self`` 是替身
     # 本身）——用替身重写一遍那道判断的话，测的就不是真的那一行了。
     window._model_can_see = lambda: MainWindow._model_can_see(window)  # type: ignore[attr-defined]
+    # 同一族的另一样：``_on_tools_changed`` 现在从**一处**拼出那一份设置
+    # （``_current_tool_settings``，两个构造点共用它）。不给的话这里会当场
+    # AttributeError——而漏给的那一半（视觉那一格）会在"设置窗口里勾了、主窗口不认"
+    # 那条路上静默地丢，正是这个替身要防的。
+    window._current_tool_settings = lambda: MainWindow._current_tool_settings(window)  # type: ignore[attr-defined]
     return window
 
 

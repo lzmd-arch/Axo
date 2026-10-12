@@ -875,6 +875,8 @@ class ToolPage(QWidget):
     """
 
     roots_changed = Signal(object)
+    vision_changed = Signal(bool)
+    """「当前模型看得见图」变了。**与目录分开一个信号**：它不是一次授权，而是一句对模型能力的声明。"""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -882,8 +884,11 @@ class ToolPage(QWidget):
         outer.setContentsMargins(16, 16, 16, 16)
         outer.setSpacing(10)
 
-        #: 「撤销修改」回到的那一份。:meth:`set_state` 会覆盖它。
+        #: 「撤销修改」回到的那两份。:meth:`set_state` 会覆盖它们。
+        #: 视觉那一项与目录同一页，所以撤销要一起回去——**只回一半的话**，用户按了
+        #: 「撤销修改」却发现那一格还亮着，而他会以为撤销坏了。
         self._snapshot: tuple[Path, ...] = ()
+        self._vision_snapshot = False
 
         outer.addWidget(_section("可读目录"))
 
@@ -919,15 +924,29 @@ class ToolPage(QWidget):
         )
 
         # **这一条讲的是"为什么那个工具不见了"**，与上面那条同族（"一条目录都不加时
-        # 读文件不会出现"）——只是它的开关不在这张页面上，而在顶栏那个模型下拉框里。
+        # 读文件不会出现"）——只是它的判据不在目录列表里，而在"模型看不看得见图"。
         # 写在这里的理由是一次真实的困惑：用户做完了屏幕识别，问"你现在能看到我的
-        # 屏幕吗"，模型答"我没有屏幕接口"——它会那么答**是对的**（他当时用的是云端
-        # 后端），但界面上一个字都没说为什么，读起来像"这个功能不存在"。
+        # 屏幕吗"，模型答"我没有屏幕接口"——它答得没错（那个工具当时根本没登记），
+        # 但界面上一个字都没说为什么，读起来像"这个功能不存在"。
+        outer.addSpacing(6)
+        outer.addWidget(_section("看屏幕"))
+        self.vision_box = QCheckBox("当前模型看得见图（云端问不到这个能力，要你自己声明）", self)
+        self.vision_box.setObjectName("cloudVisionBox")
+        self.vision_box.toggled.connect(self._on_vision_toggled)
+        outer.addWidget(self.vision_box)
         outer.addWidget(
             _hint(
-                "「看屏幕」那个工具只在当前模型看得见图的时候才出现：云端后端装不了图，"
-                "本机要选一个带视觉的模型（例如 minicpm-v:8b）。"
-                "它每次还会先弹一张确认卡片——没有「以后别再问了」。"
+                "「看屏幕」那个工具只在当前模型看得见图的时候才出现。"
+                "本机 Ollama 会自己报这个能力（所以本机不用勾）；"
+                "云端那条协议不报，所以要你来说——勾错了的症状是那句请求被端点拒掉。"
+                "它每次还会先弹一张确认卡片，没有「以后别再问了」。"
+            )
+        )
+        outer.addWidget(
+            _hint(
+                "**勾上意味着你同意把那一张屏幕截图发出去。** 记忆库与聊天记录仍然不出这台"
+                "机器，但截图会随着请求发给云端那个模型——屏幕上可能有别人的窗口、密码框。"
+                "本机模型那条路不涉及这一条。"
             )
         )
 
@@ -948,11 +967,24 @@ class ToolPage(QWidget):
         也在这里擦掉：换一次打开还挂着上一轮的结果，用户会以为刚才那次点击生效了。
         """
         self._snapshot = settings.read_roots
+        self._vision_snapshot = settings.cloud_vision
         self._fill(settings.read_roots)
+        # **摆上当前值不是一次改动**：先把信号挡掉再设，否则勾选框会把它自己
+        # "设上"的这一个动作当成用户点击报出去。
+        blocked = self.vision_box.blockSignals(True)
+        self.vision_box.setChecked(settings.cloud_vision)
+        self.vision_box.blockSignals(blocked)
         self.set_note("")
 
     def set_note(self, text: str) -> None:
         self.note.setText(text)
+
+    def vision(self) -> bool:
+        """「当前模型看得见图」这一格。"""
+        return self.vision_box.isChecked()
+
+    def _on_vision_toggled(self, checked: bool) -> None:
+        self.vision_changed.emit(bool(checked))
 
     def roots(self) -> tuple[Path, ...]:
         """列表里的目录，**按显示顺序**（顺序是有意义的，见类文档）。"""
@@ -969,10 +1001,14 @@ class ToolPage(QWidget):
         没变就不发：不然每按一次「撤销修改」都会往设置里写一遍同样的东西，而
         "这一页本来就没动过"是绝大多数情况。
         """
-        if self.roots() == self._snapshot:
-            return
-        self._fill(self._snapshot)
-        self.roots_changed.emit(self.roots())
+        if self.roots() != self._snapshot:
+            self._fill(self._snapshot)
+            self.roots_changed.emit(self.roots())
+        if self.vision() != self._vision_snapshot:
+            blocked = self.vision_box.blockSignals(True)
+            self.vision_box.setChecked(self._vision_snapshot)
+            self.vision_box.blockSignals(blocked)
+            self.vision_changed.emit(self._vision_snapshot)
 
     # ── 增删 ────────────────────────────────────────────────────────────────
 
@@ -1575,6 +1611,8 @@ class SettingsDialog(QDialog):
     theme_changed = Signal(object)
     backend_changed = Signal(object)
     tools_changed = Signal(object)
+    vision_changed = Signal(bool)
+    """「当前模型看得见图」变了。由工具页转发（见 :class:`ToolPage`）。"""
     memory_changed = Signal(object)
     reminders_changed = Signal(object)
     #: 「重建联想」被按下。转出去给主窗口——只有它知道图存哪儿、库有多大。
@@ -1683,6 +1721,7 @@ class SettingsDialog(QDialog):
         # 工具页**是**"边改边生效"的，与后端页的「应用地址」不同：加/删一条可读目录
         # 没有"应用"这一步可等——它只是一行设置，而且底部有「撤销修改」兜着。
         self.tools.roots_changed.connect(self.tools_changed)
+        self.tools.vision_changed.connect(self.vision_changed)
         # 记忆页也是"边改边生效"：一个勾选框，勾上就是下一次写入生效。
         self.memory.changed.connect(self.memory_changed)
         # 提醒页同形（也是一个勾选框，勾上就是下一次到点生效）。

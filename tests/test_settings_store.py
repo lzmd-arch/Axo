@@ -323,6 +323,33 @@ def test_read_roots_roundtrip() -> None:
     assert store.load_tools() == original
 
 
+def test_cloud_vision_is_off_by_default() -> None:
+    """**默认关**：勾上等于一次用户声明，而那该由用户来做，不是我们替他做的。
+
+    它决定的只是"``look_at_screen`` 登不登记"（图能不能寄是后端的事）。默认开的话，
+    一个纯文本的云端模型会收到一张它看不了的图——而那个失败发生在用户点完确认卡片
+    之后，看起来像"这个功能坏了"。
+    """
+    assert SettingsStore(FakeBackend()).load_tools().cloud_vision is False
+
+
+def test_cloud_vision_roundtrip() -> None:
+    """**注册表里读回来的 ``"false"`` 是真值**——所以这一格必须走 ``_as_bool``。
+
+    直接 ``bool(value)`` 的话 ``bool("false")`` 是 ``True``，一个勾选框会自己勾上，
+    而症状是"同意把截图发出去"这件事被静默地替用户做了。
+    """
+    store = SettingsStore(FakeBackend())
+    store.save_tools(ToolSettings(cloud_vision=True))
+    assert store.load_tools().cloud_vision is True
+
+    for stored in ("false", "0", "", 0, False):
+        assert (
+            SettingsStore(FakeBackend({"tools/cloud_vision": stored})).load_tools().cloud_vision
+            is False
+        ), f"{stored!r} 被读成了真值"
+
+
 def test_read_roots_are_stored_as_strings() -> None:
     """写进去的是字符串，不是 ``Path``——``QSettings`` 存不下 ``Path``，它会写成一个
     读不回来的东西。"""

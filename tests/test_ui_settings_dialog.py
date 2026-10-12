@@ -1305,6 +1305,65 @@ def test_reopening_moves_the_directory_snapshot(qapp, data_root, monkeypatch, tm
     assert seen == [(new,)]
 
 
+def test_the_vision_box_reports_what_the_user_declared(qapp: Any) -> None:
+    """那一格勾上/取消 → 发一次信号，而且**摆上当前值不算一次改动**。
+
+    后者是这一页与外观页共有的纪律：``set_state`` 是"陈述现状"，不是"用户点了"。
+    少了 ``blockSignals`` 那两行的话，一开窗口就会报一次改动，而主窗口会把它**存
+    一次**——用户在设置里什么都没做，那一格却被写成了当前值。
+
+    这一格的分量比目录那一条还重：勾上等于**同意把屏幕截图发到云端**。
+    """
+    page = ToolPage()
+    seen: list[bool] = []
+    page.vision_changed.connect(seen.append)
+
+    page.set_state(ToolSettings(cloud_vision=True))
+    assert page.vision() is True
+    assert seen == [], "摆上当前值被当成了一次改动"
+
+    page.vision_box.setChecked(False)
+    assert seen == [False]
+
+    page.vision_box.setChecked(True)
+    assert seen == [False, True]
+
+
+def test_revert_puts_the_vision_box_back(qapp: Any) -> None:
+    """「撤销修改」要把这一格一起收回去。
+
+    撤销的措辞是"回到打开这个窗口时的样子"——只收一半的话，用户按了撤销却发现那一格
+    还亮着，而他会以为撤销坏了。它比目录那条更该收得回去：它是一句**往外发**的同意。
+    """
+    page = ToolPage()
+    page.set_state(ToolSettings(cloud_vision=False))
+    seen: list[bool] = []
+    page.vision_changed.connect(seen.append)
+
+    page.vision_box.setChecked(True)
+    assert seen == [True]
+
+    page.revert()
+
+    assert page.vision() is False
+    assert seen == [True, False]
+
+
+def test_the_window_forwards_the_vision_declaration(qapp: Any, data_root: Any) -> None:
+    """窗口那一层要把工具页的信号转发出去——**主窗口连的是窗口那个**。
+
+    少了这一句的症状是"勾了没反应"：设置存下去了？没有——主窗口根本没收到，
+    所以它下一次重建工具表时用的还是旧的那一位。
+    """
+    dialog = _dialog_with_roots(())
+    seen: list[bool] = []
+    dialog.vision_changed.connect(seen.append)
+
+    dialog.tools.vision_box.setChecked(True)
+
+    assert seen == [True]
+
+
 # ── 分类列的行几何 ──────────────────────────────────────────────────────────
 
 

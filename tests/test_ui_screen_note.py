@@ -67,17 +67,19 @@ def _explain(window: Any) -> list[str]:
 # ── 该说的时候说，而且说得对 ────────────────────────────────────────────────
 
 
-def test_the_cloud_backend_says_that_it_is_the_protocol_not_the_feature() -> None:
-    """云端：**要指到"这条协议装不了图"**，而不是含糊地说"看不见"。
+def test_the_cloud_backend_points_at_the_switch_not_at_the_model() -> None:
+    """云端：**要把人指到那个开关上**，而不是让他去换模型。
 
-    只说"看不了"的话，用户合理的下一步是去翻设置、换模型——而云端的模型列表里
-    **换哪个都一样**。所以这句话必须把原因指到后端上，并给出真正能走的那一步。
+    云端那条协议不报能力，所以判据是用户勾的那一格（设置 → 工具 → 「当前模型看得见
+    图」）。这句话原来写的是"云端后端装不了图"——**那句是错的**（2026-10-12 核过
+    DeepSeek 官方文档：``deepseek-flash`` 收图，只是图只能挂在 ``user`` 行上）。
+    错的解释会把人引到一个改不动的方向上：他会去反复换模型，而每一换都一样。
     """
     said = _explain(_window(can_see=False, cloud=True, text="你现在能看到我的屏幕吗"))
 
     assert len(said) == 1
-    assert "云端后端装不了图" in said[0]
-    assert "minicpm-v" in said[0], "没给出能走的那一步"
+    assert "设置" in said[0] and "看得见图" in said[0], "没把人指到那个开关上"
+    assert "装不了图" not in said[0], "那句解释是错的——云端那条路能带图，只是要勾一下"
 
 
 def test_a_local_model_without_vision_is_named() -> None:
@@ -119,3 +121,43 @@ def test_an_ordinary_turn_is_left_alone() -> None:
     """
     assert _explain(_window(can_see=False, cloud=True, text="帮我查一下我之前记过什么")) == []
     assert _explain(_window(can_see=False, cloud=True, text="今天天气不错")) == []
+
+
+# ── 判据本身：本机问后端，云端问用户 ────────────────────────────────────────
+
+
+def _seer(*, cloud: bool, declared: bool, caps: tuple[str, ...] = (), model: str = "m") -> Any:
+    """``_model_can_see`` 碰得到的那四样。"""
+    return SimpleNamespace(
+        _backend_settings=SimpleNamespace(is_cloud=cloud),
+        _cloud_vision=declared,
+        _model_caps={model: caps},
+        model_combo=_Combo(model),
+    )
+
+
+def test_the_cloud_judgement_comes_from_the_declaration() -> None:
+    """云端：勾了就看得见，没勾就看不见——**不看模型名字也不看能力表**。
+
+    2026-10-12 之前这里对云端恒返回假，于是屏幕识别在云端永远不出现，而用户没有
+    任何地方能纠正它（他拿 ``deepseek-flash`` 问"你能不能看我的屏幕"，得到的回答是
+    "我没有屏幕接口"，而真相是那个工具根本没登记）。
+    """
+    assert MainWindow._model_can_see(_seer(cloud=True, declared=True)) is True
+    assert MainWindow._model_can_see(_seer(cloud=True, declared=False)) is False
+
+
+def test_the_local_judgement_still_comes_from_the_backend() -> None:
+    """本机**一个字都没变**：还是读 Ollama 自报的 ``capabilities``。
+
+    ``_cloud_vision`` 在本机那一路是无关项——照着云端那条写的话，本机会变成"用户说
+    看得见就看得见"，而那个判断本来就问得到，没必要让用户去声明（声明错了的症状是
+    每次都要他点一次白点的头）。
+    """
+    assert (
+        MainWindow._model_can_see(_seer(cloud=False, declared=False, caps=("completion", "vision")))
+        is True
+    )
+    assert (
+        MainWindow._model_can_see(_seer(cloud=False, declared=True, caps=("completion",))) is False
+    ), "本机不该被那个开关影响"

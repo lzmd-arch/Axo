@@ -48,7 +48,7 @@ def _window() -> SimpleNamespace:
     ``AttributeError``，而不是悄悄测了个别的东西。
     """
     theme = Theme()
-    return SimpleNamespace(
+    window = SimpleNamespace(
         _settings_dialog=None,
         _theme=theme,
         _resolved=resolve(theme, "dark"),
@@ -61,6 +61,9 @@ def _window() -> SimpleNamespace:
         # 工具页那一份：可读目录**空着**（= read_file 禁用），与一个刚装好的终端
         # 一模一样。
         _read_roots=(),
+        # 工具页新增的第二项（2026-10-12）：**云端模型看不看得见图**，默认关。
+        # 它由用户声明，因为云端那条协议不报这个能力。
+        _cloud_vision=False,
         # 记忆页那一份：**任务记忆关着**，与一个刚装好的终端一模一样。
         _task_memory=False,
         # 记忆页的另一项：**联想通道也是关的**（它是量出来的负数，默认关）。
@@ -81,6 +84,7 @@ def _window() -> SimpleNamespace:
         _on_theme_changed=lambda *_args: None,
         _on_backend_changed=lambda *_args: None,
         _on_tools_changed=lambda *_args: None,
+        _on_cloud_vision_changed=lambda *_args: None,
         _on_memory_changed=lambda *_args: None,
         _on_reminders_changed=lambda *_args: None,
         _on_rebuild_graph=lambda *_args: None,
@@ -93,6 +97,11 @@ def _window() -> SimpleNamespace:
         _on_open_onboarding=lambda *_args: None,
         _persona_texts=lambda: ("内置的那段", "我写的那段"),
     )
+    # 工具页那一份设置现在**从一处拼出来**（``_current_tool_settings``，两个构造点共用
+    # 它）。替身不是 ``MainWindow``，所以照本文件开头那条办法把未绑定方法接上去——
+    # 用替身重写一遍的话，测的就不是真的那一行了。
+    window._current_tool_settings = lambda: MainWindow._current_tool_settings(window)  # type: ignore[attr-defined]
+    return window
 
 
 @pytest.fixture(autouse=True)
@@ -118,6 +127,7 @@ def _consolidate_signals() -> SimpleNamespace:
         "tools_changed",
         "memory_changed",
         "reminders_changed",
+        "vision_changed",
         "graph_rebuild_requested",
         "consolidation_requested",
         "persona_save_requested",

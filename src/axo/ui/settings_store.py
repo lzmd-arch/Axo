@@ -74,6 +74,7 @@ _K_CLOUD_BASE_URL = "backend/cloud_base_url"
 _K_API_KEY = "backend/api_key"
 
 _K_READ_ROOTS = "tools/read_roots"
+_K_CLOUD_VISION = "tools/cloud_vision"
 
 _K_TASK_MEMORY = "memory/task_memory"
 _K_GRAPH_CHANNEL = "memory/graph_channel"
@@ -181,9 +182,23 @@ class ToolSettings:
 
             存的是**绝对路径字符串**（用户是拿文件对话框挑的），读回来时才变成
             ``Path``。
+        cloud_vision: **当前云端模型看得见图吗**——由用户声明。
+
+            这一项存在的唯一原因是**云端问不到能力**：本机 Ollama 会在 ``/api/show``
+            里报 ``vision``，而 OpenAI 兼容的 ``/models`` 什么都不报。没有它的话，
+            "屏幕识别"在云端这条路上永远不出现（默认走"问不到就是看不见"），而用户
+            没有任何地方能纠正这个判断。
+
+            默认 ``False``：勾上等于一次**用户声明**，而不是我们的猜测。按模型名猜
+            （名字里有 ``vl``/``vision`` 就算）看起来省事，但猜错的方向是"模型收到一张
+            它看不了的图然后 400"，而那个失败发生在用户点完确认卡片之后。
+
+            它**不改变**图能不能寄出去（那是 ``llm/openai_compat.py`` 的事），只决定
+            ``look_at_screen`` 登不登记。
     """
 
     read_roots: tuple[Path, ...] = ()
+    cloud_vision: bool = False
 
 
 @dataclass(frozen=True)
@@ -378,12 +393,16 @@ class SettingsStore:
         "绝对"判的是**任一平台的口味**，不是当前这台机器的口味——理由见
         :func:`_is_absolute_anywhere`：条目是字符串，它可能是在另一台机器上写的。
         """
-        return ToolSettings(read_roots=_as_path_list(self._backend.value(_K_READ_ROOTS, [])))
+        return ToolSettings(
+            read_roots=_as_path_list(self._backend.value(_K_READ_ROOTS, [])),
+            cloud_vision=_as_bool(self._backend.value(_K_CLOUD_VISION, False)),
+        )
 
     def save_tools(self, settings: ToolSettings) -> None:
         """写回。**写字符串列表**——``QSettings`` 存得住列表，但读回来的形状要看
         平台（见 :func:`_as_path_list`），所以读取侧不依赖写入侧。"""
         self._backend.setValue(_K_READ_ROOTS, [str(root) for root in settings.read_roots])
+        self._backend.setValue(_K_CLOUD_VISION, settings.cloud_vision)
 
     # ── 记忆 ────────────────────────────────────────────────────────────────
 

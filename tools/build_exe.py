@@ -1262,8 +1262,10 @@ HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run）；
   做，声音不出去）：去 https://alphacephei.com/vosk/models 下
   vosk-model-small-cn-0.22.zip，解压到 %LOCALAPPDATA%\\axo\\models\\ 下面。
   没放的话，按下去会直接告诉你这一点。
-· "看一眼屏幕"要一个看得懂图片的模型（比如本机的 ollama pull minicpm-v:8b）。
-  用别的模型时这个功能不会出现。
+· "看一眼屏幕"要一个看得懂图片的模型：本机用 ollama pull minicpm-v:8b；
+  云端的话去"设置 → 工具"勾上"当前模型看得见图"（比如 DeepSeek 的 deepseek-flash）。
+  模型不支持时这个功能不会出现。
+  注意：走云端时那一张屏幕截图会发给云端的模型。
 
 许可
 ----
