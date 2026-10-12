@@ -38,7 +38,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, Qt, QThread, QTimer, QUrl, Signal, Slot
+from PySide6.QtCore import QObject, QRect, Qt, QThread, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -70,7 +70,7 @@ from ..agent.gate import APPROVAL_TIMEOUT_S
 from ..agent.proactive import build_reminder_messages
 from ..agent.reminders import Alert, CancelledStore, FiredStore, ReminderStore
 from ..agent.router import HELP_TEXT, Register, RegisterState, RoutedTurn, route_turn
-from ..agent.tools import ToolContext, ToolRegistry
+from ..agent.tools import Capture, ToolContext, ToolRegistry
 from ..llm.base import ChatBackendError, ChatRequest
 from ..llm.ollama import (
     MODEL_ID_PREFIX as OLLAMA_MODEL_ID_PREFIX,
@@ -141,6 +141,7 @@ from .memory_worker import (
 from .onboarding import OnboardingWizard
 from .relaunch import restart_application
 from .reminder_scheduler import ReminderScheduler
+from .screen import grab as capture_screen
 from .settings_dialog import SettingsDialog
 from .settings_store import (
     PROVIDER_OLLAMA,
@@ -394,6 +395,9 @@ class MainWindow(QMainWindow):
         #: 构造路径服务：``OpenAICompatChatBackend`` 的构造会去问一次端点，而那
         #: 发生在界面线程上，不该有网络往返。
         self._model_windows: dict[str, int] = {}
+        #: 模型名 → 后端自报的能力（``capabilities``）。空元组 = **问不到**，见
+        #: :meth:`_model_can_see` 那条"问不到就是看不见"。
+        self._model_caps: dict[str, tuple[str, ...]] = {}
         #: ``read_file`` 允许读的目录。**默认空元组 = 那个工具被禁用**——"没配"不等于
         #: "给个默认目录"，理由见 :mod:`axo.agent.fs`。存在 ``QSettings``
         #: 的 ``tools/*`` 命名空间里，由设置窗口的「工具」页改。
@@ -1233,6 +1237,14 @@ class MainWindow(QMainWindow):
             for entry in models
             if isinstance(entry.get("context_window"), int)
         }
+        # 后端报的**能力**也要留下来。原先它只用一次（过滤能不能聊天）就丢了，而
+        # "这个模型看不看得见图"决定 ``look_at_screen`` 登不登记（见 :meth:`_tools`）。
+        # 存成按名字的字典而不是单值：用户切模型走 ``_on_model_changed``，**不会重新拉
+        # 清单**——存单值等于把"刷新那一刻那个模型"的答案钉死在所有模型上（同
+        # ``_model_windows``）。
+        self._model_caps = {
+            str(entry["name"]): tuple(entry.get("capabilities") or ()) for entry in models
+        }
 
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
@@ -1611,12 +1623,31 @@ class MainWindow(QMainWindow):
         提问之间改。缓存的话要配一个失效钩子，而漏掉任何一处调用点的症状是"改了设置
         但工具还是老样子"——七个轻量对象的重建成本远比那个 bug 便宜。
 
-        ``read_roots`` 为空时 :func:`~axo.agent.catalog.default_tools`
-        **不登记** ``read_file``：看不到它，模型就不会去试（省一段 prompt，也省一次
-        必然失败的调用）。三个过闸门的工具在登记上不分条件——要不要用户点头是
-        工具自己的 ``requires_approval``，闸门读那一处，这里不重复判断。
+        **两个工具按条件登记**（判据都是"这个环境里它根本不可能成功"）：
+        ``read_roots`` 为空时不登记 ``read_file``，当前模型看不见图时不登记
+        ``look_at_screen``（见 :meth:`_model_can_see`）——看不到它，模型就不会去试，
+        省一段 prompt，也省一次必然失败的调用（后者还会白弹一张确认卡片）。
+
+        其余工具在登记上不分条件——要不要用户点头是工具自己的 ``requires_approval``，
+        闸门读那一处，这里不重复判断。
         """
-        return ToolRegistry(default_tools(read_root=self._read_roots))
+        return ToolRegistry(default_tools(read_root=self._read_roots, vision=self._model_can_see()))
+
+    def _model_can_see(self) -> bool:
+        """当前模型能不能看图。**问不到就是看不见。**
+
+        来源是后端自报的 ``capabilities``（Ollama 的 ``/api/show`` 里会带 ``vision``）。
+        云端那一侧恒为"问不到"——OpenAI 的 ``/models`` 不报这个，而且那个协议里 tool 行
+        也装不了图（见 ``llm/openai_compat.py`` 里那条明确的拒绝）。
+
+        **方向选的是"宁可不登记"**：模型看不见图时不登记，除了省一段 prompt，还省掉
+        **一张注定白点的确认卡片**（用户点完头才发现什么都不会发生）。反过来"登记了再
+        回一句我看不见"把一次静默失败叠在了提示词上，而它每次都要用户先点一次头。
+        """
+        name = self.model_combo.currentData()
+        if not name:
+            return False
+        return "vision" in self._model_caps.get(str(name), ())
 
     def _start_agent_turn(self, assembly: Assembly, registry: ToolRegistry) -> None:
         """起一轮带工具的请求。"""
@@ -1652,6 +1683,9 @@ class MainWindow(QMainWindow):
         worker.round_started.connect(self._on_tool_round_started)
         worker.tool_finished.connect(self._on_tool_finished)
         worker.approval_needed.connect(self._on_approval_needed)
+        # 截图那一次的交接：worker 在另一根线程里等，这里在界面线程截。**它必须由界面
+        # 线程做**（``grabWindow`` 是 GUI 线程的事），所以走信号回来、结果直连送回去。
+        worker.capture_requested.connect(self._on_capture_requested)
         worker.messages_appended.connect(self._on_tool_messages)
         worker.finished.connect(thread.quit)
         worker.failed.connect(thread.quit)
@@ -2065,6 +2099,40 @@ class MainWindow(QMainWindow):
         alert = self._retire_speech()
         if tell and alert is not None:
             self._tell_reminder(alert)
+
+    @Slot(str)
+    def _on_capture_requested(self, token: str) -> None:
+        """截一张屏交给 worker。**这个槽要尽快返回**——另一头有根线程在等它。
+
+        结果**直连**送回去（不走信号）：理由与 :meth:`_on_tool_confirm` 那条一字不差——
+        收尾路径上事件循环已经在退出，排队的东西未必还能被派发。而那条交接是线程安全的
+        （``CaptureSlot`` 自己带锁），所以直连没有代价。
+        """
+        worker = self._agent_worker
+        if worker is None:
+            return
+        worker.provide_capture(token, self._grab_screen())
+
+    def _grab_screen(self) -> Capture:
+        """把**这块**屏截下来，涂掉自己那一块。**只在界面线程调。**
+
+        取应用所在的那块屏（``self.screen()``）：多屏时"用户的注意力在哪"只有这个窗口
+        知道，而主屏往往是另一边。
+
+        ``exclude`` 要**自己乘上缩放**：``frameGeometry()`` 是逻辑坐标，而 ``grabWindow``
+        给的是设备像素——不乘的话，在高 DPI 屏上涂掉的那一块会缩在左上角（而它看起来
+        只是"涂得小了一点"）。
+        """
+        screen = self.screen()
+        ratio = screen.devicePixelRatio() if screen is not None else 1.0
+        frame = self.frameGeometry()
+        exclude = QRect(
+            round(frame.x() * ratio),
+            round(frame.y() * ratio),
+            round(frame.width() * ratio),
+            round(frame.height() * ratio),
+        )
+        return capture_screen(screen, exclude=exclude)
 
     @Slot(str, str, str)
     def _on_approval_needed(self, call_id: str, tool_name: str, summary: str) -> None:

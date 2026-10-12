@@ -38,7 +38,8 @@ import pytest
 # ``test_ui_chat_worker.py`` 的说明）。
 from fakes import ScriptedBackend, text_chunk, tool_chunk
 
-from axo.agent.tools import ToolContext, ToolOutcome, ToolRegistry
+from axo.agent.catalog import LookAtScreenTool
+from axo.agent.tools import Capture, ToolContext, ToolOutcome, ToolRegistry
 from axo.llm.base import ChatMessage, ChatRequest, ToolCall, ToolSpec
 from axo.session.budget import TokenBudget, TokenMeter
 from axo.ui.agent_worker import AgentWorker
@@ -350,6 +351,48 @@ def test_the_card_question_carries_the_templated_summary(qapp: Any, store: Memor
 
     assert collected.asks == [("call_1", "write_memory", "content：用户喜欢美式")]
     assert spy.calls == [], "没有人同意，却执行了"
+
+
+def test_the_screen_tool_gets_the_workers_capture(qapp: Any, store: MemoryStore) -> None:
+    """**截图那条接缝是 worker 注进去的**（``replace(ctx, capture=self.grab_screen)``）。
+
+    ``look_at_screen`` 拿到的 ``ctx.capture`` 只有这个 worker 给得出来——它要跨回**界面
+    线程**取一张图。没注的话，工具会回一句"这次运行没有接上截图通道"：一句真话，而功能
+    整个没接上，界面上看不出来（模型会照那句转述给用户，听起来还挺像回事）。
+
+    这里同步跑（``run`` 不起线程），所以"界面线程截一张图"就地用一张预设的图代替。跨线程
+    那一趟由 ``tests/test_agent_handoff.py`` 的真线程测试与
+    ``tests/test_ui_capture_chain.py`` 守着——三条各管一段，合起来才是整根线。
+
+    最后那一条断言是这一步的**出口**：图必须真的挂在回灌给模型的那一行上。逐字稿与
+    L5 都存不住图（所以工具标了 ``replayable=False``），也就是说**这一行是它唯一存在过
+    的地方**。
+    """
+    backend = ScriptedBackend(
+        script=[
+            [tool_chunk(call("look_at_screen"))],
+            [text_chunk("屏幕上是一份表格")],
+        ]
+    )
+    worker = build(backend, ToolRegistry([LookAtScreenTool()]), store)
+    adopted: list[bool] = []
+
+    worker.capture_requested.connect(
+        lambda token: adopted.append(
+            worker.provide_capture(token, Capture(png=b"PNG", width=800, height=600))
+        )
+    )
+
+    collected = run(worker, on_approval=lambda call_id, *_: worker.provide_approval(call_id, True))
+
+    assert adopted == [True], "worker 没发截图请求，或者回话没被采纳"
+    assert collected.tools and collected.tools[0]["ok"] is True
+    assert "屏幕图" in collected.tools[0]["content"]
+
+    tool_row = collected.rows[0][1]
+    assert tool_row.role == "tool"
+    assert tool_row.images, "图没有挂到回灌给模型的那一行上"
+    assert collected.reasons[0] == (("call_1", "stale"),), "带图的结果标了可回放"
 
 
 def test_allow_runs_the_tool_and_deny_does_not(qapp: Any, store: MemoryStore) -> None:

@@ -68,11 +68,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Any
 
 from PySide6.QtCore import QObject, Signal, Slot
 
 from ..agent.gate import APPROVAL_TIMEOUT_S, ApprovalDecision, ApprovalRequest, ApprovalSlot
+from ..agent.handoff import CaptureSlot
 from ..agent.loop import (
     DEFAULT_LIMITS,
     LoopDone,
@@ -83,7 +85,7 @@ from ..agent.loop import (
     ToolFinished,
     run_agent_loop,
 )
-from ..agent.tools import ToolContext, ToolRegistry
+from ..agent.tools import Capture, ToolContext, ToolRegistry
 from ..agent.trace import build_trace
 from ..llm.base import ChatBackend, ChatBackendError, ChatMessage
 from ..session.budget import TokenBudget, TokenMeter
@@ -104,6 +106,15 @@ _EMPTY_STATISTICS: dict[str, Any] = {
 
 写成一个模块常量而不是每次现拼：界面读的是**键名**，而键名写错一个字母不会有任何
 东西变红——状态栏上只是少显示一项，看起来像"这一轮没调工具"。
+"""
+
+CAPTURE_TIMEOUT_S = 5.0
+"""等界面线程回一张截图的上限（秒）。
+
+比确认那个 180 秒短两个数量级，因为这件事**在界面线程上是毫秒级的**（截一块屏 + 缩放 +
+编码 PNG）。给 5 秒是留给"界面正忙"的余量，而不是留给"用户在看"的——这条路上没有人
+要看什么，只有一根 worker 线程在等。等不到就如实说没截到（见 :meth:`AgentWorker.grab_screen`），
+**绝不无限等**：收尾只给 3 秒，任何一次新的等待都必须在这个预算里能结束。
 """
 
 _DETAIL_CHARS = 1000
@@ -145,6 +156,14 @@ class AgentWorker(QObject):
     键：``call_id`` / ``name`` / ``ok`` / ``denied`` / ``clipped`` / ``content`` /
     ``detail``。前五项的语义与 :class:`~axo.agent.loop.ToolFinished`
     一致；``detail`` 已按 :data:`_DETAIL_CHARS` 截断。
+    """
+
+    capture_requested = Signal(str)
+    """要一张屏幕截图：参数是这次交接的身份（``CaptureSlot`` 的 token）。
+
+    **界面线程回话时必须把它原样带回来**（:meth:`provide_capture`）：迟到的回答会被
+    丢掉，理由见 ``agent/handoff.py`` 的"身份"那一段——那一张**三秒前**的屏幕被当成
+    "刚刚看到的"，模型会照着它回答，而谁也看不出差别。
     """
 
     approval_needed = Signal(str, str, str)
@@ -194,6 +213,10 @@ class AgentWorker(QObject):
         #: 一个槽服务一次生成（见 :class:`ApprovalSlot`），所以它在 ``__init__`` 里
         #: 建、在这个 worker 的一生里不动。下一轮是一个新 worker。
         self._slot = ApprovalSlot()
+        #: 截图那一次的交接。**与 ``_slot`` 是两个槽**：同一轮里"等用户点头"与"等一张
+        #: 图"是两件不相干的事，共用一个槽会让其中一件把另一件的待决状态挤掉。而同一个
+        #: 截图槽在一轮里可以用两次（两次工具往返），所以它不能是"一次生成一个"。
+        self._capture_slot = CaptureSlot()
 
     # ── 界面线程调的两个入口 ────────────────────────────────────────────────
 
@@ -208,6 +231,8 @@ class AgentWorker(QObject):
         """
         self._stop_requested = True
         self._slot.cancel()
+        # 两个槽都要叫醒：谁正卡在等，谁就是那个会让收尾等满 3 秒的线程。
+        self._capture_slot.cancel()
 
     def provide_approval(self, call_id: str, granted: bool) -> bool:
         """界面线程回传一次裁决。返回**它是否被采纳**。
@@ -222,6 +247,35 @@ class AgentWorker(QObject):
         """
         decision = ApprovalDecision.GRANT if granted else ApprovalDecision.DENY
         return self._slot.provide(call_id, decision)
+
+    def provide_capture(self, token: str, shot: Capture) -> bool:
+        """界面线程回传一张截图。返回**它是否被采纳**。
+
+        与 :meth:`provide_approval` 同一个形状、同一条理由（直连、不走信号），也同一
+        条纪律：返回 ``False`` 表示这一张**没人要**（token 对不上、或者这一轮已经
+        拆了），界面不该据此以为"它看到了"。
+        """
+        return self._capture_slot.provide(token, shot)
+
+    def grab_screen(self) -> Capture:
+        """截一张屏幕。**这是工具的 ``ctx.capture``，在工作线程里跑。**
+
+        三步：登记一次交接 → 发信号让界面去截 → 有界等待。任一步失败都回报一句人话的
+        :class:`Capture` 而不是抛异常——工具那一侧对这几种收场要做的是同一件事（如实
+        告诉模型没看成），而异常的差别只会体现在那句话里。
+        """
+        if self._stop_requested:
+            return Capture(reason="这一轮已经停止")
+        try:
+            token = self._capture_slot.ask()
+        except RuntimeError:
+            # 槽是单向闩：取消之后再发起只可能是接线错（同 `_await_approval` 那一条）。
+            return Capture(reason="这一轮已经停止")
+        self.capture_requested.emit(token)
+        shot = self._capture_slot.wait(timeout=CAPTURE_TIMEOUT_S)
+        if shot is None:
+            return Capture(reason="没等到截图：界面那边没有回话")
+        return shot
 
     # ── 工作线程 ────────────────────────────────────────────────────────────
 
@@ -262,7 +316,11 @@ class AgentWorker(QObject):
                 backend=self._backend,
                 messages=self._messages,
                 registry=self._registry,
-                ctx=self._ctx,
+                # **截图那一次交接由这个 worker 注进去。** 工具拿到的是"给我一张屏幕"
+                # 这个动作本身（它不知道 Qt 长什么样），而实现要跨回界面线程——那件事
+                # 只有这个 worker 做得到。与 ``dispatch`` 给 ctx 绑 ``call_id`` 同一手法：
+                # 谁有能力，谁往那个袋子里放。
+                ctx=replace(self._ctx, capture=self.grab_screen),
                 await_approval=self._await_approval,
                 budget=self._budget,
                 meter=self._meter,
