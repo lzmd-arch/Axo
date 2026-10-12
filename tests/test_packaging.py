@@ -19,6 +19,8 @@ import ast
 import re
 from pathlib import Path, PurePosixPath
 
+import pytest
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _BUILD_TOOL = _REPO_ROOT / "tools" / "build_exe.py"
 
@@ -364,6 +366,11 @@ def _build_tool():
     里现 import），所以这条在核心腿里照样跑得动。
     """
     import importlib.util
+
+    # **3.10 上直接跳过。** 这个模块顶层 ``import tomllib``（3.11 才有），而它本身只在
+    # 打包用的那台机器上跑（打包脚本一直是 3.12）；核心腿要跑 3.10，所以这一条只在
+    # 3.11+ 上真跑——CI 的 3.12 那一条会跑到它。
+    pytest.importorskip("tomllib", reason="build_exe.py 自己要 tomllib（3.11+）")
 
     spec = importlib.util.spec_from_file_location("_build_exe_under_test", _BUILD_TOOL)
     module = importlib.util.module_from_spec(spec)

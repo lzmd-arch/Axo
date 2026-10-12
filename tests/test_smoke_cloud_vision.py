@@ -19,6 +19,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from axo.secrets import protect
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -82,6 +84,16 @@ def test_without_a_cloud_config_it_refuses_and_says_why(tmp_path: Path) -> None:
     assert "云端" in done.stderr
 
 
+_NEEDS_DPAPI = pytest.mark.skipif(
+    sys.platform != "win32",
+    reason=(
+        "key 走 DPAPI：``secrets.protect`` 在没有 crypt32 的平台上退化成空串，"
+        "所以那里根本种不进一份带 key 的云端配置（而应用本身也只有 Windows 版）"
+    ),
+)
+
+
+@_NEEDS_DPAPI
 def test_the_dry_run_shows_the_shape_and_never_the_key(tmp_path: Path) -> None:
     """配好之后 ``--dry-run`` 要把**请求形状**打出来，而 key 一个字都不出现。
 
@@ -99,6 +111,7 @@ def test_the_dry_run_shows_the_shape_and_never_the_key(tmp_path: Path) -> None:
     assert "deepseek-flash" in done.stdout
 
 
+@_NEEDS_DPAPI
 def test_the_colour_it_asks_about_is_one_of_the_three(tmp_path: Path) -> None:
     """色块是**当场随机挑的三种之一**，而且它把答案打在屏幕上。
 
