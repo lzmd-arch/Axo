@@ -78,6 +78,7 @@ __all__ = [
     "next_occurrence",
     "occurrences_after",
     "repeat_label",
+    "weekday_name",
 ]
 
 MISSED_LIMIT = 5
@@ -354,6 +355,17 @@ def repeat_label(reminder: Reminder) -> str:
         return f"每天 {clock}"
     names = "、".join(_WEEKDAY_NAMES[day] for day in sorted(set(_repeat_days(reminder))))
     return f"每{names} {clock}"
+
+
+def weekday_name(day: int) -> str:
+    """``0..6`` → ``"周一"``…``"周日"``。**与 ``time.localtime().tm_wday`` 同一套编号**
+    （0 是周一，不是 ISO 的 1）——这套编号混用是这一族代码里最经典的一个错，而症状是
+    "每周三"显示成"每周二"。越界直接抛，不 ``% 7`` 圆过去：调用方拿到的应当是验过的值。
+
+    公开出来是因为工具层回灌错误信息时要用它（"due_at 那一天是周三，而 weekdays 是
+    周一"那类话），而那句话不该在工具里再写一份星期名。
+    """
+    return _WEEKDAY_NAMES[day]
 
 
 def _occurrence_line(one: Occurrence) -> str:

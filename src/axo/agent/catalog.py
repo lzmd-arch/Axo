@@ -1,4 +1,4 @@
-"""七个具体工具的内容。
+"""九个具体工具的内容。
 
 前四个（``get_time`` / ``search_memory`` / ``read_memory`` / ``read_file``）
 **结构上不可能造成损失**：读时钟、读记忆、读文件，没有一条会改变任何东西。
@@ -36,6 +36,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
@@ -48,6 +49,15 @@ from ..llm.base import ToolSpec
 from ..memory.forget import can_soft_forget, soft_forgotten
 from ..memory.policy import MemoryDraft
 from .fs import ReadFileError, read_text, resolve_within
+from .reminders import (
+    REPEAT_DAILY,
+    REPEAT_ONCE,
+    REPEAT_WEEKLY,
+    Reminder,
+    next_occurrence,
+    repeat_label,
+    weekday_name,
+)
 from .tools import (
     Tool,
     ToolArgumentError,
@@ -59,6 +69,8 @@ from .tools import (
 
 __all__ = [
     "ForgetMemoryTool",
+    "ListRemindersTool",
+    "CancelReminderTool",
     "GetTimeTool",
     "ReadFileTool",
     "ReadMemoryTool",
@@ -517,9 +529,18 @@ def _resolve_due(arguments: dict[str, Any], *, now: datetime) -> float:
 class SetReminderTool:
     """登记一条提醒。**过闸门。**
 
-    **只登记，不触发。** 到点弹出来要有一个常驻进程，那是 P3b 的托盘；本版连
-    ``paths.reminders_path()`` 那个文件都还没有人读它。所以这个工具的价值现在是
-    "用户说过的事不会散落在聊天记录里"，而不是"到点叫你"。
+    **登记，而且到点真的会被触发**——``ui/reminder_scheduler.py`` 到点会弹一条托盘
+    气泡、并在对话区留一条。
+
+    这个 docstring 与下面 :attr:`spec` 的描述原先写着「只登记，不触发……本版连
+    ``paths.reminders_path()`` 那个文件都还没有人读它」与「到时间不会自己弹出来……
+    说了就是骗他」。那是 P3a 的话：那时确实没有东西在读那个文件。**P3b 把触发实现
+    之后，没有人回来改这三处文案**（还有 ``run`` 的回灌），于是模型一直照着一句过期
+    的话对用户说"到点它不会自己弹出来"——而它其实早就会了。这一版把它们一起改成
+    实话，并**只承诺它真做得到的那一件**。
+
+    重复见 :attr:`spec` 的 ``repeat`` 参数；取消与列出是另外两个工具
+    (:class:`CancelReminderTool` / :class:`ListRemindersTool`)。
     """
 
     spec: ClassVar[ToolSpec] = ToolSpec(
@@ -527,9 +548,9 @@ class SetReminderTool:
         description=(
             "替用户记下一件**将来**要做的事。用户说「提醒我……」「晚点叫我」"
             "「别忘了……」时用它。\n"
-            "**它只是把这件事记下来，到时间不会自己弹出来。**所以答应用户的时候"
-            "说「我记下了」，**不要说「到点我会提醒你」或「到时候我叫你」**——你现在"
-            "做不到这件事，说了就是骗他。\n"
+            "**到点了它真的会弹出来提醒他**——所以可以说「到点我叫你」「我会提醒你」。"
+            "但**不要承诺别的**：它弹出来的是一句提醒，不是你去替他把那件事做了。\n"
+            "要每天或每周重复时给 repeat。\n"
             "时间二选一：绝对时间用 due_at（先用 get_time 查今天几号再算），"
             "相对时间用 delay_minutes。两个都给会被拒绝。"
         ),
@@ -545,11 +566,31 @@ class SetReminderTool:
                     "description": (
                         "什么时候提醒，本地时间，形如 2026-10-11 08:00（时分必须写全）。"
                         "**不要凭记忆写日期**，先用 get_time 查。"
+                        "**要重复时，这里写第一次发生的那一次**——重复的星期几由它决定。"
                     ),
                 },
                 "delay_minutes": {
                     "type": "integer",
                     "description": "从现在起多少分钟之后。适合「半小时后」这类相对时间。",
+                },
+                "repeat": {
+                    "type": "string",
+                    "enum": ["once", "daily", "weekly"],
+                    "description": (
+                        "要不要重复。once（默认）= 只响一次；daily = 每天这个时候；"
+                        "weekly = 每周这个时候。**weekly 时 due_at 写第一次那一天就够了**"
+                        "（「每周三 22:30」就写下一个周三的 22:30），星期几由它推出来，"
+                        "不必自己算——算错星期几是这里最常见的一种错。"
+                    ),
+                },
+                "weekdays": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": (
+                        "只有「每周一三五」这种一次要定好几个星期几时才给"
+                        "（0=周一 … 6=周日），而且**必须包含 due_at 那一天**，否则会被拒绝。"
+                        "平时不要给。"
+                    ),
                 },
             },
             "required": ["text"],
@@ -582,6 +623,9 @@ class SetReminderTool:
                 "提醒要约在未来。先用 get_time 查一下现在的日期和时间，再算一次。"
             )
 
+        repeat = _resolve_repeat(arguments)
+        weekdays = _resolve_weekdays(arguments, repeat=repeat, due_ts=due_ts)
+
         reminder = ctx.reminders.add(
             text,
             due_at=due_ts,
@@ -589,28 +633,233 @@ class SetReminderTool:
             session_id=ctx.session_id,
             turn_seq=ctx.turn_seq,
             call_id=ctx.call_id,
+            repeat=repeat,
+            weekdays=weekdays,
         )
         when = datetime.fromtimestamp(reminder.due_at)
+        label = repeat_label(reminder)
+        if label:
+            head = f"已记下：{reminder.text}（{label}，下一次 {when:%Y-%m-%d %H:%M}）"
+        else:
+            head = f"已记下：{reminder.text}（{when:%Y-%m-%d %H:%M}）"
         return ToolOutcome.success(
-            f"已记下：{reminder.text}（{when:%Y-%m-%d %H:%M}）。"
-            "告诉用户时请说明这只是记下来，到时间不会自动弹出。",
-            # 这里**不给** id：本版没有取消提醒的工具，给一个模型用不上的 id 只会
-            # 诱它编一个「已经帮你取消了」。id 在 detail 里，人看得见。
+            f"{head}。到点会提醒他。",
+            # **id 也放进正文里**（早先刻意不给，因为那时没有取消的工具，给一个用不上
+            # 的 id 只会诱模型编一个"已经帮你取消了"）。现在有 ``cancel_reminder`` 了，
+            # 而用户下一句很可能就是「刚才那条取消掉」——不给她 id，她只能先去
+            # ``list_reminders`` 里翻一遍。
             detail=f"reminder_id={reminder.reminder_id}",
         )
 
 
+def _resolve_repeat(arguments: dict[str, Any]) -> str:
+    """读 ``repeat``。缺省与未知值都当一次性——**与 :meth:`Reminder.from_dict` 同向**：
+    这一格只能往"少响"那一侧落。
+
+    取值校验在这里做而不是靠 JSON Schema 的 ``enum``：``ToolRegistry.dispatch`` 只查
+    ``required``（``_missing_required``），``enum`` 没人管——这是既有约定。
+    """
+    raw = arguments.get("repeat")
+    if raw is None or raw == "":
+        return REPEAT_ONCE
+    if not isinstance(raw, str) or raw not in (REPEAT_DAILY, REPEAT_WEEKLY):
+        raise ToolArgumentError(
+            f"repeat 只能是 once / daily / weekly，收到 {raw!r}。不想重复就不要给这个参数。"
+        )
+    return raw
+
+
+def _resolve_weekdays(arguments: dict[str, Any], *, repeat: str, due_ts: float) -> tuple[int, ...]:
+    """读 ``weekdays``。**只在 weekly 时才有意义**，而且必须包含 ``due_at`` 那一天。
+
+    「必须包含」这条判据不是洁癖：不包含的话，用户说「每周三 22:30」而模型给了
+    ``[0]``，得到的是"每周一 22:30"——一条**从第一次就不对**的提醒，而它到点会真的
+    弹出来。那时用户看到的是一个他没约过的时间。
+    """
+    raw = arguments.get("weekdays")
+    if raw is None:
+        return ()
+    if repeat != REPEAT_WEEKLY:
+        raise ToolArgumentError("weekdays 只在 repeat=weekly 时有意义，去掉它。")
+    if not isinstance(raw, (list, tuple)):
+        raise ToolArgumentError("weekdays 要写成数组，例如 [0, 2, 4]。")
+    days: list[int] = []
+    for entry in raw:
+        if isinstance(entry, bool) or not isinstance(entry, int) or not 0 <= entry <= 6:
+            raise ToolArgumentError(
+                f"weekdays 里每一项都要是 0..6 的整数（0=周一 … 6=周日），收到 {entry!r}。"
+            )
+        if entry not in days:
+            days.append(entry)
+    if not days:
+        raise ToolArgumentError(
+            "weekdays 是空的。要么去掉它（就按 due_at 那一天的星期几），要么给至少一个。"
+        )
+    first = time.localtime(due_ts).tm_wday
+    if first not in days:
+        names = "、".join(weekday_name(day) for day in sorted(days))
+        raise ToolArgumentError(
+            f"due_at 那一天是{weekday_name(first)}，而 weekdays 是 {names}——"
+            "第一次发生的时间必须落在 weekdays 里。要么把 due_at 改成其中一天的同一个"
+            "时刻，要么把那一天加进 weekdays。"
+        )
+    return tuple(days)
+
+
+MAX_LISTED = 20
+"""``list_reminders`` 一次最多列几条。超出的折成"还有 N 条"——与
+``reminders.missed_summary`` 同一条纪律：**不静默丢，也不必一次说二十遍**。"""
+
+
+class ListRemindersTool:
+    """列出还没被提醒的事。**不过闸门——它一个字节都不改。**
+
+    按**下一次**发生的时间排，不按登记顺序：用户此刻想的是"接下来有什么事"，而那与
+    "我哪天约的"没有关系（同 ``due_now`` 那条排序的理由）。
+
+    **它是"某一刻那本账里有什么"的快照**，所以 ``replayable=False``：账随时会变
+    （用户在大厅里跟她说一句"那条取消了"就变了），而回放它会让她拿着一份旧清单说
+    "你还有三条"——一句**看不出是旧话的假话**。代价是每轮重读一次文件，那是几十行
+    的解析。
+    """
+
+    spec: ClassVar[ToolSpec] = ToolSpec(
+        name="list_reminders",
+        description=(
+            "列出用户现在**还没被提醒**的那些事。用户问「我约了什么」「有哪些提醒」"
+            "「都记了些什么事」时用它。\n"
+            "**在 cancel_reminder 之前也要先用它拿到 id**——那个 id 只能从这里来，"
+            "不要自己编。\n"
+            "它只读，不改任何东西。"
+        ),
+        parameters={"type": "object", "properties": {}},
+    )
+    requires_approval: ClassVar[bool] = False
+
+    def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+        del arguments
+        if ctx.reminders is None or ctx.fired is None or ctx.cancellations is None:
+            return ToolOutcome.failure(
+                "这次运行没有配置提醒存储，看不到。请告诉用户这一条**没有**列出来。"
+            )
+        fired = ctx.fired.fired_keys()
+        cancelled = ctx.cancellations.cancelled_ids()
+
+        rows: list[tuple[float, Reminder]] = []
+        for one in ctx.reminders.all():
+            if one.reminder_id in cancelled:
+                continue
+            at = next_occurrence(one, fired)
+            if at is None:
+                continue
+            rows.append((at, one))
+        rows.sort(key=lambda pair: (pair[0], pair[1].reminder_id))
+
+        if not rows:
+            # **"别再去找了"那句是必需的。** 让模型自己从"空输出"推"没有找到"，就是
+            # 给它留出编一条的空间（同 ``search_memory`` 那条防空转）。
+            return ToolOutcome.success(
+                "现在没有任何待办的提醒。**别再去找了**——直接告诉用户没有。",
+                replayable=False,
+            )
+
+        lines = []
+        for index, (at, one) in enumerate(rows[:MAX_LISTED], start=1):
+            when = datetime.fromtimestamp(at)
+            label = repeat_label(one)
+            prefix = f"{label}，" if label else ""
+            lines.append(
+                f"{index}. [{one.reminder_id}] {prefix}{one.text}（下一次 {when:%Y-%m-%d %H:%M}）"
+            )
+        body = "\n".join(lines)
+        if len(rows) > MAX_LISTED:
+            body += f"\n（还有 {len(rows) - MAX_LISTED} 条没列出来）"
+        return ToolOutcome.success(
+            f"现在有 {len(rows)} 条待办：\n{body}",
+            detail=f"共 {len(rows)} 条",
+            replayable=False,
+        )
+
+
+class CancelReminderTool:
+    """撤掉一条提醒。**过闸门。**
+
+    过闸门的判据不是"它改状态"这么笼统，而是：**它取消的是一个未来的动作**，而误取消
+    的后果用户要等到错过才发现——那正是最该有一个人点头的一类。它同时让
+    ``ui/agent_worker.py`` 那条推理（"改状态的工具一律过闸门，所以停止之后那一批里
+    剩下的最多是几个只读查询"）继续成立。
+    """
+
+    spec: ClassVar[ToolSpec] = ToolSpec(
+        name="cancel_reminder",
+        description=(
+            "撤掉一条还没到点的提醒。用户说「别提醒我了」「那条取消掉」「不用了」时用它。\n"
+            "**需要 id**：先用 list_reminders 查出来，不要自己编。\n"
+            "**它是永久的**——撤掉之后要重新约，得再说一次。\n"
+            "告诉用户时说「不会再提醒你了」，**不要说你把记录删掉了**。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "reminder_id": {
+                    "type": "string",
+                    "description": "list_reminders 列出来的方括号里的那串字符。",
+                }
+            },
+            "required": ["reminder_id"],
+        },
+    )
+    requires_approval: ClassVar[bool] = True
+
+    def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+        reminder_id = argument_str(arguments, "reminder_id")
+        if ctx.reminders is None or ctx.cancellations is None:
+            return ToolOutcome.failure(
+                "这次运行没有配置提醒存储，取消不了。请告诉用户这一条**没有**撤掉。"
+            )
+        if reminder_id in ctx.cancellations.cancelled_ids():
+            return ToolOutcome.success(
+                f"id 为 {reminder_id} 的那条**已经取消过了**（列表里已经没有它）。"
+                "告诉用户它不会再响，不必再撤一次。"
+            )
+        target = next((one for one in ctx.reminders.all() if one.reminder_id == reminder_id), None)
+        if target is None:
+            return ToolOutcome.failure(
+                f"没有 id 为 {reminder_id} 的待办提醒。"
+                "先用 list_reminders 看一眼当前有哪些，再原样传它方括号里的那串字符。"
+            )
+
+        ctx.cancellations.mark_cancelled([reminder_id], ctx.clock().timestamp())
+        label = repeat_label(target)
+        if label:
+            # **这一条是这个工具最要紧的一句。** 取消一条重复提醒，用户的理解是
+            # "以后都没有了"，而实现的形状是"这一条再也不会响"——两者一致，但回灌
+            # 必须让模型说对，否则它会说「今天先不提醒，明天再说」这种它做不到的话。
+            return ToolOutcome.success(
+                f"已取消：{label} 的「{target.text}」以后都不会再提醒他了。"
+                "这条取消是永久的——要重新约得再说一次。"
+            )
+        when = datetime.fromtimestamp(target.due_at)
+        return ToolOutcome.success(
+            f"已取消：{when:%Y-%m-%d %H:%M} 的「{target.text}」不会再到点提醒他。"
+        )
+
+
 def default_tools(*, read_root: Sequence[Path] = ()) -> tuple[Tool, ...]:
-    """P3a 的七个工具。
+    """九个工具。
 
     ``read_file`` **只在配了可读目录时才登记**。这不只是安全考虑，也是一笔实用账：
     工具声明每一轮都要重发（Step 0 实测三个工具约 311 token/轮），把一个注定会
     失败的工具有效地告诉模型"你可以读文件"，只会换来它去试一次然后被拒。
 
-    另外六个不受这个开关影响——它们要的东西（``ctx.writer`` / ``ctx.reminders``）
-    是**运行时装配**的，不是用户配置。装配期真的缺了（只跑只读工具的运行）时，
-    工具自己会在 ``run`` 里回一句"没有配置"（见各自的实现），而不是在这里被悄悄
-    摘掉：那种"有时在有时不在"的工具表会让模型的失败经验互相矛盾。
+    另外八个不受这个开关影响——它们要的东西（``ctx.writer`` / ``ctx.reminders`` /
+    ``ctx.fired`` / ``ctx.cancellations``）是**运行时装配**的，不是用户配置。装配期
+    真的缺了（只跑只读工具的运行）时，工具自己会在 ``run`` 里回一句"没有配置"
+    （见各自的实现），而不是在这里被悄悄摘掉：那种"有时在有时不在"的工具表会让模型
+    的失败经验互相矛盾。
+
+    **顺序就是声明顺序**，决定请求里那个数组的排列——稳定前缀能命中后端的提示缓存，
+    所以新工具一律**追加**，不插队。
     """
     return (
         GetTimeTool(),
@@ -619,5 +868,7 @@ def default_tools(*, read_root: Sequence[Path] = ()) -> tuple[Tool, ...]:
         WriteMemoryTool(),
         ForgetMemoryTool(),
         SetReminderTool(),
+        ListRemindersTool(),
+        CancelReminderTool(),
         *((ReadFileTool(),) if read_root else ()),
     )

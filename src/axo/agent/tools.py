@@ -43,7 +43,7 @@ from typing import Any, Protocol, runtime_checkable
 from memcore.store import MemoryStore
 
 from ..llm.base import ToolCall, ToolSpec
-from .reminders import ReminderStore
+from .reminders import CancelledStore, FiredStore, ReminderStore
 
 __all__ = [
     "Tool",
@@ -80,6 +80,10 @@ class ToolContext:
         writer: 写入器。**只有过闸门的工具用得到**（``write_memory``），所以可以是
             ``None``——一次只放行了只读工具的运行里，它就该是 ``None``。这里的类型
             写宽是因为 ``agent/`` 不该为了一个注入口去 import 记忆写入侧的实现。
+        fired: 响过的那本账。**只读**——没有任何工具写它（写它的是调度器与无头
+            入口）。``list_reminders`` 靠它算出重复提醒的「下一次是几号」。
+        cancellations: 取消过的那本账。``cancel_reminder`` 写它，``list_reminders``
+            与 ``due_now`` 读它。
         reminders: 提醒登记簿（``write_memory`` 之外的另一个写口，``set_reminder``
             用）。同样可以是 ``None``。
         session_id: 当前会话。工具写入的 ``source_ref`` 要带它，否则溯源断了。
@@ -98,6 +102,8 @@ class ToolContext:
     store: MemoryStore
     writer: Any | None = None
     reminders: ReminderStore | None = None
+    fired: FiredStore | None = None
+    cancellations: CancelledStore | None = None
     session_id: str = ""
     turn_seq: int = 0
     call_id: str = ""

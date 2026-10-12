@@ -66,7 +66,7 @@ from memcore.store import MemoryStore
 
 from ..agent.catalog import default_tools
 from ..agent.gate import APPROVAL_TIMEOUT_S
-from ..agent.reminders import FiredStore, ReminderStore
+from ..agent.reminders import CancelledStore, FiredStore, ReminderStore
 from ..agent.router import HELP_TEXT, Register, RegisterState, RoutedTurn, route_turn
 from ..agent.tools import ToolContext, ToolRegistry
 from ..llm.base import ChatBackendError, ChatRequest
@@ -108,6 +108,7 @@ from ..paths import (
     data_root_source,
     default_data_dir,
     memory_db_path,
+    reminders_cancelled_path,
     reminders_fired_path,
     reminders_path,
     sessions_dir,
@@ -416,6 +417,9 @@ class MainWindow(QMainWindow):
         #: 响过的那些。**与登记簿分开一个文件**——``reminders.jsonl`` 的契约是"还没
         #: 被提醒的事情"，往里掺第二种记录会让那句话变成假的（见那个模块的文档）。
         self._reminders_fired = FiredStore(reminders_fired_path())
+        #: **第三本账。** 取消过的那一条记在这儿，而不是改写登记簿——那个文件
+        #: 只追加（见 `agent/reminders.py` 的 `CancelledStore` 与 `paths`）。
+        self._reminders_cancelled = CancelledStore(reminders_cancelled_path())
 
         self._session: Session = Session(session_id=new_session_id())
         self._backend: OllamaChatBackend | None = None
@@ -1526,6 +1530,8 @@ class MainWindow(QMainWindow):
             # 提醒簿与可读目录都从主窗口这一份来：工具自己不该知道"应用的数据目录
             # 在哪儿"，那是 :mod:`axo.paths` 与设置的事。
             reminders=self._reminders,
+            fired=self._reminders_fired,
+            cancellations=self._reminders_cancelled,
             read_root=self._read_roots,
         )
         thread = QThread(self)

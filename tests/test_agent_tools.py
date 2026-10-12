@@ -174,14 +174,15 @@ def call(name: str, **arguments: Any) -> ToolCall:
 # ── 注册表 ─────────────────────────────────────────────────────────────────
 
 
-def test_p3a_registers_six_tools_without_a_read_root() -> None:
-    """没配可读目录时 ``read_file`` **不登记**，另外六个都在。
+def test_eight_tools_are_registered_without_a_read_root() -> None:
+    """没配可读目录时 ``read_file`` **不登记**，另外八个都在。
 
     这不只是安全考虑：工具声明每轮都要重发，把一个注定失败的工具有效地告诉模型
     "你可以读文件"，只会换来它去试一次然后被拒。
 
-    另外六个**不受配置影响**——``write_memory``/``set_reminder`` 要的
-    ``ctx.writer``/``ctx.reminders`` 是运行时装配的。它们"有时在有时不在"会让
+    另外八个**不受配置影响**——``write_memory``/``set_reminder``/``list_reminders``/
+    ``cancel_reminder`` 要的 ``ctx.writer``/``ctx.reminders``/``ctx.fired``/
+    ``ctx.cancellations`` 是运行时装配的。它们"有时在有时不在"会让
     模型的失败经验互相矛盾（同一个名字，上次调得到、这次说不存在），所以那种情况
     由 ``run`` 里的一句话处理，而不是在这里把工具摘掉。
     """
@@ -192,6 +193,8 @@ def test_p3a_registers_six_tools_without_a_read_root() -> None:
         "write_memory",
         "forget_memory",
         "set_reminder",
+        "list_reminders",
+        "cancel_reminder",
     ]
 
 
@@ -204,21 +207,26 @@ def test_read_file_appears_once_a_root_is_configured(tmp_path: Path) -> None:
         "write_memory",
         "forget_memory",
         "set_reminder",
+        "list_reminders",
+        "cancel_reminder",
         "read_file",
     ]
 
 
-def test_exactly_three_tools_ask_for_confirmation() -> None:
-    """闸门只拦**改变状态**的三个。
+def test_exactly_four_tools_ask_for_confirmation() -> None:
+    """闸门只拦**改变状态**的那四个。
 
     这条断言的是那个分界本身：多一个"要确认"的工具会让用户白点一次头，少一个就是
     **一个改状态的动作没问过任何人**。后者的症状是没有症状——所以它值得一条测试，
-    而这条测试要同时钉住两边（"恰好只有这三个"）。
+    而这条测试要同时钉住两边（「恰好只有这四个」）。
+
+    ``cancel_reminder`` 进来的理由比「它改状态」具体：**它取消的是一个未来的
+    动作**，而误取消的后果用户要等到错过才发现——那正是最该有一个人点头的一类。
     """
     asking = [
         tool.spec.name for tool in default_tools(read_root=(Path(),)) if tool.requires_approval
     ]
-    assert asking == ["write_memory", "forget_memory", "set_reminder"]
+    assert asking == ["write_memory", "forget_memory", "set_reminder", "cancel_reminder"]
 
 
 def test_the_two_snapshot_tools_mark_their_results_as_not_replayable(
@@ -796,19 +804,22 @@ def test_set_reminder_from_an_absolute_time(
     assert reminders.all()[0].due_at == pytest.approx(datetime(2026, 10, 11, 8, 0).timestamp())
 
 
-def test_set_reminder_tells_the_model_not_to_promise_a_notification(
-    write_ctx: ToolContext,
-) -> None:
-    """回灌里必须带那句"到点不会自动弹出"。
+def test_set_reminder_promises_only_what_it_can_do(write_ctx: ToolContext) -> None:
+    """回灌里必须说「到点会提醒他」——**因为那件事现在真的会发生**。
 
-    这是本版唯一能拦住"好的，明天八点我叫你"的地方：用户是照着模型的措辞建立期待
-    的，而**触发是 P3b 的事**。少这句话，模型多半会顺手许一个我们现在做不到的承诺
-    ——而用户会在明天早上八点发现它没响。
+    这条测试原先断言的是反面：回灌里必须带「不会自动弹出」。那是 P3a 留下的，
+    而那时确实没有东西在读提醒文件。**P3b 把触发实现之后，没有人回来改它**，于是
+    模型一直照着一句过期的话对用户说「到点它不会自己弹出来」——用户看到的就是那样
+    一句假话（这正是这一版被提起来的原因）。
+
+    现在断言正面事实，**并且同时钉住反面**：那族措辞不许回来。它拦的还是同一件事
+    ——别说你做不到的，也别说已经不成立的。
     """
     outcome = ToolRegistry([SetReminderTool()]).dispatch(
         call("set_reminder", text="明天早上八点交房租。", due_at="2026-10-11 08:00"), write_ctx
     )
-    assert "不会自动弹出" in outcome.content
+    assert "到点会提醒他" in outcome.content
+    assert "不会自动弹出" not in outcome.content
 
 
 def test_set_reminder_refuses_a_past_time(write_ctx: ToolContext, reminders: ReminderStore) -> None:
