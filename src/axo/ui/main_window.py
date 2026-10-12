@@ -134,6 +134,7 @@ from .memory_worker import (
     MemorySyncWorker,
     render_recall_detail,
 )
+from .onboarding import OnboardingWizard
 from .relaunch import restart_application
 from .reminder_scheduler import ReminderScheduler
 from .settings_dialog import SettingsDialog
@@ -517,6 +518,10 @@ class MainWindow(QMainWindow):
         #: 设置窗口。同样懒建。**非模态是刻意的**：外观改一下就要看一眼主窗口，
         #: 模态会让"拖滑杆 → 看效果"变成"关窗 → 看效果 → 再开窗"。
         self._settings_dialog: Any = None
+        #: 新手引导。**每次重开都新建一个**（不像设置窗口那样懒建一次就复用）：
+        #: 它那几步是按需要拼出来的（已经写过人设时跳过人设那一步），而顺序表在构造
+        #: 时就定死了——复用会让"重开时想改人设"那一次少掉那一步。
+        self._onboarding: Any = None
 
         self._build_ui()
         self._wire()
@@ -2073,6 +2078,7 @@ class MainWindow(QMainWindow):
                 dialog.open_data_folder_requested.connect(self._on_open_data_folder)
                 dialog.change_data_location_requested.connect(self._on_change_data_location)
                 dialog.restore_data_location_requested.connect(self._on_restore_data_location)
+                dialog.onboarding_requested.connect(self._on_open_onboarding)
                 self._settings_dialog = dialog
             else:
                 # 重开时重新对齐：这段时间里系统明暗可能变过（跟随系统时外观已经变了），
@@ -2746,6 +2752,67 @@ class MainWindow(QMainWindow):
         elif text:
             self.chat_view.append_message("system", text)
 
+    # ── 新手引导 ────────────────────────────────────────────────────────────
+
+    def maybe_start_onboarding(self) -> None:
+        """首启弹一次。**由 ``ui/app.py`` 在 ``show()`` 之后调。**
+
+        放在那儿而不是构造函数里：从构造函数里弹窗会让向导出现在主窗口之前。副作用是
+        几个冒烟脚本不会看到它——正好，它们的断言都是关于主窗口的。
+
+        判据是一个**存下来的标志**（``app/onboarding_done``），不是从状态推导的。
+        理由见 :mod:`axo.ui.onboarding` 的模块文档：向导里有两步不留下任何痕迹，
+        "推导"出来的判据会在每次启动都把向导弹回来。
+
+        老用户升级后会弹一次（标志不存在）。这是**必须的**——不弹的话，"记忆放哪"
+        这个能力恰好对那些已经有记忆、最需要它的人不可见。
+        """
+        if self._settings_store.onboarding_done():
+            return
+        self._open_onboarding(show_persona_step=needs_persona(self._memory))
+
+    @Slot()
+    def _on_open_onboarding(self) -> None:
+        """从「设置 → 数据 → 重新打开新手引导」进来。**强制带上人设那一步**——
+        想重看的人多半就是想改它。"""
+        self._open_onboarding(show_persona_step=True)
+
+    def _open_onboarding(self, *, show_persona_step: bool) -> None:
+        if self._onboarding is not None:
+            self._onboarding.close()
+            self._onboarding = None
+        try:
+            builtin, user = self._persona_texts()
+            wizard = OnboardingWizard(
+                self,
+                root=self._data_root,
+                source=self._data_source,
+                backend=self._backend_settings,
+                builtin_persona=builtin,
+                show_persona_step=show_persona_step,
+            )
+            wizard.set_persona(user)
+            # 人设那一步连**已有的槽**：它在成功之后会把 ``_persona_asking`` 置假并
+            # 重推状态，于是对话区那张首启卡片自己就不来了——去重是零新逻辑的。
+            wizard.persona_answered.connect(self._on_persona_answered)
+            wizard.data_location_requested.connect(self._on_change_data_location)
+            wizard.restore_data_location_requested.connect(self._on_restore_data_location)
+            wizard.backend_changed.connect(self._on_backend_changed)
+            wizard.onboarding_finished.connect(self._on_onboarding_finished)
+            self._onboarding = wizard
+            wizard.show()
+            wizard.raise_()
+            wizard.activateWindow()
+        except Exception as exc:  # noqa: BLE001 —— 变成一句人话，同设置窗口那一段
+            self._onboarding = None
+            QMessageBox.warning(self, "新手引导打不开", f"{exc}\n\n{_details_hint()}")
+
+    @Slot()
+    def _on_onboarding_finished(self) -> None:
+        """「完成」与「跳过」都走这儿。叉掉窗口**不发**这个信号，所以那条路不算走过
+        ——没做完也没说不做不算决定（见 :mod:`axo.ui.onboarding` 的模块文档）。"""
+        self._settings_store.mark_onboarding_done()
+
     def report_data_move(self, report: MoveReport) -> None:
         """把这次启动在搬迁上做的事说出来。**由 ``ui/app.py`` 在 ``show()`` 之后调。**
 
@@ -2840,6 +2907,12 @@ class MainWindow(QMainWindow):
             # 自己的 ``closeEvent`` 里，不在这里重复。
             self._settings_dialog.close()
             self._settings_dialog = None
+        if self._onboarding is not None:
+            # **同样要 close 而不是只 hide()**：向导里那个后端页自带一个连接测试线程，
+            # 而且它是主窗口的子对象——主窗口一析构它就跟着析构，那时线程若还在跑就是
+            # 下一次 0xC0000409。等线程在它自己的 closeEvent 里。
+            self._onboarding.close()
+            self._onboarding = None
         # **停表。** 收尾之后才响的一枪没有任何东西接得住（窗口已经关了、托盘图标
         # 也摘了），而它会在这里多留一个还活着的 QTimer。
         self._scheduler.stop()
