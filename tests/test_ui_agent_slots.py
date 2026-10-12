@@ -35,6 +35,7 @@ from axo.agent.reminders import Alert, Occurrence, Reminder
 from axo.asr import Transcription
 from axo.llm.base import ChatMessage, ToolCall
 from axo.session.store import Message
+from axo.ui import voice as voice_module
 from axo.ui.main_window import SPEECH_TIMEOUT_MS, MainWindow, display_rows
 from axo.ui.settings_store import ReminderSettings
 from memcore.store import MemoryStore
@@ -150,11 +151,24 @@ class FakeSettingsStore:
 
 
 class FakeVoice:
-    """``VoiceRecorder`` 那一半：只记"在不在录"与"关过几次"。"""
+    """``VoiceRecorder`` 那一半：只记"起过几次、关过几次、在不在录"。
 
-    def __init__(self) -> None:
+    ``start`` 收一个 ``sink`` 并**回空串**（= 起来了）。回一句人话那一支另有测试
+    （麦克风被 Windows 隐私设置拦下），这里要的是"起来了"那一条路。
+    """
+
+    def __init__(self, *, refuses: str = "") -> None:
         self.listening = False
+        self.starts = 0
         self.stops = 0
+        self.refuses = refuses
+
+    def start(self, sink: Any) -> str:
+        self.starts += 1
+        if self.refuses:
+            return self.refuses
+        self.listening = True
+        return ""
 
     def stop(self) -> None:
         self.stops += 1
@@ -198,6 +212,7 @@ class Stub(QObject):
     _stop_speech = MainWindow._stop_speech
     _on_reminders_changed = MainWindow._on_reminders_changed
     _on_voice_toggled = MainWindow._on_voice_toggled
+    _set_voice_state = MainWindow._set_voice_state
     _begin_voice = MainWindow._begin_voice
     _end_voice = MainWindow._end_voice
     _on_voice_finished = MainWindow._on_voice_finished
@@ -1058,7 +1073,7 @@ def test_the_wake_switch_off_means_the_window_stays_put(qapp: Any) -> None:
 def test_the_autostart_switch_is_parked_on_the_registry_helper(qapp: Any) -> None:
     """「开机自启」那一格的接线：**它走的是 ``autostart.apply``，而且值原样传过去**。
 
-    这里把那个函数换掉（真跑一遍会往**这台机器**的 ``HKCU\...\Run`` 写一个值——
+    这里把那个函数换掉（真跑一遍会往**这台机器**的注册表 ``Run`` 键写一个值——
     那正是本仓最不想发生的一类副作用：不留痕迹、也不报错）。换掉之后要证的只剩接线：
     勾上 → ``apply(True)``、取消 → ``apply(False)``。
 
@@ -1125,40 +1140,120 @@ def test_the_switch_takes_effect_on_the_next_alert_and_is_saved(qapp: Any) -> No
 #
 # 录音与识别在 Python 侧（网页那个按钮只发"切换"），所以这一族验的是**接线**：
 # 按一下会发生什么、识别回来的文字走哪扇门、以及"用不了"时说不说。
+#
+# **识别器要注入，不能靠本机的状态。** 这两条测试原来直接跑真的 ``DecodeWorker``，
+# 于是"库没装 / 模型没放"那一支**取决于这台机器**：装过模型的机器上它不再是那一条路
+# 了。2026-10-12 就是这么暴露的——模型一装上，`test_the_mic_button_toggles_recording`
+# 当场红（它走进成功那一支，而替身没有 ``start``），而它在此之前一直是绿的，因为那条
+# 路根本没被走到过。注入之后两种机器上跑的是同一条路。
 
 
-def test_the_mic_button_toggles_recording(qapp: Any) -> None:
-    """按一下开始、再按一下结束——**同一个入口，看状态分岔**。"""
+class FakeRecognizer:
+    """``DecodeWorker`` 里那个识别器：**问题可注入**。"""
+
+    def __init__(self, problem: str = "", text: str = "") -> None:
+        self.problem = problem
+        self.fed = 0
+        self._text = text
+
+    def feed(self, pcm: bytes) -> None:
+        self.fed += len(pcm)
+
+    def finish(self) -> Transcription:
+        return Transcription(text=self._text)
+
+
+@pytest.fixture
+def recognizer(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """把 ``DecodeWorker`` 造出来的识别器换成可控的，**返回一个改它的口子**。
+
+    换的是 ``axo.ui.voice`` 里那个名字（``DecodeWorker.__init__`` 就是在那儿取它的），
+    所以线程、信号、队列那一整套还是真的——只把引擎那一段换成假的。
+    """
+    state: dict[str, Any] = {"problem": "", "text": ""}
+    monkeypatch.setattr(
+        voice_module,
+        "Recognizer",
+        lambda *_args, **_kwargs: FakeRecognizer(state["problem"], state["text"]),
+    )
+    return state
+
+
+def test_the_mic_button_toggles_recording(qapp: Any, recognizer: dict[str, Any]) -> None:
+    """按一下开始、再按一下结束——**同一个入口，看状态分岔**。
+
+    **这一条是 2026-10-12 那个洞的回归测试**：``_begin_voice`` 原来只把状态推给了网页、
+    漏了 ``self._voice_state``，于是按第二次时 ``_end_voice`` 读到空状态当场 return——
+    录音不停、解码线程不收尾，用户看到的是按钮一直显示"正在听"而永远拿不到文字。
+
+    它原来躲过了这条测试，因为测试是**手写** ``_voice_state = "listening"`` 的：照着
+    "本该如此"写，而实现漏了一处。所以现在一个字都不手写——按两下，让代码自己去设。
+    """
     stub = VoiceStub(streaming=False)
 
-    # 先按一下：没在录 → 走"开始"那一支。真录音起不来（本机没装库），所以它只会说一句
-    # "用不了"——这一条要验的不是那一步，而是**同一个入口按状态分岔**。
+    # 第一下：没在录 → 开始录，而且**状态真的被设上了**
     stub._on_voice_toggled()
+    assert stub._voice.starts == 1, "没在录，按一下应当开始录"
     assert stub._voice.stops == 0, "没在录却按成了停"
+    assert stub._voice_state == "listening", "开始录之后状态没设上——按第二次会当场失灵"
+    assert ("setVoiceState", "listening") in stub.chat_view.calls
 
-    # 已经在录（`listening` 与 `_voice_state` 是同一个事实的两处表示，见 `_end_voice`）
-    stub._voice.listening = True
-    stub._voice_state = "listening"
+    # 第二下：在录 → 停，并且走到解码线程的收尾
     stub._on_voice_toggled()
-
     assert stub._voice.stops == 1, "在录的时候按一下应当是停"
+    assert stub._voice_state == "recognizing", "停下来了却没进入收尾"
+
+    # 解码线程要有人收掉：`done` 一到它自己 quit（worker 的 finish 是空文本，所以
+    # `_on_voice_done` 走的是"没听清"那一支，不碰 `_on_submit`）。
+    assert _wait_until(qapp, lambda: not stub._live_threads), "解码线程没收尾"
 
 
-def test_without_the_library_it_says_so_and_does_not_start(qapp: Any) -> None:
+def test_without_the_library_it_says_so_and_does_not_start(
+    qapp: Any, recognizer: dict[str, Any]
+) -> None:
     """库没装（或模型没放）→ **说出来，而且不开始录**。
 
     这一条在路上很要紧：先说再录，与"录三十秒之后再说没有模型"是两种体验——后者用户
-    对着屏幕说了半天话，而它一个字都没记下。这里跑的是**真的** `DecodeWorker`，所以
-    本机没装 vosk 时它正好走这一支（装了的话这一条会变成"模型没放"，同样说出来）。
+    对着屏幕说了半天话，而它一个字都没记下。
+
+    **问题那句话是注入的**（见上面那个夹具）：原来这一条跑的是真的 `DecodeWorker`，
+    于是它验的那一支**取决于这台机器装没装模型**——装上了就变成另一条路，而它在此之前
+    一直是绿的。
     """
+    recognizer["problem"] = "还没有语音模型：把 zip 解压到某个目录就能用。"
     stub = VoiceStub(streaming=False)
 
     stub._begin_voice()
 
     told = [call for call in stub.chat_view.calls if call[0] == "appendMessage"]
     assert told and "语音输入用不了" in told[0][2]
-    assert stub._voice.stops == 0, "说了用不了却还是开始录了"
+    assert "还没有语音模型" in told[0][2], "那句话没被原样带出去"
+    assert stub._voice.starts == 0, "说了用不了却还是开始录了"
     assert stub._voice_state == ""
+
+
+def test_a_refused_microphone_also_says_so_and_cleans_up(
+    qapp: Any, recognizer: dict[str, Any]
+) -> None:
+    """麦克风起不来（Windows 的隐私设置会整个拦下桌面应用）→ **说出来并收掉那一对**。
+
+    这条路与上一条不同：识别器没问题，是 ``_voice.start`` 回了一句人话。那时已经建好了
+    线程与 worker（`_track` 记着它们），**不收掉就会留下一个等不到的线程**——而它下一次
+    出现在收尾的 `wait_for_all` 里，表现是退出时那三秒白等。
+    """
+    stub = VoiceStub(streaming=False)
+    stub._voice.refuses = "拿不到麦克风。可能是 Windows 的「麦克风隐私设置」拦掉了。"
+
+    stub._begin_voice()
+
+    told = [call for call in stub.chat_view.calls if call[0] == "appendMessage"]
+    assert told and "拿不到麦克风" in told[0][2]
+    assert stub._voice_state == "", "起不来却把状态设成了在听"
+    # **判据是"没有在跑的线程"，不是"清单空了"**：那一对是 `thread.quit()` 收掉的，
+    # 而 `quit()` 对一个**从没 start 过**的线程不发 `finished`——于是那个 release 闭包
+    # 不会跑，它会一直挂在 `_live_threads` 上。那不要紧（`wait_for_all` 按"在不在跑"
+    # 逐个等，没在跑的立刻过），要紧的是**它真的没在跑**。
+    assert not any(thread.isRunning() for thread in stub._live_threads), "留下的线程还在跑"
 
 
 def test_the_recognized_text_goes_through_the_same_door_as_typing(qapp: Any) -> None:
@@ -1203,7 +1298,12 @@ def test_the_user_speaking_discards_the_recording(qapp: Any) -> None:
 
     assert stub._voice.stops == 1, "用户说话了，录音没停"
     assert stub._voice_state == ""
-    assert ("setVoiceState", "") not in stub.chat_view.calls, "丢弃那一遍不该闪一下「正在识别」"
+    # 丢弃那一遍**不许闪「正在识别」**（它根本不会去识别），但要**回到空闲**：
+    # 原来这里两样都没做，于是网页上那个按钮永远停在"正在听"——用户看着一个在听的
+    # 按钮，而它早就没在听了。这条断言原来是 `("setVoiceState", "") not in ...`，
+    # 那个写法把"网页那一半没跟上"当成了正确行为。
+    assert ("setVoiceState", "recognizing") not in stub.chat_view.calls
+    assert ("setVoiceState", "") in stub.chat_view.calls, "丢弃之后按钮没回到空闲"
 
 
 def test_recording_that_hits_the_cap_still_gets_transcribed(qapp: Any) -> None:

@@ -1768,6 +1768,24 @@ class MainWindow(QMainWindow):
             return
         self._begin_voice()
 
+    def _set_voice_state(self, state: str) -> None:
+        """这一遍在什么阶段 —— **唯一能改它的地方**。
+
+        它有两处表示：``self._voice_state``（本类判断用，:meth:`_end_voice` 与
+        :meth:`_on_voice_finished` 都读它）与网页上那个按钮的样子。
+        **两处必须一起改，而各写各的已经漏过一次。**
+
+        2026-10-12 实测的那个洞：:meth:`_begin_voice` 只推了网页那一半、漏了本类那一半。
+        于是**按第二次什么都不发生**——:meth:`_end_voice` 读到空状态当场 return，
+        `voice.stop()` 与 `worker.stop()` 两步都没走到：录音不停、解码线程不收尾，
+        用户看到的是按钮一直显示"正在听"而永远拿不到文字（要等三十秒上限自己停）。
+
+        **gui 腿没拦住它，因为那些测试是手写 ``_voice_state = "listening"`` 的**——
+        它们照着"本该如此"写，而实现漏了一处。所以这里收成一个入口：改状态只有这一条路。
+        """
+        self._voice_state = state
+        self.chat_view.set_voice_state(state)
+
     def _begin_voice(self) -> None:
         """开始录。
 
@@ -1797,7 +1815,7 @@ class MainWindow(QMainWindow):
             self.chat_view.append_message("system", f"**语音输入用不了**\n\n{problem}")
             return
         thread.start()
-        self.chat_view.set_voice_state("listening")
+        self._set_voice_state("listening")
 
     @Slot()
     def _on_voice_finished(self) -> None:
@@ -1816,11 +1834,11 @@ class MainWindow(QMainWindow):
         ``discard=True`` 那两条（用户开口说了话、程序要关了）**连结果都不算**：只把结果
         丢掉的话，那段文字会从别的路冒出来——而用户已经改口说别的了。
         """
-        state, self._voice_state = self._voice_state, "" if discard else "recognizing"
-        if state == "":
+        if self._voice_state == "":
             return
-        # 这一下会发 `finished`，而上面那一位**已经改过**了——所以
-        # `_on_voice_finished` 那道闸会把它放过去，不会绕回来。
+        # **状态先改、录音后停**：`self._voice.stop()` 会发 `finished`，而
+        # `_on_voice_finished` 读的就是这一位——先改过它，那道闸才会放行，不会绕回来。
+        self._set_voice_state("" if discard else "recognizing")
         self._voice.stop()
         worker = self._voice_worker
         if worker is not None:
@@ -1828,14 +1846,11 @@ class MainWindow(QMainWindow):
         if discard and self._voice_thread is not None:
             # 丢弃那一遍不发 `done`，而线程总得有人叫停（`_track` 记着它，收尾时等它）。
             self._voice_thread.quit()
-        if not discard:
-            self.chat_view.set_voice_state("recognizing")
 
     @Slot(object)
     def _on_voice_done(self, result: Transcription) -> None:
         """识别回来了：**成功就走 `_on_submit`**（与打字同一条路），失败就说出来。"""
-        self._voice_state = ""
-        self.chat_view.set_voice_state("")
+        self._set_voice_state("")
         if result.ok:
             self._on_submit(result.text)
             return
