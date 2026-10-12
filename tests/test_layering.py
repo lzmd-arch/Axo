@@ -133,6 +133,9 @@ _PURE_LAYERS = (
     # 按哈希逐条校验、失败时回滚。这种代码必须能在无 Qt 的测试里把每一种拒绝与每
     # 一种失败都摆出来，而"它自己不 import Qt"是可断言的前提。
     "axo/ui/data_move.py",
+    # 启动时定位置、办搬迁、收尾。同样列进来：它的输入是一个鸭子类型的
+    # `SettingsBackend`，所以整条跨重启的流程都能拿一个 dict 跑通。
+    "axo/ui/data_root.py",
 )
 
 _PURE_FORBIDDEN = ("PySide6", "PyQt5", "PyQt6", "httpx", "requests")
