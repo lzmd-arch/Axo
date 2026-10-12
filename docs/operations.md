@@ -4,6 +4,30 @@
 
 [← 返回 README](../README.md)
 
+## 如果云端对话报 TLS / 证书错（`SSLError`、`[X509]`）
+
+同一个成因的另一面：**这台机器上跑着本地代理**（实测配的是 `127.0.0.1:7890`，Clash 那
+类），而 Windows 的「系统代理」开关被来回切。应用的 HTTP 客户端（httpx）默认**读系统代理
+设置**，所以云端那条请求可能会走它——代理对某个主机名的处理一旦出问题，界面上的表现就是
+
+    对话失败：连不上 https://api.deepseek.com/v1。原始错误：SSLError: [X509] BIO lib
+
+先分清两件事：
+
+```bash
+# 1) 直连通不通（绕开代理）
+uv run python -c "import socket,ssl; s=ssl.create_default_context().wrap_socket(socket.create_connection(('api.deepseek.com',443),timeout=8),server_hostname='api.deepseek.com'); print('TLS OK', s.getpeercert()['issuer'])"
+
+# 2) 系统代理现在开着没有（0 = 关）
+reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v ProxyEnable
+```
+
+直连通、而应用报 TLS 错，那就是代理那一环：**把系统代理关掉再试一次**（或者把那个主机名
+加进代理的直连规则）。**不要关证书校验**——理由与上面那一条一字不差。
+
+顺带一条排查经验：这类失败是**间歇的**（同 `github.com` 那一族路由问题）。所以"刚才不行、
+现在行了"不代表修好了，得看它在代理开关两种状态下各自稳不稳。
+
 ## 如果 `ollama pull` 报证书错误
 
 有些网络里 `registry.ollama.ai` 这一个**主机名**会被中间设备拦掉，报的是
