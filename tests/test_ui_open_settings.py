@@ -87,6 +87,7 @@ def _window() -> SimpleNamespace:
         _on_open_data_folder=lambda *_args: None,
         _on_change_data_location=lambda *_args: None,
         _on_restore_data_location=lambda *_args: None,
+        _on_open_onboarding=lambda *_args: None,
         _persona_texts=lambda: ("内置的那段", "我写的那段"),
     )
 

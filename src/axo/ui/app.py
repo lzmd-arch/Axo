@@ -201,6 +201,9 @@ def main(argv: list[str] | None = None) -> int:
     # 所以不能塞进 MainWindow 的构造函数里——那会让它出现在主窗口之前。
     if move_report is not None:
         window.report_data_move(move_report)
+    # 首启向导。**必须在 show() 之后**：从 MainWindow 的构造函数里弹会让它出现在主窗口
+    # 之前。副作用是几个冒烟脚本不会看到它——正好，它们的断言都是关于主窗口的。
+    window.maybe_start_onboarding()
     try:
         return app.exec()
     finally:
