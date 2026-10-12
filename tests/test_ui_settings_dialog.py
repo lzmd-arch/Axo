@@ -939,10 +939,17 @@ def test_the_categories_line_up_with_the_pages(qapp, data_root) -> None:
     dialog = _dialog()
     labels = [dialog.categories.item(i).text() for i in range(dialog.categories.count())]
 
-    assert labels == ["外观", "人设", "后端 / API", "工具", "记忆"]
+    assert labels == ["外观", "人设", "后端 / API", "工具", "记忆", "数据"]
     assert dialog.pages.count() == len(labels)
     for row, page in enumerate(
-        (dialog.appearance, dialog.persona, dialog.backend, dialog.tools, dialog.memory)
+        (
+            dialog.appearance,
+            dialog.persona,
+            dialog.backend,
+            dialog.tools,
+            dialog.memory,
+            dialog.data,
+        )
     ):
         dialog.categories.setCurrentRow(row)
         assert dialog.pages.currentWidget() is page
@@ -1524,3 +1531,77 @@ def test_a_cloud_probe_failure_shows_its_reason(qapp, data_root, monkeypatch) ->
     worker.run()
 
     assert bad == ["HTTP 401：API key 无效"]
+
+
+# ── 数据页：位置显示、灰按钮的理由、以及"它自己什么都不做" ──────────────────
+
+
+def test_the_data_page_shows_which_folder_is_in_use(qapp, data_root) -> None:
+    """路径与"它听谁的"两样都要显示。
+
+    只显示路径是不够的：默认位置与"你在设置里选的"会给出**同一个路径字符串**，
+    分不开的话用户没法判断那两个按钮该不该灰。
+    """
+    page = settings_dialog.DataPage()
+    page.set_state(Path(r"C:\some\where\axo"), "stored")
+
+    assert page.path_label.text() == r"C:\some\where\axo"
+    assert page.source_label.text() == settings_dialog.data_root_description("stored")
+    assert page.change_button.isEnabled() is True
+    assert page.restore_button.isEnabled() is True
+
+
+def test_the_data_page_locks_the_buttons_when_the_environment_decides(qapp, data_root) -> None:
+    """环境变量在生效时两个按钮是灰的，**而且旁边写着为什么**。
+
+    灰按钮不带解释，用户看到的就是一个"点了没反应"的界面——而那种症状指不到环境
+    变量上去。
+    """
+    page = settings_dialog.DataPage()
+    page.set_state(Path(r"C:\some\where\axo"), "env")
+
+    assert page.change_button.isEnabled() is False
+    assert page.restore_button.isEnabled() is False
+    assert "AXO_DATA" in page.source_label.text()
+
+
+def test_changing_the_location_only_asks_it_does_not_move_anything(
+    qapp, data_root, monkeypatch
+) -> None:
+    """挑完目录**只发一个信号**。真正搬不搬是主窗口的事。
+
+    这条钉的是本文件的既有约定（对话框不做 I/O）：它要是自己去复制，就会在"校验
+    没通过"或"用户又点了取消"的时候留下半个状态，而那些判断住在主窗口那条链上。
+    """
+    page = settings_dialog.DataPage()
+    page.set_state(Path(r"C:\some\where\axo"), "default")
+    monkeypatch.setattr(page, "_ask_for_directory", lambda: r"D:\AxoData")
+    asked: list[str] = []
+    page.change_location_requested.connect(asked.append)
+
+    page.change_button.click()
+
+    assert asked == [r"D:\AxoData"]
+
+
+def test_cancelling_the_folder_dialog_says_nothing(qapp, data_root, monkeypatch) -> None:
+    """用户按了取消（文件对话框返回空串）→ 什么都不发。"""
+    page = settings_dialog.DataPage()
+    page.set_state(Path(r"C:\some\where\axo"), "default")
+    monkeypatch.setattr(page, "_ask_for_directory", lambda: "")
+    asked: list[str] = []
+    page.change_location_requested.connect(asked.append)
+
+    page.change_button.click()
+
+    assert asked == []
+
+
+def test_the_data_page_note_is_writable_from_outside(qapp, data_root) -> None:
+    """搬迁那条链的反馈落在这张 note 上（同人设页），不落进对话流。"""
+    page = settings_dialog.DataPage()
+    page.set_state(Path(r"C:\some\where\axo"), "default")
+
+    page.set_note("已经安排好了")
+
+    assert "已经安排好了" in page.note_label.text()

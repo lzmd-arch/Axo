@@ -72,6 +72,10 @@ def _window() -> SimpleNamespace:
         # 重开设置窗口时要把上一次建图的结果补回去——图状态住在主窗口上，
         # 对话框每次都是新的。
         _graph_note="",
+        # 数据页那一份：**这个进程实际在用哪个目录**，以及它听谁的。真源在 ``paths``
+        # 里（不是 QSettings、也不是记忆库），所以每次打开都现读一遍。
+        _data_root=Path(r"C:\some\where\axo"),
+        _data_source="default",
         _on_theme_changed=lambda *_args: None,
         _on_backend_changed=lambda *_args: None,
         _on_tools_changed=lambda *_args: None,
@@ -80,6 +84,9 @@ def _window() -> SimpleNamespace:
         _on_manual_consolidation=lambda *_args: None,
         _on_persona_save_requested=lambda *_args: None,
         _on_persona_clear_requested=lambda *_args: None,
+        _on_open_data_folder=lambda *_args: None,
+        _on_change_data_location=lambda *_args: None,
+        _on_restore_data_location=lambda *_args: None,
         _persona_texts=lambda: ("内置的那段", "我写的那段"),
     )
 
@@ -110,6 +117,10 @@ def _consolidate_signals() -> SimpleNamespace:
         "consolidation_requested",
         "persona_save_requested",
         "persona_clear_requested",
+        "open_data_folder_requested",
+        "change_data_location_requested",
+        "restore_data_location_requested",
+        "onboarding_requested",
     )
     return SimpleNamespace(**{name: SimpleNamespace(connect=lambda _slot: None) for name in names})
 
@@ -183,6 +194,7 @@ def test_the_settings_window_is_shown_when_nothing_goes_wrong(
     fake = SimpleNamespace(
         **_consolidate_signals().__dict__,
         set_persona=lambda *_args: calls.append("setPersona"),
+        set_data=lambda *_args: calls.append("setData"),
         set_graph_note=lambda *_args: None,
         set_consolidate_note=lambda *_args: calls.append("setConsolidateNote"),
         show=lambda: calls.append("show"),
@@ -199,7 +211,14 @@ def test_the_settings_window_is_shown_when_nothing_goes_wrong(
     # 人设页与巩固那一行**都在 show() 之前**就要填好：它们各自的真源都不在这个
     # 窗口里（人设在库里、巩固的"上次什么时候跑的"在盘上），漏了的话窗口会带着
     # 两个空框开出来，而用户看到的是"我写的人设没了""它到底跑没跑过"。
-    assert calls == ["setConsolidateNote", "setPersona", "show", "raise_", "activateWindow"]
+    assert calls == [
+        "setConsolidateNote",
+        "setPersona",
+        "setData",
+        "show",
+        "raise_",
+        "activateWindow",
+    ]
     assert window._settings_dialog is fake
 
 
