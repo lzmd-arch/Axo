@@ -54,6 +54,7 @@ import sys
 import tempfile
 import time
 import zipfile
+from collections import Counter
 from collections.abc import Collection, Sequence
 from pathlib import Path
 
@@ -137,8 +138,14 @@ _QT_REQUIRED = (
     "PySide6/resources/qtwebengine_devtools_resources.pak",
     "PySide6/resources/icudtl.dat",
     "PySide6/resources/v8_context_snapshot.bin",
+    # 麦克风那一套（2026-10-12 加）。**这两条是"开发能录、装好的不能录"的唯一判据**：
+    # `QMediaDevices.audioInputs()` 靠 `plugins/multimedia/` 下那个后端插件才有设备；
+    # 少了它，枚举出来的是个空列表，而构建这边一切正常、应用也照常起来。
+    "PySide6/QtMultimedia.pyd",
+    "PySide6/plugins/multimedia/windowsmediaplugin.dll",
+    "PySide6/plugins/multimedia/ffmpegmediaplugin.dll",
 )
-"""自检第 3 条：QtWebEngine 的运行件。
+"""自检第 3 条：Qt 的运行件（WebEngine 那一套，加麦克风那一套）。
 
 **按本机实测的布局写**：这里的 PySide6 是**平铺**的（``site-packages/PySide6/
 QtWebEngineProcess.exe``），不是某些发行版那样的 ``Qt6/bin/``。少任何一个的表现都
@@ -147,6 +154,12 @@ QtWebEngineProcess.exe``），不是某些发行版那样的 ``Qt6/bin/``。少�
 后四条是**被 :func:`_prune_debug_resources` 删掉的那些调试变体各自的那一份非调试孪生**
 ——列出来是为了钉住"删的是孪生里错的那一个"。真要哪天把 ``qtwebengine_resources.pak``
 也删了，这条会当场红，而不是等到屏幕上白屏。
+
+最后三条是**语音输入那条路**的运行件（2026-10-12 加）。它们与 WebEngine 那几条同一个
+性质：缺了不抛异常、不影响启动、构建日志里一个字都看不出——症状只在用户按下麦克风
+那一刻出现（插件不在 → `QMediaDevices.defaultAudioInput()` 返回空设备 → 应用说
+"拿不到麦克风"，而那句话的措辞把矛头指向了 Windows 隐私设置）。两个后端插件都要：
+Qt 6 默认走 FFmpeg 那个，Windows Media 那个是它不在时的退路。
 """
 
 _DEBUG_RESOURCES = (
@@ -168,16 +181,20 @@ _DEBUG_RESOURCES = (
 开出来）根本不走那些代码路径。
 """
 
-_FORBIDDEN_MISSING = ("biosnn_bus", "numpy", "httpx", "PySide6", "memcore", "axo")
+_FORBIDDEN_MISSING = ("biosnn_bus", "numpy", "httpx", "PySide6", "memcore", "axo", "vosk")
 """自检第 4 条：PyInstaller 自己的缺失清单里**不许出现**这些模块。
 
 名单短而具体是刻意的——长尾的 ``posix`` / ``pwd`` / ``org`` 一类在 Windows 上本来就
 找不到，收进来只会让这份名单变成一坨噪音，然后被无视。
 
-这六条各指一件事：``biosnn_bus`` 是 ``memcore/types.py`` 里那个**函数内** import（第四
+这七条各指一件事：``biosnn_bus`` 是 ``memcore/types.py`` 里那个**函数内** import（第四
 模态唯一的接缝）——分析器照样会走字节码找到它，所以它**不该**出现在缺失清单里；``numpy``
 /``httpx`` 是两条运行时依赖；``PySide6`` 缺一个子模块就是白屏或起不来；``memcore`` /
 ``axo`` 是本仓自己那两个包，"缺失"只可能是收集规则写错了。
+
+``vosk`` 与 ``biosnn_bus`` 是同一类：``axo/asr.py`` 也在**函数内** import 它（"没装也能
+import 这个模块"那条承诺）。它进这份名单的**前提是它随产物发**——库不随产物发的话，
+打包版的语音输入根本不可能工作（冻结产物里装不了 pip 包），所以这里要求它一定解析得到。
 """
 
 
@@ -268,6 +285,22 @@ def _command(*, name: str, console: bool, icon: Path | None, clean: bool) -> lis
     ``--paths src`` 是显式的：入口里那句 ``from axo.ui.app import main`` 要
     能按名字找到包。源码检出时 `src/` 通常在 ``sys.path`` 上（editable 安装），但显式
     写出来这件事就不依赖安装方式了。
+
+    ``--collect-binaries vosk`` **不是保险，是必需的**：``vosk`` 的 C 库不是靠 import
+    链找到的——``vosk/__init__.py`` 里那句是
+    ``_ffi.dlopen(os.path.join(os.path.dirname(__file__), "libvosk.dll"))``，一个**运行时
+    拼出来的路径**。PyInstaller 的静态分析看不见它，所以默认构建**一个字节都不会收**，
+    而症状要到用户按下麦克风才出现（``OSError: cannot load library libvosk.dll``），
+    构建这边全绿。实测过：首次带语音的构建里 ``find dist/axo -iname "*vosk*"`` 一个文件
+    都没有，而 ``vosk`` 这个 Python 包好好地躺在 PYZ 里。
+
+    收进来的落点是 ``_internal/vosk/``——正是 ``os.path.dirname(vosk.__file__)`` 指向的
+    那一层，所以那行 ``dlopen`` 会正好找到它；同一个目录里的三个 C++ 运行库
+    （``libgcc_s_seh-1`` / ``libstdc++-6`` / ``libwinpthread-1``）也一起进去，而
+    ``open_dll()`` 会把那个目录加进 DLL 搜索路径，所以它们之间解析得到。
+
+    不用 ``--collect-all vosk``：那会把 ``vosk/transcriber`` 那一整套命令行转写工具
+    （连 ``websockets`` 一起）拖进来，而本项目只用 ``Model`` 与 ``KaldiRecognizer``。
     """
     command = [
         sys.executable,
@@ -289,6 +322,8 @@ def _command(*, name: str, console: bool, icon: Path | None, clean: bool) -> lis
     ]
     if clean:
         command.append("--clean")
+    # 见上面那段：vosk 的 C 库靠一个运行时拼出来的路径加载，静态分析找不到它。
+    command += ["--collect-binaries", "vosk"]
     for source, target in DATAS:
         command += ["--add-data", f"{_ROOT / source}{os.pathsep}{target}"]
     if icon is not None:
@@ -449,8 +484,26 @@ def _check_pruned(name: str) -> list[str]:
     return [f"调试变体还在：{item}" for item in left]
 
 
+_VOICE_REQUIRED = (
+    "vosk/libvosk.dll",
+    "vosk/libgcc_s_seh-1.dll",
+    "vosk/libstdc++-6.dll",
+    "vosk/libwinpthread-1.dll",
+)
+"""自检第 3 条的另一半：**语音识别的原生库**，相对 ``_internal/``。
+
+``vosk`` 的 Python 部分会自己进 PYZ（``axo/asr.py`` 里那句函数内 import 分析得到），
+但 **C 库不会**：它靠一句运行时拼出来的 ``dlopen`` 加载（见 :func:`_command` 里
+``--collect-binaries`` 那一段）。所以"库里那份 Python 在不在"与"它能不能真的跑"
+是两个判据，而 ``_FORBIDDEN_MISSING`` 只挡得住前一个（``vosk`` 这个模块名压根不会
+出现在缺失清单里——它进得去 PYZ）。这一条挡的是后一个。
+
+落点是 ``_internal/vosk/``：正是 ``os.path.dirname(vosk.__file__)`` 指向的那一层。
+"""
+
+
 def _check_layout(name: str) -> list[str]:
-    """第 1/2/3 条：产物在不在、镜像里的人对不对、QtWebEngine 的运行件在不在。"""
+    """第 1/2/3 条：产物在不在、镜像里的人对不对、Qt 与语音的运行件在不在。"""
     root = _DIST / name
     internal = root / "_internal"
     problems: list[str] = []
@@ -465,7 +518,14 @@ def _check_layout(name: str) -> list[str]:
     for relative in _QT_REQUIRED:
         path = internal / relative
         if not path.exists():
-            problems.append(f"QtWebEngine 的运行件不在：{path.relative_to(_ROOT).as_posix()}")
+            problems.append(f"Qt 的运行件不在：{path.relative_to(_ROOT).as_posix()}")
+    for relative in _VOICE_REQUIRED:
+        path = internal / relative
+        if not path.exists():
+            problems.append(
+                f"语音识别的原生库不在：{path.relative_to(_ROOT).as_posix()}"
+                "（多半是 --collect-binaries vosk 那一步失效了）"
+            )
     return problems
 
 
@@ -1083,12 +1143,17 @@ Python 包一个模块都没进去。表里列它的理由是"随产物分发"�
 ——所以对账时要豁免这一条，而不是把表改小。
 """
 
-_EXPECTED_WITHOUT_LICENSES = ("biosnn-bus",)
+_EXPECTED_WITHOUT_LICENSES = ("biosnn-bus", "vosk")
 """dist-info 里确实没有许可正文的那几个，**必须是已知的**。
 
 ``biosnn-bus`` 的 PyPI 元数据声明 Apache-2.0，但 wheel 里没带正文，所以它的许可是从
 Apache 官网取的、来源写在 ``NOTICES_NAME`` 里。这条名单的作用是让"少了一份许可"
 永远是个**要解释的**状态：哪天冒出一个新的，构建红。
+
+``vosk`` 是同一个形状，实测：它的 ``.dist-info`` 里只有 INSTALLER / METADATA / RECORD /
+REQUESTED / WHEEL / entry_points.txt / top_level.txt，**没有 licenses/ 目录**，而 METADATA
+的 ``License`` 字段写的是 ``UNKNOWN``——只有一条 classifier 说 Apache-2.0。所以它的正文
+同样取自 Apache 官网，来源写在 ``NOTICES_NAME`` 里（与 ``biosnn-bus`` 同一段）。
 """
 
 _RESIDUE_EVERYWHERE = (str(_ROOT), str(_ROOT.parent))
@@ -1193,12 +1258,19 @@ HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run）；
 · 只有 Windows 64 位这一版。
 · 还没有 Live2D 形象（素材未到），对话区是普通的网页渲染。
 · 既没装 Ollama、又没填云端 key 的话，程序能打开，但没法对话。
+· 麦克风那个按钮要先自己放一个语音模型才用得起来（约 42 MB，识别完全在你这台机器上
+  做，声音不出去）：去 https://alphacephei.com/vosk/models 下
+  vosk-model-small-cn-0.22.zip，解压到 %LOCALAPPDATA%\\axo\\models\\ 下面。
+  没放的话，按下去会直接告诉你这一点。
+· "看一眼屏幕"要一个看得懂图片的模型（比如本机的 ollama pull minicpm-v:8b）。
+  用别的模型时这个功能不会出现。
 
 许可
 ----
 本程序按 Apache-2.0 发布，全文见 LICENSE。
-它里面用了别人的东西，清单在 THIRD-PARTY-NOTICES.txt。其中唯一带 copyleft 的是
-Qt / PySide6，按 LGPL-3.0 使用，两份许可全文在 licenses 文件夹下的 GPL-3.0.txt 与
+它里面用了别人的东西，清单在 THIRD-PARTY-NOTICES.txt。带 copyleft 的是两处，都按
+LGPL-3.0 使用：Qt / PySide6，以及 Qt 的多媒体后端带进来的 FFmpeg 运行库（只用来处理
+声音，麦克风那条路）。它们的许可全文在 licenses 文件夹下的 GPL-3.0.txt 与
 LGPL-3.0.txt；其余第三方的许可文本按发行包分目录放在同一个 licenses 文件夹里。
 """
 """zip 里那份 ``README.txt``：**写给拿到它的人**，不是写给仓库里的自己。
@@ -1287,11 +1359,20 @@ def _frozen_modules(name: str) -> set[str]:
 
 
 def _distribution_license_files(distribution: str) -> list[tuple[str, Path]]:
-    """一个发行包随包发的许可文件：``[(相对 licenses/ 的路径, 磁盘上的路径)]``。
+    """一个发行包随包发的许可文件：``[(在 site-packages 里的相对路径, 磁盘上的路径)]``。
 
-    **只认 ``<发行包>-<版本>.dist-info/licenses/`` 这一层。** 放宽成"路径里有
-    ``/licenses/``"会捞到 ``packaging/licenses/__init__.py``——那是**代码**，不是许可
-    文本。实测踩过：宽松那条筛出 40 份，其中混着两个 ``.py``。
+    **只认路径里有 ``.dist-info/licenses/`` 的那些。** 放宽成"路径里有 ``/licenses/``"
+    会捞到 ``packaging/licenses/__init__.py``——那是**代码**，不是许可文本。实测踩过：
+    宽松那条筛出 40 份，其中混着两个 ``.py``。
+
+    **返回的是完整相对路径，不是"licenses/ 之后那一段"。** 后者在 2026-10-12 撞了：
+    ``setuptools`` 的 RECORD 里有 12 份许可，其中 11 份是它 **vendored** 的那些包自己的
+    （``setuptools/_vendor/packaging-26.0.dist-info/licenses/LICENSE``…）。按"第一个
+    ``.dist-info/licenses/`` 之后"来切，这 11 份全被切成 ``LICENSE``——于是 zip 里
+    ``licenses/setuptools/LICENSE`` 被写了十二遍，``zipfile`` 只留最后一份，另外十份
+    **静默消失**（只在 stderr 上留一句 UserWarning）。这正是这个文件最防的那种失效：
+    仓库里那份清单照样在、zip 照样打得出来，而里面少了几份义务。完整路径两边都唯一，
+    而且一眼看得出哪一份是 vendored 的。
     """
     try:
         dist = importlib.metadata.distribution(distribution)
@@ -1303,7 +1384,7 @@ def _distribution_license_files(distribution: str) -> list[tuple[str, Path]]:
         posix = str(entry).replace("\\", "/")
         if marker not in posix or posix.endswith("/"):
             continue
-        found.append((posix.split(marker, 1)[1], Path(dist.locate_file(entry))))
+        found.append((posix, Path(dist.locate_file(entry))))
     return found
 
 
@@ -1627,9 +1708,22 @@ def _make_zip(name: str) -> Path:
         if item.is_file():
             sources.append((f"{top}/licenses/{item.name}", item))
     for distribution, _declared_version in _declared_frozen_set():
-        # 按发行包分目录：numpy 一个包就有 17 份许可，平铺会撞名。
+        # 按发行包分目录：numpy 一个包就有 17 份许可，平铺会撞名。目录里面保持它在
+        # site-packages 里的原样（vendored 的那些也照原样嵌进去），理由见
+        # :func:`_distribution_license_files`——按"licenses/ 之后那一段"切会把 11 份
+        # 撞成同一个名字，而 zipfile 遇到重名只留最后一份、**其余静默消失**。
         for tail, path in _distribution_license_files(distribution):
             sources.append((f"{top}/licenses/{_canonical(distribution)}/{tail}", path))
+
+    # 重名当场断，不等 zipfile 在 stderr 上嘀咕一句。上面那种撞名是**静默少几份义务**，
+    # 而这个压缩包是要发出去的——与下面那条"文件名不是 ASCII 就不出包"同一个姿态。
+    seen = Counter(arc for arc, _ in sources)
+    duplicated = sorted(arc for arc, count in seen.items() if count > 1)
+    if duplicated:
+        raise SystemExit(
+            f"zip 里有重名的条目：{_summarise(duplicated)}。"
+            "重名的那几份会被后来的覆盖掉，**包照打，里面少东西**——所以这里直接不出包。"
+        )
 
     generated = {
         f"{top}/README.txt": _RELEASE_README.replace("{version}", version),
@@ -1738,7 +1832,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     print(
-        "自检全过：产物在、镜像里的资产在、QtWebEngine 的运行件在、缺失清单干净、"
+        "自检全过：产物在、镜像里的资产在、Qt 与语音的运行件在、缺失清单干净、"
         "调试变体与 GPL-only 模块已删、能起来、窗口上带图标、库是首启形状。"
     )
     # 快捷方式放在**自检之后**：指向一个自检没过的产物，比桌面上什么都没有更糟。

@@ -354,3 +354,47 @@ def test_the_two_copies_of_the_environment_variable_name_agree() -> None:
     from axo.ui.app import _ISOLATED_STATE_ENV
 
     assert _declared("_PROBE_STATE_ENV") == _ISOLATED_STATE_ENV
+
+
+def _build_tool():
+    """把 ``tools/build_exe.py`` 当模块加载（它 import 期只算几个常量与函数定义）。
+
+    这个文件别处一律按 AST 读**字面量**；这一条要问的是两个**函数的行为**，那就只能
+    真的把模块装上跑。它 import 期不碰 PyInstaller（那个在 ``_require_pyinstaller``
+    里现 import），所以这条在核心腿里照样跑得动。
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_build_exe_under_test", _BUILD_TOOL)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_license_files_inside_the_zip_have_distinct_names() -> None:
+    """收进 zip 的许可文件必须**各占一个名字**，而且路径要能认出它出自哪个 dist-info。
+
+    2026-10-12 实测踩到：``setuptools`` 的 RECORD 里有 12 份许可，其中 11 份是它
+    **vendored** 的那些包自己的
+    （``setuptools/_vendor/packaging-26.0.dist-info/licenses/LICENSE``…）。当时那个函数
+    返回的是"第一个 ``.dist-info/licenses/`` 之后"那一段，于是这 11 份全成了 ``LICENSE``
+    ——zip 里同一个名字被写十二遍，``zipfile`` 只留最后一份，**另外十一份静默消失**，
+    只在 stderr 上留一句 UserWarning。
+
+    这是最坏的一种失效：包照打、清单照在、读者以为许可齐了，而里面少了几份义务。所以
+    这条按结果钉两件事——名字两两不同，且每一份的路径里都还看得见 ``.dist-info/``
+    （后者正是那个修法的形状：返回**完整相对路径**，不切那一段）。
+    """
+    build_tool = _build_tool()
+    arcs: list[str] = []
+    for distribution, _version in build_tool._declared_frozen_set():
+        for tail, _path in build_tool._distribution_license_files(distribution):
+            assert ".dist-info/" in tail, (
+                f"{distribution} 收进来的 {tail!r} 看不出出自哪个 dist-info——"
+                "那正是「vendored 的几份会被切成同一个名字」的那个形状"
+            )
+            arcs.append(f"licenses/{build_tool._canonical(distribution)}/{tail}")
+
+    assert arcs, "一份许可都没收到——这条判据在空转，先去查 _declared_frozen_set"
+    duplicated = sorted({arc for arc in arcs if arcs.count(arc) > 1})
+    assert duplicated == [], f"zip 里会重名的许可条目：{duplicated}。重名的会被后来的覆盖掉。"

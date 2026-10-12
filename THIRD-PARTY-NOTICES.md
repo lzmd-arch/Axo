@@ -31,6 +31,8 @@
 | anyio | 4.15.1 | MIT |
 | biosnn-bus | 0.1.0 | Apache-2.0 |
 | certifi | 2026.7.22 | MPL-2.0 |
+| charset-normalizer | 3.5.2 | MIT |
+| colorama | 0.4.6 | BSD-3-Clause |
 | h11 | 0.16.0 | MIT |
 | httpcore | 1.0.9 | BSD-3-Clause |
 | httpx | 0.28.1 | BSD-3-Clause |
@@ -38,7 +40,13 @@
 | numpy | 2.5.3 | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 |
 | packaging | 26.3 | Apache-2.0 OR BSD-2-Clause |
 | pytest | 9.1.1 | MIT |
+| requests | 2.34.2 | Apache-2.0 |
+| setuptools | 84.0.0 | MIT |
+| srt | 3.5.3 | MIT |
+| tqdm | 4.70.1 | MPL-2.0 AND MIT |
 | typing_extensions | 4.16.0 | PSF-2.0 |
+| urllib3 | 2.8.0 | MIT |
+| vosk | 0.3.45 | Apache-2.0 |
 | pyinstaller | 6.22.3 | GPL-2.0-or-later WITH Bootloader-exception |
 <!-- frozen-set:end -->
 
@@ -47,11 +55,39 @@
 - **PySide6 那六行是同一棵安装树。** PyPI 上 `PySide6` 分成 5 个 wheel（本体 +
   Essentials + Addons + WebEngine + Pdf），磁盘上落进同一个 `PySide6/` 目录，
   `shiboken6` 是它的绑定层。版本号里 `.140` 的那两个是 Qt 补丁号，不是另外的版本线。
-- **`biosnn-bus` 只有 PyPI 元数据。** 它的 dist-info 里没有许可正文，sdist 声明的是
-  Apache-2.0（作者与本源出同一个人）。所以它的许可全文取自 Apache 官网，不取自 wheel。
+- **`biosnn-bus` 与 `vosk` 都只有 PyPI 元数据。** 两家的 dist-info 里都没有许可正文：
+  `biosnn-bus` 的 sdist 声明 Apache-2.0（作者与本源出同一个人），而 `vosk` 的 METADATA
+  里 `License` 字段写的是 `UNKNOWN`、只有一条 classifier 说 Apache-2.0。所以这两份许可
+  全文都取自 Apache 官网（<https://www.apache.org/licenses/LICENSE-2.0>），不取自 wheel。
+  构建那边由 `_EXPECTED_WITHOUT_LICENSES` 盯着——**"少了一份许可"永远是一个要解释的状态**，
+  哪天冒出一个新的第三家，构建当场红。
+- **`vosk` 拉进来八行。** 它自己的 `__init__.py` 在模块顶层就 `import srt` /
+  `import requests` / `from tqdm import tqdm`（那是它自带的命令行转写工具用的），于是
+  `srt`、`requests`（连带 `urllib3` / `charset-normalizer` / `idna` / `certifi`）、
+  `tqdm`（连带 Windows 下的 `colorama`）全都跟着进产物。**本项目只用 `vosk.Model` 与
+  `vosk.KaldiRecognizer` 两个类**，但"实际用没用到"不是这张表的判据，"被冻结了"才是
+  （同下面 `pytest` 那一条）。上面那几行的许可见表；`vosk` 自己的 C 库与 GCC 运行库
+  见第二节末尾。
+- **`setuptools` 是打包器带进来的，不是应用依赖。** PyInstaller 给这个产物加了一个
+  `pyi_rth_setuptools` 运行期钩子，它把 `setuptools` 整个收进 PYZ（含它 vendored 的
+  `packaging` / `wheel` / `jaraco` 等）。应用代码一个字都没用到它。
 - **`pytest` 进产物的是 `_pytest` 这一个包。** 自检路径上有一段替身/探针代码 import 了
   它（断言重写器），于是整个 `_pytest` 被连带冻结；pytest 本体（命令行入口、插件）没有进。
   列在这里是因为"被冻结了"就是"要声明"，与它为什么进来无关。
+- **`vosk` 那个 wheel 里还带着三个 GCC 的 C++ 运行库**（`libstdc++-6.dll` 25.4 MB、
+  `libgcc_s_seh-1.dll`、`libwinpthread-1.dll`）。`libvosk.dll` 是拿 MinGW 编的，链接到
+  它们；它们按 GPL-3.0-with-GCC-exception 发布，那个例外明文允许"用它编译出来的程序
+  按任意许可分发"。它们**不是靠 import 链找到的**：`vosk/__init__.py` 里那句是
+  ``_ffi.dlopen(os.path.dirname(__file__) + "/libvosk.dll")``，一个运行时拼出来的路径，
+  静态分析看不见——所以 `tools/build_exe.py` 显式加了 `--collect-binaries vosk`，
+  自检里也有一条专门盯着这四个文件在不在（第 3 条）。
+- **`vosk` 拉进来一大串传递依赖，它们不是本项目直接用的。** `vosk/__init__.py` 在
+  **模块顶层**就 `import srt` / `import requests` / `from tqdm import tqdm`（那是它自己
+  那个命令行转写工具用的），所以只要 `axo/asr.py` import 了 vosk，这几家就一起进产物。
+  本项目**只用到 `vosk.Model` / `vosk.KaldiRecognizer` 两个类**——但"实际用没用到"不是
+  这张表的判据，"被冻结了"才是（同上面 `pytest` 那一条）。`vosk` 本身按 Apache-2.0，
+  它那几家的许可见上表。**`vosk` 与 Qt 一样是随产物发的，模型不是**：模型（约 42 MB）
+  由使用者自己放到数据根下的 `models/`。
 - **`pyinstaller` 进产物的是 bootloader**（那几 MB 的 exe 头部），不是它的 Python 包。
   它按 GPL-2.0-or-later 发布，**带一个明文例外**：允许用它构建并分发非自由程序，
   被构建的程序本身不受 GPL 约束。例外原文在它的 `COPYING.txt` 里。
@@ -99,6 +135,35 @@ GPL-3.0-only`。**本项目选 LGPL-3.0 那一支**，所以下面三件事必�
 GPLv3 下提供（Qt 把它与 LGPL 版分开授权）。`tools/build_exe.py` 在打包时把它们剔掉，
 剔除前逐个验证"产物里没有任何别的二进制提到过它的名字"，提到就**拒绝删并报错**。
 所以随产物去的 Qt 只有 LGPLv3（与更宽松）的部分。
+
+**还有一份 FFmpeg，它也是 copyleft，而且是量出来的。** Qt 6 的多媒体后端默认走 FFmpeg，
+PySide6 的 wheel 把那份运行库直接放在 `PySide6/` 下：`avcodec-63.dll`（13.5 MB）、
+`avformat-63.dll`、`avutil-61.dll`、`swresample-7.dll`、`swscale-10.dll`，外加
+`plugins/multimedia/ffmpegmediaplugin.dll`。语音输入只用到麦克风，这几份是 Qt 那条链
+拉进来的（见下面"为什么不干脆剔掉"）。**它们是 LGPL 版，不是 GPL 版**——这不是猜的：
+这些 DLL 里嵌着它自己那份构建配置，从 `avcodec-63.dll` 的字节里读得出来一整串：
+
+    --prefix=/c/FFmpeg-n9.0.1/build/msvc/installed --disable-programs --disable-doc
+    --disable-debug --enable-network --disable-lzma --enable-pic --disable-vulkan
+    --disable-v4l2-m2m --disable-decoder=truemotion1 --disable-avdevice --disable-avfilter
+    --enable-zlib --toolchain=msvc --enable-shared
+
+里面**没有 `--enable-gpl`，也没有 `--enable-nonfree`**——那两条是 FFmpeg 变成 GPL 的仅
+有的开关。版本也在同一串里：**FFmpeg 9.0.1**。FFmpeg 自己声明的是"LGPL 2.1 或更高"，
+所以本项目按 **LGPLv3** 那一支使用它，而 `licenses/LGPL-3.0.txt` 与 `GPL-3.0.txt` 就是
+它的许可文本（LGPLv3 是对 GPLv3 的一组附加许可）。源码：9.0.1 的源码包在
+<https://ffmpeg.org/releases/>，配置就是上面那一串。上面 §4(d)(1) 那条"可替换"同样由
+onedir 满足——它们是 `_internal/PySide6/` 下的独立 DLL。
+
+**为什么不干脆把这几份剔掉。** 剔掉省 18.7 MB、少一份 copyleft，账面上更干净。但 Qt 6
+的默认多媒体后端就是 FFmpeg，剔掉之后接手的是 `windowsmediaplugin.dll`（Media
+Foundation），而**能验到的只有"它枚举得出设备"**（`QT_MEDIA_BACKEND=windows` 下与默认
+后端给出同一份清单：两台输入设备、三台输出设备），**验不到它录不录得到音**——而"录得到
+音"正是这个功能唯一的用途。本仓对"删掉一个东西"的判据一向是"能证明它是多余的"（那是
+调试变体那 77.2 MB 的删法），这里证明不了，所以留着，并把它的来源与许可写清楚。
+
+最后还有一份 GCC 的 C++ 运行库（`_internal/vosk/libstdc++-6.dll` 等三个）。它按
+GPL-3.0-with-GCC-exception 发布，那个例外**明文允许**用它编译出来的程序按任意许可分发。
 
 ---
 
