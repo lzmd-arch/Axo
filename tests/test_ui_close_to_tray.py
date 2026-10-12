@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 from PySide6.QtGui import QCloseEvent
 
-from biosnn_memterm.ui.main_window import MainWindow
+from axo.ui.main_window import MainWindow
 
 pytestmark = pytest.mark.gui
 
@@ -171,7 +171,7 @@ def test_quit_marks_before_closing() -> None:
 def test_quit_from_the_tray_really_quits(qapp: Any) -> None:
     """托盘菜单的「退出」连的是 ``_quit``，不是 ``close``——从菜单点下去的那条路
     也要真的结束进程。"""
-    from biosnn_memterm.ui.tray import TrayController
+    from axo.ui.tray import TrayController
 
     tray = TrayController(available=True)
     window = SimpleNamespace(_quitting=False, close=lambda: None)

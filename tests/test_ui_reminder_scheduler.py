@@ -24,8 +24,8 @@ from typing import Any
 
 import pytest
 
-from biosnn_memterm.agent.reminders import FiredStore, ReminderStore
-from biosnn_memterm.ui.reminder_scheduler import MAX_DELAY_MS, MIN_DELAY_MS, ReminderScheduler
+from axo.agent.reminders import FiredStore, ReminderStore
+from axo.ui.reminder_scheduler import MAX_DELAY_MS, MIN_DELAY_MS, ReminderScheduler
 
 pytestmark = pytest.mark.gui
 

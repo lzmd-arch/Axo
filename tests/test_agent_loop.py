@@ -26,8 +26,8 @@ from typing import Any
 import pytest
 from fakes import ScriptedBackend, text_chunk, tool_chunk
 
-from biosnn_memterm.agent.gate import ApprovalDecision, ApprovalRequest, summarize
-from biosnn_memterm.agent.loop import (
+from axo.agent.gate import ApprovalDecision, ApprovalRequest, summarize
+from axo.agent.loop import (
     DEFAULT_LIMITS,
     ApprovalRequested,
     LoopDone,
@@ -38,19 +38,19 @@ from biosnn_memterm.agent.loop import (
     ToolFinished,
     run_agent_loop,
 )
-from biosnn_memterm.agent.tools import (
+from axo.agent.tools import (
     ToolArgumentError,
     ToolContext,
     ToolOutcome,
     ToolRegistry,
 )
-from biosnn_memterm.llm.base import (
+from axo.llm.base import (
     ChatBackendError,
     ChatMessage,
     ToolCall,
     ToolSpec,
 )
-from biosnn_memterm.session.budget import TokenBudget, TokenMeter
+from axo.session.budget import TokenBudget, TokenMeter
 from memcore.store import MemoryStore
 
 #: 一个"够大"的额度——正常路径的用例不想被截断或驱逐干扰。
@@ -413,7 +413,7 @@ def test_a_normal_result_is_not_marked_for_no_replay(store: MemoryStore) -> None
 def test_a_snapshot_result_is_marked_stale(store: MemoryStore) -> None:
     """结果自己说不耐放（``ToolOutcome.replayable=False``）→ 标 ``stale``。
 
-    这一条是 :class:`~biosnn_memterm.agent.catalog.GetTimeTool` 那类工具的唯一守卫：
+    这一条是 :class:`~axo.agent.catalog.GetTimeTool` 那类工具的唯一守卫：
     ``replayable`` 默认是 ``True``，所以一个忘了标的快照工具**不会有任何症状**——
     它只是悄悄地把过期的时间戳递给模型。``tests/test_agent_tools.py`` 里另有一条
     直接盯着 ``get_time``/``read_file`` 的。（见那两条测试的 docstring。）

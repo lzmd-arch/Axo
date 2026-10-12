@@ -62,38 +62,38 @@ _ROOT = Path(__file__).resolve().parents[1]
 _DIST = _ROOT / "dist"
 _BUILD = _ROOT / "build"
 
-NAME = "biosnn-memterm"
-"""交付物的名字。产物落在 ``dist/biosnn-memterm/biosnn-memterm.exe``。"""
+NAME = "axo"
+"""交付物的名字。产物落在 ``dist/axo/axo.exe``。"""
 
-CONSOLE_NAME = "biosnn-memterm-console"
+CONSOLE_NAME = "axo-console"
 """``--console`` 那一版的名字。**两个可以并存**：无控制台的是交付物，带控制台的是
 排障用的——窗口版没有控制台可看，出问题时唯一的线索就在带控制台那一版的 stderr 上。
 """
 
-SHORTCUT_NAME = "BioSNN 记忆终端"
+SHORTCUT_NAME = "Axo"
 """桌面上那个快捷方式的名字。
 
 用**界面上的显示名**（``ui/app.py`` 的 ``setApplicationDisplayName``），不是包名：桌面
-上的图标是给人点的，名字得跟窗口标题、托盘提示一致，而不是 ``biosnn-memterm``。
+上的图标是给人点的，名字得跟窗口标题、托盘提示一致，而不是 ``axo``。
 """
 
-ENTRY = "src/biosnn_memterm/__main__.py"
+ENTRY = "src/axo/__main__.py"
 """真入口，而且**必须是这一个**。
 
-实质的入口是 :mod:`biosnn_memterm.ui.app` 的 ``main()``，平时跑的是 ``python -m
-biosnn_memterm.ui.app``（``run.bat``）。但 PyInstaller 收的是**脚本**：它把入口文件
+实质的入口是 :mod:`axo.ui.app` 的 ``main()``，平时跑的是 ``python -m
+axo.ui.app``（``run.bat``）。但 PyInstaller 收的是**脚本**：它把入口文件
 当 ``__main__`` 跑，``__package__`` 是空的——``app.py`` 里那几处相对 import
 （``from .main_window import ...``）于是在运行时炸掉。第一次构建实测就是这个症状：
 **一个项目模块都没被收进去**，exe 弹一个 PyInstaller 的错误框、进程活着，所以活体
 探测当时给的是**假绿**。
 
 ``__main__.py`` 里只有一句按名字找包的绝对 import，两种跑法下都成立。它同时让
-``python -m biosnn_memterm`` 成为可用入口。
+``python -m axo`` 成为可用入口。
 """
 
 DATAS = (
-    ("src/biosnn_memterm/ui/theme.qss", "biosnn_memterm/ui"),
-    ("src/biosnn_memterm/ui/web", "biosnn_memterm/ui/web"),
+    ("src/axo/ui/theme.qss", "axo/ui"),
+    ("src/axo/ui/web", "axo/ui/web"),
 )
 """要带进镜像的**非 ``.py`` 资产**（本仓的非 Python 资产就这些）。
 
@@ -117,10 +117,10 @@ imageformats/qico.dll``），而 Windows 从资源管理器到任务栏会按 DP
 """
 
 _MIRRORED = (
-    "biosnn_memterm/ui/theme.qss",
-    "biosnn_memterm/ui/web/index.html",
-    "biosnn_memterm/ui/web/css/app.css",
-    "biosnn_memterm/ui/web/js/app.js",
+    "axo/ui/theme.qss",
+    "axo/ui/web/index.html",
+    "axo/ui/web/css/app.css",
+    "axo/ui/web/js/app.js",
 )
 """自检第 2 条：镜像里必须有这四个（都在 ``_internal/`` 下）。
 
@@ -167,7 +167,7 @@ _DEBUG_RESOURCES = (
 开出来）根本不走那些代码路径。
 """
 
-_FORBIDDEN_MISSING = ("biosnn_bus", "numpy", "httpx", "PySide6", "memcore", "biosnn_memterm")
+_FORBIDDEN_MISSING = ("biosnn_bus", "numpy", "httpx", "PySide6", "memcore", "axo")
 """自检第 4 条：PyInstaller 自己的缺失清单里**不许出现**这些模块。
 
 名单短而具体是刻意的——长尾的 ``posix`` / ``pwd`` / ``org`` 一类在 Windows 上本来就
@@ -176,7 +176,7 @@ _FORBIDDEN_MISSING = ("biosnn_bus", "numpy", "httpx", "PySide6", "memcore", "bio
 这六条各指一件事：``biosnn_bus`` 是 ``memcore/types.py`` 里那个**函数内** import（第四
 模态唯一的接缝）——分析器照样会走字节码找到它，所以它**不该**出现在缺失清单里；``numpy``
 /``httpx`` 是两条运行时依赖；``PySide6`` 缺一个子模块就是白屏或起不来；``memcore`` /
-``biosnn_memterm`` 是本仓自己那两个包，"缺失"只可能是收集规则写错了。
+``axo`` 是本仓自己那两个包，"缺失"只可能是收集规则写错了。
 """
 
 
@@ -198,8 +198,8 @@ def _icon_pngs(sizes: Sequence[int]) -> list[tuple[int, bytes]]:
     from PySide6.QtCore import QBuffer, QIODevice
     from PySide6.QtGui import QGuiApplication
 
-    from biosnn_memterm.ui.theme import DEFAULT_THEME
-    from biosnn_memterm.ui.tray import build_icon
+    from axo.ui.theme import DEFAULT_THEME
+    from axo.ui.tray import build_icon
 
     app = QGuiApplication.instance() or QGuiApplication([])
 
@@ -264,7 +264,7 @@ def _command(*, name: str, console: bool, icon: Path | None, clean: bool) -> lis
     ``--add-data`` 的分隔符用 ``os.pathsep``（Windows ``;``、其余 ``:``），源路径一律
     给**绝对路径**：这个脚本可以从任何工作目录被调起来，而相对的源路径会跟着 cwd 变。
 
-    ``--paths src`` 是显式的：入口里那句 ``from biosnn_memterm.ui.app import main`` 要
+    ``--paths src`` 是显式的：入口里那句 ``from axo.ui.app import main`` 要
     能按名字找到包。源码检出时 `src/` 通常在 ``sys.path`` 上（editable 安装），但显式
     写出来这件事就不依赖安装方式了。
     """
@@ -604,7 +604,7 @@ def _app_window_icons(windows: Sequence[tuple[int, str, str]]) -> tuple[int, int
 
 
 #: 探测用的数据目录前缀。落在系统临时目录里，起完就删。
-_PROBE_DATA_PREFIX = "biosnn-memterm-probe-"
+_PROBE_DATA_PREFIX = "axo-probe-"
 
 #: 窗口出现之后、杀进程之前多留的几秒。
 #:
@@ -622,7 +622,7 @@ def _builtin_persona_ref() -> str:
     这里的判据会开始对着一个过时的值点头——而它点头的意思是"库是干净的"。
     """
     sys.path.insert(0, str(_ROOT / "src"))  # 与其他 tools/ 脚本同一手法
-    from biosnn_memterm.memory.persona import BUILTIN_REF
+    from axo.memory.persona import BUILTIN_REF
 
     return BUILTIN_REF
 
@@ -711,7 +711,7 @@ def _probe(name: str, wait: float) -> list[str]:
     是 README 里交给人做的那一步。
 
     **数据目录必须隔离。** 这一段原来是漏的：探测只弹掉了 ``QT_QPA_PLATFORM``，
-    于是子进程按 ``paths.data_dir()`` 落到了 ``%LOCALAPPDATA%\biosnn-memterm``——
+    于是子进程按 ``paths.data_dir()`` 落到了 ``%LOCALAPPDATA%\axo``——
     **每次构建都拿使用者的真库起一遍应用**，往真库里写内置锚、真库里本来就有的东西
     也一并被这条路读到。而这一切在构建日志里一个字都不显示。给子进程一个临时目录
     之后，"这次构建碰过我的库没有"这个问题才有答案，而且答案是"没有"。
@@ -730,7 +730,7 @@ def _probe(name: str, wait: float) -> list[str]:
     # **隔离数据目录。** 理由见这个函数的 docstring：不设这一句，构建自检就是拿
     # 使用者的真库在起应用，而构建日志里一个字都看不出来。
     probe_data = Path(tempfile.mkdtemp(prefix=_PROBE_DATA_PREFIX))
-    environment["BIOSNN_MEMTERM_DATA"] = str(probe_data)
+    environment["AXO_DATA"] = str(probe_data)
 
     process = subprocess.Popen([str(exe)], cwd=str(exe.parent), env=environment)
     code: int | None = None
@@ -788,7 +788,7 @@ def _probe(name: str, wait: float) -> list[str]:
             return [
                 f"{exe.name} 起来了，窗口上却没有图标（WM_GETICON 三个槽全是 0）——"
                 "标题栏左上角、任务栏、Alt+Tab 三处都会是空的。装图标的是 "
-                "src/biosnn_memterm/ui/main_window.py 的 _install_window_icon（由 "
+                "src/axo/ui/main_window.py 的 _install_window_icon（由 "
                 "_apply_theme 调用）。"
             ]
         # 窗口与图标都对上了，最后一条：它在**隔离的**数据目录里首启出来的库长什么样。
@@ -941,7 +941,7 @@ _OWN_RESIDUE_SOURCES = (str(Path.home().parent), str(Path.home()))
 两条都从环境算出来，理由同 :data:`_RESIDUE_EVERYWHERE`。
 """
 
-_RELEASE_README = """BioSNN 记忆终端 {version}（Windows x64）
+_RELEASE_README = """Axo {version}（Windows x64）
 =======================================
 
 这是什么
@@ -952,8 +952,8 @@ _RELEASE_README = """BioSNN 记忆终端 {version}（Windows x64）
 怎么开始
 --------
 1. 把整个压缩包解压到任意一个你有写权限的位置。**注意是解压，不是只把 exe 拖出来**：
-   它旁边的 biosnn-memterm 文件夹是程序的一部分，缺了就跑不起来。
-2. 双击 biosnn-memterm.exe。
+   它旁边的 axo 文件夹是程序的一部分，缺了就跑不起来。
+2. 双击 axo.exe。
 3. Windows 多半会拦一次，说"已保护你的电脑"（这个程序没有购买代码签名证书）。
    点"更多信息"，再点"仍要运行"。
 4. 第一次启动是空的，它会问你一次想让它记住的人设。
@@ -978,15 +978,15 @@ _RELEASE_README = """BioSNN 记忆终端 {version}（Windows x64）
 --------------------
 你记的东西全部在这个文件夹里：
 
-    %LOCALAPPDATA%\\biosnn-memterm
+    %LOCALAPPDATA%\\axo
 
 删掉它，记忆就没了。卸载程序本身只需要删掉解压出来的那个文件夹——程序不往别处写
 文件。唯一的例外是界面与模型设置，它们记在注册表里，位置是
-HKEY_CURRENT_USER\\Software\\BioSNN\\biosnn-memterm，删掉即清空。
+HKEY_CURRENT_USER\\Software\\Axo\\axo，删掉即清空。
 
 想让数据放到别处（比如移动硬盘），启动前设一个环境变量：
 
-    set BIOSNN_MEMTERM_DATA=<你想要的目录>
+    set AXO_DATA=<你想要的目录>
 
 先说清楚哪里还不行
 ------------------
@@ -1228,7 +1228,7 @@ def _own_files(name: str) -> list[Path]:
     """产物里**属于这个项目自己**的文件。
 
     两条：顶层的 exe（本仓全部 Python 字节码都在它体内的 PYZ 里，第三方的一并也在
-    ——所以它照样得过"没有用户目录路径"那一关），以及 ``_internal/biosnn_memterm/``
+    ——所以它照样得过"没有用户目录路径"那一关），以及 ``_internal/axo/``
     （``theme.qss`` 与 ``ui/web/`` 那几份文本资产）。
 
     按**路径**划而不是按扩展名划：按扩展名划要靠一张"什么算文本"的清单，而那张清单
@@ -1236,7 +1236,7 @@ def _own_files(name: str) -> list[Path]:
     """
     root = _DIST / name
     files = [item for item in root.glob("*.exe") if item.is_file()]
-    package = root / "_internal" / "biosnn_memterm"
+    package = root / "_internal" / "axo"
     if package.is_dir():
         files += [item for item in package.rglob("*") if item.is_file()]
     return sorted(files)

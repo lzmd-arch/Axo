@@ -23,8 +23,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from biosnn_memterm.memory.edit import can_encode
-from biosnn_memterm.memory.persona import (
+from axo.memory.edit import can_encode
+from axo.memory.persona import (
     BUILTIN_PERSONA_VERSION,
     BUILTIN_REF,
     DEFAULT_PERSONA,

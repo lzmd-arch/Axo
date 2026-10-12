@@ -32,7 +32,7 @@ import sys
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
-from biosnn_memterm.ui.main_window import MainWindow
+from axo.ui.main_window import MainWindow
 
 
 def main() -> int:

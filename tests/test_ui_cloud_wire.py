@@ -26,10 +26,10 @@ from typing import Any
 
 import pytest
 
-from biosnn_memterm.llm.base import ChatBackendError
-from biosnn_memterm.ui import main_window as wire
-from biosnn_memterm.ui.main_window import MainWindow
-from biosnn_memterm.ui.settings_store import (
+from axo.llm.base import ChatBackendError
+from axo.ui import main_window as wire
+from axo.ui.main_window import MainWindow
+from axo.ui.settings_store import (
     PROVIDER_CLOUD,
     PROVIDER_OLLAMA,
     BackendSettings,
@@ -485,7 +485,7 @@ def test_a_cloud_list_with_no_memory_picks_our_default_not_the_first(
 ) -> None:
     """**云端没记住上次选的时，不能认清单第一条。**
 
-    :func:`~biosnn_memterm.llm.openai_compat.list_remote_models` 按名字排序，而一个
+    :func:`~axo.llm.openai_compat.list_remote_models` 按名字排序，而一个
     云端账户上几十上百个模型是常态——"第一条"因此接近随机，而它正是用户切过去之后
     看到的第一个模型。本机那条路照旧认第一条（Ollama 自己给的顺序有意义）。
     """

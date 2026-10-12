@@ -25,8 +25,8 @@ from typing import Any
 
 import pytest
 
-from biosnn_memterm.ui.main_window import MainWindow
-from biosnn_memterm.ui.theme import Theme, resolve
+from axo.ui.main_window import MainWindow
+from axo.ui.theme import Theme, resolve
 
 pytestmark = pytest.mark.gui
 
@@ -91,7 +91,7 @@ def test_the_push_sends_theme_opacity_and_wallpaper() -> None:
 
 def _calls_in_build_ui() -> list[str]:
     """``MainWindow._build_ui`` 里所有 ``self.<名字>(...)`` 形式的调用名。"""
-    source = Path("src") / "biosnn_memterm" / "ui" / "main_window.py"
+    source = Path("src") / "axo" / "ui" / "main_window.py"
     tree = ast.parse((Path(__file__).resolve().parents[1] / source).read_text(encoding="utf-8"))
     # 用 AST 而不是 import 之后看源码：这里要的就是"源码里那个调用点"，而
     # ``inspect.getsource`` 在同一形状出现两次时（比如另一个方法末尾也调它）

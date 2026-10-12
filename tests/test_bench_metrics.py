@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from biosnn_memterm.bench import (
+from axo.bench import (
     QueryOutcome,
     auc,
     census_config,
@@ -31,8 +31,8 @@ from biosnn_memterm.bench import (
     run,
     summarize,
 )
-from biosnn_memterm.bench.goldset import GoldMemory, GoldQuery, GoldSet
-from biosnn_memterm.bench.metrics import K_VALUES
+from axo.bench.goldset import GoldMemory, GoldQuery, GoldSet
+from axo.bench.metrics import K_VALUES
 from memcore.graph import GraphIndex
 from memcore.recall import RecallConfig, recall
 from memcore.sdr import encode_lexical
@@ -252,7 +252,7 @@ def _tiny_store() -> MemoryStore:
 def test_fused_does_not_depend_on_selection_knobs() -> None:
     """同一条候选在两种阈值配置下的 ``fused`` **逐位相同**。
 
-    这是 :func:`~biosnn_memterm.bench.metrics.auc` 合法性的前提：AUC 用的是普查
+    这是 :func:`~axo.bench.metrics.auc` 合法性的前提：AUC 用的是普查
     调用（``min_score=0``、``max_items=1``）里的分，而报告出来的是部署配置下的数。
     两者能并列，只因为 ``fused`` 只由通道得分与通道权重决定（``recall._fuse``），
     与 ``min_score`` / ``max_items`` / ``budget`` / ``mmr_lambda`` 全都无关。

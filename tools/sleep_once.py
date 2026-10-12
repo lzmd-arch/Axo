@@ -50,11 +50,11 @@ from typing import Any, NoReturn
 _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT / "src"))
 
-from biosnn_memterm.memory.consolidation import (  # noqa: E402
+from axo.memory.consolidation import (  # noqa: E402
     run_consolidation,
     summary_line,
 )
-from biosnn_memterm.paths import (  # noqa: E402
+from axo.paths import (  # noqa: E402
     consolidation_events_path,
     graph_path,
     memory_db_path,
@@ -139,7 +139,7 @@ def _open_store(db_path: Path, *, human: Any, stack: contextlib.ExitStack) -> Me
     **快照不会被就地打开。** ``--replay --db <快照>`` 里那份快照是"改之前那一份
     完整的库"，而 SQLite 一打开就会往文件里写 WAL 头部、留下 ``-wal``/``-shm``
     边车——证据就不再是原来那一份了。所以来自
-    :func:`~biosnn_memterm.paths.snapshot_dir` 的路径一律**先复制再打开**，
+    :func:`~axo.paths.snapshot_dir` 的路径一律**先复制再打开**，
     那一行输出就是这件事的告知（不是悄悄帮忙：整库复制是几百 MB 的写，
     用户该知道它在发生）。
     """
@@ -198,7 +198,7 @@ def _payload(report: RunReport, **extra: Any) -> Payload:
 def _print_report(report: RunReport, *, human: Any, quiet: bool) -> None:
     """人看的那几行。**没数据就说没数据**：辨认率拿不到时不打一个 0。
 
-    ``--quiet`` 时只留 :func:`~biosnn_memterm.memory.consolidation.summary_line`
+    ``--quiet`` 时只留 :func:`~axo.memory.consolidation.summary_line`
     那一行——那句话在终端、对话区、托盘气泡三处被读，所以它只有一份实现。
     """
     if quiet:

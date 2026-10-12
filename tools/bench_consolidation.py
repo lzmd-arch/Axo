@@ -56,7 +56,7 @@ from typing import Any, NoReturn
 _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT / "src"))
 
-from biosnn_memterm.bench.substrate import (  # noqa: E402
+from axo.bench.substrate import (  # noqa: E402
     SubstrateCorpus,
     SubstrateMemory,
     build_graph,
@@ -175,7 +175,7 @@ def _measure(
     """在 ``scale`` 这一档上把这一行要的数全量出来。**返回纯数据**（写得进 JSON）。
 
     每一步都从头做（重新编码、重新建图），**不做跨档复用**：不同档的条目本来就不是
-    同一批（:func:`~biosnn_memterm.bench.substrate.scaled_memories` 拼出来的那些与
+    同一批（:func:`~axo.bench.substrate.scaled_memories` 拼出来的那些与
     原始条目无关），而复用会让"这一档的数"与"上一档的数"共享一部分状态。
 
     图**与 ``bench_substrate.py`` 的默认档同一档**（``assoc=hash``、``k=ASSOC_K``、

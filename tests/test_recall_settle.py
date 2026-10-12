@@ -111,9 +111,7 @@ def test_probe_and_settle_return_the_same_selection(store: MemoryStore) -> None:
 
 def test_probe_writes_nothing_even_for_a_pinned_persona(store: MemoryStore) -> None:
     """钉住的条目本来就不进结算路径，这里确认探针不会从别处漏写它。"""
-    anchor = store.add(
-        make_item("你是 BioSNN 记忆终端的助手。", kind=MemoryKind.PERSONA_ANCHOR, pinned=True)
-    )
+    anchor = store.add(make_item("你是 Axo的助手。", kind=MemoryKind.PERSONA_ANCHOR, pinned=True))
 
     recall(store, query_text="记忆终端", budget_tokens=4000, now=NOW, settle=False)
 

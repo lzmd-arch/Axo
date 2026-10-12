@@ -5,8 +5,8 @@
 "``别``"这个否定词该放在 task 之前还是之后。
 
 这个脚本量的是那个缺口：120 条带人工标注的输入，逐条走
-:func:`~biosnn_memterm.agent.router.decide_turn`，报准确率与两类的查全/查准。
-指标的口径写在 :mod:`biosnn_memterm.bench.routeeval` 里，**那里是定义，这里只是报告**。
+:func:`~axo.agent.router.decide_turn`，报准确率与两类的查全/查准。
+指标的口径写在 :mod:`axo.bench.routeeval` 里，**那里是定义，这里只是报告**。
 
 **门槛只绑规则层。** 规则层是纯函数、离线、确定性，所以它在 CI 与 pre-commit 里每次
 都跑得动；模型自分类要 Ollama——把门槛绑在它上面等于让"这台机器装没装模型、装了哪个"
@@ -25,7 +25,7 @@
 
 退出码：0 = 达标（或只是报告），1 = 跌破基线容差，2 = 用法或环境不对，3 = 结构不变量
 被违反。**1 不等于程序出错**——它表达的是"路由比登记在案的基线差了"；3 既不是"变差"
-也不是"没配好"，是 bug（见 :func:`~biosnn_memterm.bench.routeeval.route_structural_violations`）。
+也不是"没配好"，是 bug（见 :func:`~axo.bench.routeeval.route_structural_violations`）。
 """
 
 from __future__ import annotations
@@ -42,13 +42,13 @@ from typing import Any, NoReturn
 _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT / "src"))
 
-from biosnn_memterm.agent.router import (  # noqa: E402
+from axo.agent.router import (  # noqa: E402
     Classifier,
     ModelRole,
     Register,
     classify_with_model,
 )
-from biosnn_memterm.bench.routeeval import (  # noqa: E402
+from axo.bench.routeeval import (  # noqa: E402
     DEFAULT_TOLERANCE,
     GATED,
     Outcome,
@@ -60,7 +60,7 @@ from biosnn_memterm.bench.routeeval import (  # noqa: E402
     route_summary,
     sanity_problems,
 )
-from biosnn_memterm.bench.routes import (  # noqa: E402
+from axo.bench.routes import (  # noqa: E402
     RouteCorpus,
     default_routes_dir,
     load_corpus,
@@ -96,13 +96,13 @@ def _resolve_classifier(args: argparse.Namespace) -> Classifier | None:
     * ``--model NAME``：连不上就是失败（退出码 2）。指名要量它的人要的是那个数，
       静默退回规则层会给他一份"看起来含模型、其实只有规则"的报告。
     * 默认：探测，连不上就只跑规则层并**打印一行**。这不是降级——"没装模型时系统
-      照常可用"是本项目的常态（:data:`~biosnn_memterm.agent.router.MODEL_CLASSIFY_DEFAULT`
+      照常可用"是本项目的常态（:data:`~axo.agent.router.MODEL_CLASSIFY_DEFAULT`
       默认就是关的）。退出码不受影响。
     """
     if args.no_model:
         return None
 
-    from biosnn_memterm.llm.ollama import OllamaChatBackend, probe
+    from axo.llm.ollama import OllamaChatBackend, probe
 
     if probe(args.host) is None:
         if args.model:
@@ -258,7 +258,7 @@ def _freeze(payload: dict, path: Path, metrics: dict[str, float]) -> int:
     payload["frozen_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     payload["note"] = (
         "这是**实测值，不是目标值**（先跑后填）。门槛 = 本文件的值 ± tolerance，"
-        "方向见 biosnn_memterm.bench.routeeval.GATED（四项都是越大越好），"
+        "方向见 axo.bench.routeeval.GATED（四项都是越大越好），"
         "容差的含义见那里的 DEFAULT_TOLERANCE（这份测量是确定性的，容差不是噪声，"
         "是「允许几条翻转而不惊动人」）。改语料要同时改 freeze.json 并重跑 --freeze。"
         "**门槛只绑规则层**：模型层要 Ollama，把门槛绑上去等于让装没装模型决定提交"
@@ -462,7 +462,7 @@ def _jsonable(value: object) -> object:
 
     两件事，都不是洁癖：``nan`` → ``null``（分母为零的指标是 ``nan``，而它进的是
     版本控制的 artifact，别的工具读不回来）、frozen dataclass → 字典（
-    :class:`~biosnn_memterm.bench.gates.GateRow` 要进 artifact）。与
+    :class:`~axo.bench.gates.GateRow` 要进 artifact）。与
     ``bench_recall.py`` 的同名函数是同一套理由。
     """
     if is_dataclass(value) and not isinstance(value, type):

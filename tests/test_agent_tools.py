@@ -24,7 +24,7 @@ from typing import Any
 
 import pytest
 
-from biosnn_memterm.agent.catalog import (
+from axo.agent.catalog import (
     MAX_REMINDER_CHARS,
     MAX_WRITE_CHARS,
     ForgetMemoryTool,
@@ -36,8 +36,8 @@ from biosnn_memterm.agent.catalog import (
     WriteMemoryTool,
     default_tools,
 )
-from biosnn_memterm.agent.reminders import ReminderStore
-from biosnn_memterm.agent.tools import (
+from axo.agent.reminders import ReminderStore
+from axo.agent.tools import (
     Tool,
     ToolArgumentError,
     ToolContext,
@@ -46,9 +46,9 @@ from biosnn_memterm.agent.tools import (
     argument_int,
     argument_str,
 )
-from biosnn_memterm.llm.base import ToolCall, ToolSpec
-from biosnn_memterm.memory.forget import FORGET_KEY
-from biosnn_memterm.memory.writer import MemoryWriter
+from axo.llm.base import ToolCall, ToolSpec
+from axo.memory.forget import FORGET_KEY
+from axo.memory.writer import MemoryWriter
 from memcore.ids import new_ulid
 from memcore.sdr import encode_lexical
 from memcore.store import MemoryStore

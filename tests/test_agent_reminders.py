@@ -23,8 +23,8 @@ from pathlib import Path
 
 import pytest
 
-from biosnn_memterm import paths
-from biosnn_memterm.agent.reminders import (
+from axo import paths
+from axo.agent.reminders import (
     FiredStore,
     Reminder,
     ReminderStore,
@@ -184,7 +184,7 @@ def test_a_missing_created_at_does_not_break_the_row() -> None:
 def test_optional_fields_are_omitted_when_empty() -> None:
     """空的可选键**不写进文件**。
 
-    照 :meth:`~biosnn_memterm.session.store.Message.to_dict` 的范式：以后加字段时，
+    照 :meth:`~axo.session.store.Message.to_dict` 的范式：以后加字段时，
     老行不会变成一坨空键；而一行里塞满 ``"call_id": ""`` 会让"这个字段到底有没有
     值"变得要靠人读才知道。
     """
@@ -209,7 +209,7 @@ def test_reminders_live_directly_in_the_data_dir(
     而用户还没被提醒的事情不该跟着走。反过来它也不需要自己的子目录——只有一行行的
     文本，凑不出记忆库那种"必须整体搬家"的一堆伴生文件。
     """
-    monkeypatch.setenv("BIOSNN_MEMTERM_DATA", str(tmp_path))
+    monkeypatch.setenv("AXO_DATA", str(tmp_path))
     path = paths.reminders_path()
     assert path == tmp_path / "reminders.jsonl"
     assert path.parent == paths.data_dir()
@@ -224,7 +224,7 @@ def test_reminders_path_does_not_create_the_file(
     还没约过提醒是常态，先建一个空文件只会让"文件在但内容空"与"文件还没有"变成两种
     要分开处理的状态。真正建它的是 ``ReminderStore.add``。
     """
-    monkeypatch.setenv("BIOSNN_MEMTERM_DATA", str(tmp_path))
+    monkeypatch.setenv("AXO_DATA", str(tmp_path))
     assert paths.reminders_path().is_file() is False
 
 
@@ -392,7 +392,7 @@ def test_missed_summary_of_nothing_is_empty() -> None:
 
 
 def test_the_fired_path_is_its_own_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("BIOSNN_MEMTERM_DATA", str(tmp_path))
+    monkeypatch.setenv("AXO_DATA", str(tmp_path))
     fired_path = paths.reminders_fired_path()
     assert fired_path == tmp_path / "reminders.fired.jsonl"
     assert fired_path != paths.reminders_path(), "两本账必须是两个文件"

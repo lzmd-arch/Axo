@@ -292,7 +292,7 @@ def drop_bits(sdr: SDR, ratio: float) -> SDR:
     绑的就是一次抽签，而抽签的门槛会在某天毫无理由地红一次。
 
     ``ratio = 0`` 时原样返回。那是一次**空转的测量**（探针就是目标本身，补全
-    恒为 1），由 :data:`~biosnn_memterm.bench.substrate.SANITY_CEILING` 在冻结
+    恒为 1），由 :data:`~axo.bench.substrate.SANITY_CEILING` 在冻结
     之前拦掉——它在这里不做判断，因为"看看完美探针的天花板"也是一个合法的诊断。
 
     **住在 ``memcore`` 而不是 ``bench``**：理由与

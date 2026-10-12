@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from biosnn_memterm.llm.ollama import is_chat_capable, pick_chat_model, pick_embedding_model
+from axo.llm.ollama import is_chat_capable, pick_chat_model, pick_embedding_model
 
 
 def entry(name: str, *capabilities: str, short: str = "") -> dict[str, object]:

@@ -25,7 +25,7 @@ import re
 
 import pytest
 
-from biosnn_memterm.memory.browse import (
+from axo.memory.browse import (
     MemoryFilter,
     MemoryStatus,
     NeighborRow,

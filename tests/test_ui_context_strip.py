@@ -1,6 +1,6 @@
 """顶栏那条上下文指示灯：接线对不对、以及"没有这一轮"画成什么颜色。
 
-阈值判定住在 :mod:`biosnn_memterm.session.indicator`，由核心腿的
+阈值判定住在 :mod:`axo.session.indicator`，由核心腿的
 ``test_context_indicator.py`` 断言（``over_budget`` 优先于比值、0.85 的边界、
 比值可以超过 100%）。这里只钉两件界面侧的事：**数值取自账本**，以及**没有这一轮
 时不能画成绿色**。
@@ -21,10 +21,10 @@ from typing import Any
 
 import pytest
 
-from biosnn_memterm.session.assemble import Assembly, AssemblyLedger
-from biosnn_memterm.session.budget import TokenBudget
-from biosnn_memterm.session.indicator import ContextState
-from biosnn_memterm.ui.main_window import _CONTEXT_COLORS, MainWindow
+from axo.session.assemble import Assembly, AssemblyLedger
+from axo.session.budget import TokenBudget
+from axo.session.indicator import ContextState
+from axo.ui.main_window import _CONTEXT_COLORS, MainWindow
 
 pytestmark = pytest.mark.gui
 

@@ -24,10 +24,10 @@ from typing import Any
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from biosnn_memterm.ui import main_window as main_window_module
-from biosnn_memterm.ui.main_window import MainWindow
-from biosnn_memterm.ui.settings_store import BackendSettings
-from biosnn_memterm.ui.theme import Theme, resolve
+from axo.ui import main_window as main_window_module
+from axo.ui.main_window import MainWindow
+from axo.ui.settings_store import BackendSettings
+from axo.ui.theme import Theme, resolve
 
 pytestmark = pytest.mark.gui
 
@@ -54,7 +54,7 @@ def _window() -> SimpleNamespace:
         _resolved=resolve(theme, "dark"),
         # 后端那一份：**整份**传进设置窗口（``provider`` / ``cloud_base_url`` /
         # ``api_key`` 也住在里面）。``_host`` / ``_allow_remote`` 只是
-        # :class:`~biosnn_memterm.ui.settings_store.BackendSettings` 上的只读属性
+        # :class:`~axo.ui.settings_store.BackendSettings` 上的只读属性
         # ——替身是个 ``SimpleNamespace``，属性不会自己长出来，所以给的是
         # 真对象。默认值就是「本机 Ollama、不允许远程」，与刚装好的终端一模一样。
         _backend_settings=BackendSettings(),
@@ -210,9 +210,9 @@ def test_the_catch_all_is_deliberate_and_marked(qapp: Any) -> None:
     为什么不吞异常（它把异常变成一句人话，回溯仍然打到控制台）。这条断言很轻，
     但它让"哪天有人把 except 改成 pass"变成一次有意的改动。
     """
-    source = (
-        Path(__file__).resolve().parent.parent / "src/biosnn_memterm/ui/main_window.py"
-    ).read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parent.parent / "src/axo/ui/main_window.py").read_text(
+        encoding="utf-8"
+    )
     block = source.split("def _on_open_settings", 1)[1].split("def _on_theme_changed", 1)[0]
     assert re.search(r"except Exception as exc:\s*# noqa: BLE001", block)
     assert "QMessageBox.warning" in block

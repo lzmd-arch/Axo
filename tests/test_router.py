@@ -32,7 +32,7 @@ from __future__ import annotations
 import pytest
 from fakes import ScriptedBackend, text_chunk
 
-from biosnn_memterm.agent.router import (
+from axo.agent.router import (
     _CHAT_MARKERS,
     DEFAULT_HYSTERESIS,
     HELP_TEXT,

@@ -14,7 +14,7 @@ from datetime import datetime
 
 import pytest
 
-from biosnn_memterm.session.environment import build_environment
+from axo.session.environment import build_environment
 
 
 def test_time_line_reads_as_chinese_and_states_the_weekday() -> None:

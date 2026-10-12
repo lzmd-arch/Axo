@@ -16,14 +16,14 @@ from typing import Any
 
 import pytest
 
-from biosnn_memterm.llm.base import (
+from axo.llm.base import (
     ChatBackendError,
     ChatMessage,
     ChatRequest,
     ToolCall,
     ToolSpec,
 )
-from biosnn_memterm.llm.openai_compat import (
+from axo.llm.openai_compat import (
     DEFAULT_OPENAI_MODEL,
     OpenAICompatChatBackend,
     _build_message,

@@ -17,14 +17,14 @@ import time
 
 import pytest
 
-from biosnn_memterm.agent.gate import (
+from axo.agent.gate import (
     ApprovalDecision,
     ApprovalRequest,
     ApprovalSlot,
     build_request,
     resolve_decision,
 )
-from biosnn_memterm.llm.base import ToolCall
+from axo.llm.base import ToolCall
 
 
 def req(call_id: str = "call_1") -> ApprovalRequest:

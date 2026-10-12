@@ -12,8 +12,8 @@ from collections.abc import Iterator
 
 import pytest
 
-from biosnn_memterm.llm.base import ChatBackendError
-from biosnn_memterm.llm.ollama import (
+from axo.llm.base import ChatBackendError
+from axo.llm.ollama import (
     _iter_ndjson_chunks,
     _l2_normalize,
     _parse_line,

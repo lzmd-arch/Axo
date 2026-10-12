@@ -1,7 +1,7 @@
 """路由语料的完整性：指纹、自洽、以及"里面没有他本人的东西"。
 
 :mod:`tests.test_goldset_integrity` 的同位体，守的是同一条纪律——**语料是量具，不是
-文档**。改一个字，:func:`~biosnn_memterm.bench.routeeval.decide_turn` 的读数就变了，
+文档**。改一个字，:func:`~axo.bench.routeeval.decide_turn` 的读数就变了，
 而这个读数是以**门槛**的形式进 CI 的：改一个词的后果从"数字对不上文档"升级成"CI 悄悄
 放宽了"。
 
@@ -20,8 +20,8 @@ from collections import Counter
 
 import pytest
 
-from biosnn_memterm.agent.router import Register
-from biosnn_memterm.bench import (
+from axo.agent.router import Register
+from axo.bench import (
     REGISTERS,
     default_routes_dir,
     file_sha256,
@@ -46,7 +46,7 @@ _FREEZE_HINT = (
 #:
 #: 为什么需要它：``freeze.json`` 的普查断言只保证"记录与实际一致"，一份把 ``slash``
 #: 删空的语料完全一致，而且**每一条断言都还是绿的**——因为
-#: :func:`~biosnn_memterm.bench.routeeval.route_structural_violations` 里那条循环
+#: :func:`~axo.bench.routeeval.route_structural_violations` 里那条循环
 #: ``if category != "slash": continue`` 一次都不进，一个违例都产生不出来。
 #: **一个空掉的类别让守卫变成空转**，这一条挡的就是那件事。下限取当前实测值的一半上下，
 #: 它拦的是"削薄"，不是"调整"。
@@ -165,7 +165,7 @@ def test_hard_entries_explain_themselves(utterances) -> None:
 
 
 def test_registers_match_the_router_enum() -> None:
-    """语料的标注词表与代码里的 :class:`~biosnn_memterm.agent.router.Register` 必须一致。
+    """语料的标注词表与代码里的 :class:`~axo.agent.router.Register` 必须一致。
 
     **两边分头改名字的话，语料会静默地全部判错**，而报告上看起来只是"准确率掉了"
     ——那正是最难查的一种。这条断言把它变成一次导入期就红的事故。
@@ -252,7 +252,7 @@ def test_hard_is_not_a_dumping_ground(utterances) -> None:
 def test_corpus_has_no_personal_identifiers() -> None:
     """语料里不许出现关于作者本人/本人机器/本项目其它仓库的痕迹。
 
-    见 :data:`biosnn_memterm.bench.PERSONAL_DENYLIST`——**不在这个文件里再写一份**：
+    见 :data:`axo.bench.PERSONAL_DENYLIST`——**不在这个文件里再写一份**：
     两份语料是同一份风险的两个入口，各存一份的话，某天补一个词只会补在其中一边，
     而另一边看起来仍然"有守卫"。
 

@@ -6,7 +6,7 @@
    （:mod:`memcore.sdr`）；
 2. **存储与生命周期**：落库、分层、惰性衰减（:mod:`memcore.store`），以及睡眠巩固
    （:mod:`memcore.consolidation`——分簇 + 簇内局部 W 的回放。它和这一层别的东西一样
-   **是纯的**：不碰库、不碰盘，改库那一步在 ``biosnn_memterm.memory.consolidation``）；
+   **是纯的**：不碰库、不碰盘，改库那一步在 ``axo.memory.consolidation``）；
 3. **召回**：混合检索与归因（:mod:`memcore.recall`）——**两条通道**（词法 + 语义），
    加上一条**默认关着**的（沿关联图扩散）。P4b 把第三条接进来了，但
    ``RecallConfig.graph_weight`` 仍然是 0.0，所以"三通道"这句话只在打开那个开关之后
@@ -19,7 +19,7 @@
 
 分层依赖（箭头方向 = 允许 import 的方向）::
 
-    biosnn_memterm  ──▶  memcore  ──▶  numpy, biosnn_bus
+    axo  ──▶  memcore  ──▶  numpy, biosnn_bus
          (Qt/HTTP)        (纯计算)
 
 反过来不成立。因此 ``memcore`` 可以脱离整个 UI 单独跑基准与单元测试——这正是
@@ -95,7 +95,7 @@ __all__ = [
 #     consolidation.py 睡眠巩固：分簇 + 簇内局部 W 回放 + 事件行（纯；不碰库不碰盘）
 #
 # 规划中：projection.py（稀疏投影）。``persona.py`` 原来也挂在这一行，但人格锚最后
-# 落在 ``biosnn_memterm.memory.persona``——它是内容，不是记忆核心的机制。
+# 落在 ``axo.memory.persona``——它是内容，不是记忆核心的机制。
 #
 # 上面最后三个（graph / substrate / consolidation）现在**都有消费者**了：图被那条
 # 默认关着的召回通道、记忆窗口的邻居面板、以及巩固的分簇读；W 被巩固的簇内回放读。

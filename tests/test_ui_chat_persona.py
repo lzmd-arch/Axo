@@ -27,7 +27,7 @@ from typing import Any
 
 import pytest
 
-from biosnn_memterm.memory.persona import (
+from axo.memory.persona import (
     BUILTIN_REF,
     DEFAULT_PERSONA,
     builtin_anchor,
@@ -35,7 +35,7 @@ from biosnn_memterm.memory.persona import (
     set_user_persona,
     user_anchor,
 )
-from biosnn_memterm.ui.main_window import MainWindow
+from axo.ui.main_window import MainWindow
 from memcore.ids import new_ulid
 from memcore.sdr import encode_lexical
 from memcore.store import MemoryStore

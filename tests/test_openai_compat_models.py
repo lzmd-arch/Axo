@@ -15,8 +15,8 @@ from typing import Any
 
 import pytest
 
-from biosnn_memterm.llm.base import ChatBackendError
-from biosnn_memterm.llm.openai_compat import (
+from axo.llm.base import ChatBackendError
+from axo.llm.openai_compat import (
     DEFAULT_OPENAI_MODEL,
     FALLBACK_CLOUD_MODELS,
     _parse_models,

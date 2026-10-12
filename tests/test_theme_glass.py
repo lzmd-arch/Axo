@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from biosnn_memterm.ui.color import (
+from axo.ui.color import (
     RGB,
     contrast_ratio,
     parse_hex,
@@ -33,7 +33,7 @@ from biosnn_memterm.ui.color import (
     rgba,
     to_hex,
 )
-from biosnn_memterm.ui.theme import (
+from axo.ui.theme import (
     _GLASS_ALPHAS,
     _GLASS_EDGE_TOKENS,
     DARK_TOKENS,
@@ -50,7 +50,7 @@ from biosnn_memterm.ui.theme import (
 #: 收宽了就等于允许"两种写法都对"，而那时下面这些断言量的未必是发出去的东西。
 _RGBA = re.compile(r"rgba\((\d+), (\d+), (\d+), ([0-9.]+)\)")
 
-#: 填充 alpha 的上限。**这个数是 :func:`~biosnn_memterm.ui.color.rgba` 那段论据的
+#: 填充 alpha 的上限。**这个数是 :func:`~axo.ui.color.rgba` 那段论据的
 #: 边界**，改了它就要回头去看那段话还成不成立。这里断言一遍，是为了让"顺手调大
 #: 一点更好看"这件事必须经过这条测试，而不是只经过一双手。
 _FILL_ALPHA_MAX = 0.16
@@ -61,7 +61,7 @@ _FILL_NAMES = ("glassTop", "glassBottom", "glassTopHover", "glassBottomHover")
 _EDGE_NAMES = ("glassLineTop", "glassLine", "glassLineBottom")
 _ALL_GLASS_NAMES = (*_FILL_NAMES, *_EDGE_NAMES, "glassPressed")
 
-_CSS = Path(__file__).resolve().parent.parent / "src/biosnn_memterm/ui/web/css/app.css"
+_CSS = Path(__file__).resolve().parent.parent / "src/axo/ui/web/css/app.css"
 
 
 def _over(top: str, bottom: str) -> RGB:

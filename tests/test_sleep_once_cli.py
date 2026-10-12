@@ -24,7 +24,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from biosnn_memterm.paths import graph_path, memory_db_path
+from axo.paths import graph_path, memory_db_path
 from memcore.graph import GraphIndex
 from memcore.sdr import encode_lexical
 from memcore.store import MemoryStore
@@ -48,7 +48,7 @@ def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     三句话在真实的建图门槛下很可能连不出一条边，那样"跑一轮"会安静地变成"跑了
     个空轮"，而每条用例的期望值都要跟着解释一遍"为什么什么都没发生"。
     """
-    monkeypatch.setenv("BIOSNN_MEMTERM_DATA", str(tmp_path))
+    monkeypatch.setenv("AXO_DATA", str(tmp_path))
     items = [
         MemoryItem(
             memory_id=f"m{index:03d}",
@@ -90,7 +90,7 @@ def _cli(data_dir: Path, *argv: str) -> subprocess.CompletedProcess[str]:
         encoding="utf-8",
         timeout=_TIMEOUT,
         check=False,
-        env={**os.environ, "BIOSNN_MEMTERM_DATA": str(data_dir)},
+        env={**os.environ, "AXO_DATA": str(data_dir)},
     )
 
 
@@ -312,7 +312,7 @@ def test_usage_and_environment_errors_exit_two(
     验形状——``run_id`` 的形状是定死的（16 位十六进制），拒绝一个不合形状的值不会
     误伤任何真实用法。
     """
-    monkeypatch.setenv("BIOSNN_MEMTERM_DATA", str(tmp_path))
+    monkeypatch.setenv("AXO_DATA", str(tmp_path))
 
     result = _cli(tmp_path, *argv)
 

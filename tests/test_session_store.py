@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from biosnn_memterm.session.store import (
+from axo.session.store import (
     _SESSION_ID_RE,
     Message,
     SessionStore,

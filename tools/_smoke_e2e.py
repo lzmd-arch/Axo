@@ -35,15 +35,15 @@ import tempfile
 import time
 from pathlib import Path
 
-# 必须在 import biosnn_memterm 之前设好——paths 模块在首次调用时解析并缓存目录。
+# 必须在 import axo 之前设好——paths 模块在首次调用时解析并缓存目录。
 _TMP = Path(tempfile.mkdtemp(prefix="memterm-smoke-"))
-os.environ["BIOSNN_MEMTERM_DATA"] = str(_TMP)
+os.environ["AXO_DATA"] = str(_TMP)
 
 from PySide6.QtCore import QTimer  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from tools_support import RecordingChatView  # noqa: E402
 
-import biosnn_memterm.ui.main_window as main_window_module  # noqa: E402
+import axo.ui.main_window as main_window_module  # noqa: E402
 
 # 提示词要能让模型正经生成几十个字，而不是回两个字就停。
 #
@@ -117,7 +117,7 @@ def main() -> int:
         print(f"输入 token：{assistant.prompt_tokens}  输出 token：{assistant.completion_tokens}")
         print(f"视图调用序列：{' → '.join(fake.calls) or '（无）'}")
 
-        # 复用窗口自己的 store：它读的就是真目录（此处已被 BIOSNN_MEMTERM_DATA
+        # 复用窗口自己的 store：它读的就是真目录（此处已被 AXO_DATA
         # 指到临时目录），再新建一个只会多一个可能不一致的路径来源。
         store = window._store
         on_disk = store.load(window._session.session_id)

@@ -27,14 +27,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from biosnn_memterm.llm.base import (
+from axo.llm.base import (
     ChatBackendError,
     ChatMessage,
     ChatRequest,
     ToolCall,
     ToolSpec,
 )
-from biosnn_memterm.llm.ollama import (
+from axo.llm.ollama import (
     OllamaChatBackend,
     _build_message,
     _build_options,
@@ -177,7 +177,7 @@ def test_stream_reassembles_tool_calls_from_fixture_bytes() -> None:
     "消费端不需要碎片累积状态机"的**执行版**依据：切得再碎，每片自己都是完整的
     JSON。
     """
-    from biosnn_memterm.llm.ollama import _iter_ndjson_chunks
+    from axo.llm.ollama import _iter_ndjson_chunks
 
     class _Response:
         def __init__(self, pieces: list[bytes]) -> None:

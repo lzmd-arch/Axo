@@ -15,7 +15,7 @@
   都不会让任何断言变红，却会让 ``neighbor_auc`` 的分母悄悄少一截（同簇对数在那里
   是 ``C(n, 2)``，n=1 时是 0）。空转的守卫比没有守卫更糟：它让人以为有人在看。
 * **``expect`` 必须同簇且存在**——那不是"语料写得好不好"，它是 ``graph_hit`` 的
-  定义域。它由 :func:`~biosnn_memterm.bench.substrate.substrate_structural_violations`
+  定义域。它由 :func:`~axo.bench.substrate.substrate_structural_violations`
   机械检查，断言在 gate 那份文件里（那里才有建好的图）；这里只查不依赖图的静态
   部分：id 存在、非空、且不重复。
 """
@@ -27,7 +27,7 @@ from collections import Counter
 
 import pytest
 
-from biosnn_memterm.bench import (
+from axo.bench import (
     default_substrate_dir,
     file_sha256,
     load_substrate_corpus,
@@ -53,7 +53,7 @@ _FREEZE_HINT = (
 #:
 #: 为什么需要它：``freeze.json`` 的簇普查只保证"记录与实际一致"，一份把某个簇削到
 #: 一条的语料完全一致，而且**每一条断言都还是绿的**——因为那一簇在
-#: :func:`~biosnn_memterm.bench.substrate.neighbor_pairs` 里贡献的同簇对数是
+#: :func:`~axo.bench.substrate.neighbor_pairs` 里贡献的同簇对数是
 #: ``C(1, 2) = 0``，它只是从 AUC 的分母里消失，不产生任何违例。**一个空转的簇让
 #: 守卫变成空转**，这一条挡的就是那件事。下限拦的是"削薄"，不是"调整"。
 _CLUSTER_FLOOR = 10
@@ -91,7 +91,7 @@ def test_sha256_matches_freeze(freeze: dict) -> None:
     """两份 JSONL 的原始字节指纹都要与 ``freeze.json`` 对上。
 
     逐字节而不是逐条比较：逐条比较会漏掉"改了行尾""改了字段顺序""多了一个空格"
-    这一类改动——而它们都会让 :data:`~biosnn_memterm.bench.substrate.GATED` 里那
+    这一类改动——而它们都会让 :data:`~axo.bench.substrate.GATED` 里那
     两项的读数变掉（内容不同了，编码自然不同）。
     """
     for name, path in (("memories", MEMORIES), ("queries", QUERIES)):
@@ -127,7 +127,7 @@ def test_memory_clusters_match_freeze(freeze: dict, memories) -> None:
 def test_query_clusters_match_freeze(freeze: dict, queries) -> None:
     """查询侧的簇普查。
 
-    :func:`~biosnn_memterm.bench.substrate.substrate_digests` 只数记忆侧，所以
+    :func:`~axo.bench.substrate.substrate_digests` 只数记忆侧，所以
     ``query_clusters`` 没有任何机械消费者——**没有消费者的数字会腐烂**，这一条
     就是它的消费者。
     """
@@ -273,7 +273,7 @@ def test_no_cluster_exists_only_on_the_query_side(queries, memories) -> None:
 def test_corpus_has_no_personal_identifiers() -> None:
     """两份 JSONL 里都不许出现关于作者本人/本人机器/本项目其它仓库的痕迹。
 
-    见 :data:`biosnn_memterm.bench.PERSONAL_DENYLIST`——**不在这个文件里再写一份**：
+    见 :data:`axo.bench.PERSONAL_DENYLIST`——**不在这个文件里再写一份**：
     三份语料是同一份风险的三个入口，各存一份的话，某天补一个词只会补在其中一边，
     而另一边看起来仍然"有守卫"。
 

@@ -327,7 +327,7 @@ def test_explanation_matches_the_scores(store: MemoryStore) -> None:
     这是"可解释性可能是幻觉"那条风险的验收点：`explain` 是从 ChannelScores
     现算的模板文本，不是独立字段。一旦有人把它改成可传入的字符串，这条会失败。
     """
-    add(store, "我在做一个叫 BioSNN 记忆终端的项目，记忆必须独立于所调用的模型。")
+    add(store, "我在做一个叫 Axo的项目，记忆必须独立于所调用的模型。")
     ledger = recall(store, query_text="记忆终端为什么要独立于模型？", budget_tokens=500)
 
     assert ledger.injected, "这条样本应当命中"
@@ -342,7 +342,7 @@ def test_explanation_matches_the_scores(store: MemoryStore) -> None:
 
 def test_explanation_format_matches_the_acceptance_criterion(store: MemoryStore) -> None:
     """计划书 §3.4 的验收原话是「因语义 0.87 被注入，184 token」。"""
-    add(store, "我在做一个叫 BioSNN 记忆终端的项目，记忆必须独立于所调用的模型。")
+    add(store, "我在做一个叫 Axo的项目，记忆必须独立于所调用的模型。")
     ledger = recall(store, query_text="记忆终端为什么要独立于模型？", budget_tokens=500)
     explain = ledger.injected[0].explain
     assert explain.startswith("因词法 ")

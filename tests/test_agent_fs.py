@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from biosnn_memterm.agent.fs import (
+from axo.agent.fs import (
     DEFAULT_MAX_LINES,
     MAX_READ_BYTES,
     ReadFileError,

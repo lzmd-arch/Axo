@@ -91,14 +91,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from biosnn_memterm.llm.base import (
+from axo.llm.base import (
     ChatBackendError,
     ChatMessage,
     ChatRequest,
     ToolCall,
     ToolSpec,
 )
-from biosnn_memterm.llm.ollama import OllamaChatBackend, list_local_models, probe
+from axo.llm.ollama import OllamaChatBackend, list_local_models, probe
 from memcore.recall import recall
 from memcore.sdr import encode_lexical
 from memcore.store import MemoryStore
@@ -112,7 +112,7 @@ DEFAULT_MAX_ROUNDS = 4
 # ── 库：一个一次性的内存库，几条"可检索"的事实 ─────────────────────────────
 #
 # 用 ``:memory:`` 而不是真库，理由与 bench/harness.py 一字不差：探针会被反复跑，
-# 它要是碰了 BIOSNN_MEMTERM_DATA 指向的真库，就会有"跑一次探针把用户记忆的权重
+# 它要是碰了 AXO_DATA 指向的真库，就会有"跑一次探针把用户记忆的权重
 # 动了一遍"这种事故，而且没有任何症状。
 
 _FACTS = (

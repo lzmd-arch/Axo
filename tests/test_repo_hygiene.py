@@ -4,7 +4,7 @@
 
 1. **运行时的用户数据进了版本控制。** 会话逐字稿、记忆库、壁纸、配置——它们是这个
    程序存在的理由，也正是最不该离开本机的东西。建筑上的第一道防线是
-   :mod:`biosnn_memterm.paths`：数据目录默认解析到用户目录，**不在仓库里**。第二道
+   :mod:`axo.paths`：数据目录默认解析到用户目录，**不在仓库里**。第二道
    是 ``.gitignore``。本文件是第三道，而且与前两道不同——**它检查的是结果而不是
    意图**：``git ls-files`` 里有什么，推上去就有什么，``.gitignore`` 写对没写对
    与它无关。
@@ -45,7 +45,7 @@ from pathlib import Path, PurePosixPath
 
 import pytest
 
-from biosnn_memterm import paths
+from axo import paths
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _BENCH_SPACE = _REPO_ROOT / "tools" / "bench_space.py"
@@ -69,7 +69,7 @@ _RUNTIME_SUFFIXES = frozenset(
     }
 )
 
-#: 按目录名识别。复数，为了跟源码目录 ``src/biosnn_memterm/session/`` 区分开。
+#: 按目录名识别。复数，为了跟源码目录 ``src/axo/session/`` 区分开。
 _RUNTIME_DIRS = frozenset({"data", "sessions", "wallpapers"})
 
 #: 哪些目录里的 ``.jsonl`` 是**量具语料**；其余 ``.jsonl`` 一律当逐字稿。
@@ -148,16 +148,16 @@ def test_default_data_dir_is_outside_the_repo(monkeypatch: pytest.MonkeyPatch) -
     这里把它变成可执行的：住在仓库里有三个后果，最隐蔽的那个是把私人对话连同
     embedding 一起提交进版本控制。
 
-    **量的是默认值，所以先把环境变量摘掉**——``BIOSNN_MEMTERM_DATA`` 是给开发用的
+    **量的是默认值，所以先把环境变量摘掉**——``AXO_DATA`` 是给开发用的
     逃生口，它指到哪儿都行（``.gitignore`` 与上面的断言会兜住文件层面），但"默认"
     必须是仓库外面。
     """
-    monkeypatch.delenv("BIOSNN_MEMTERM_DATA", raising=False)
+    monkeypatch.delenv("AXO_DATA", raising=False)
     data = paths.data_dir().resolve()
     repo = _REPO_ROOT.resolve()
     assert repo not in data.parents, (
         f"默认数据目录解析到了仓库里面：{data}。\n"
-        "记忆库不能住在仓库目录里（src/biosnn_memterm/paths.py 的 docstring 讲了"
+        "记忆库不能住在仓库目录里（src/axo/paths.py 的 docstring 讲了"
         "三个后果）。默认值应当来自 %LOCALAPPDATA% / XDG_DATA_HOME。"
     )
 

@@ -2,13 +2,13 @@
 # 见 tests/test_repo_hygiene.py——那里拿 git ls-files 复核同一件事。
 
 # 记忆库数据：绝不入库。它可能很大，且含私人对话内容。
-# 运行时实际落在用户目录（%LOCALAPPDATA%\biosnn-memterm\），这里的 data/ 只是
+# 运行时实际落在用户目录（%LOCALAPPDATA%\axo\），这里的 data/ 只是
 # 开发时的可覆盖默认位置。
 # ⚠ 裸名字（不带前导斜杠）在**任何层级**都匹配，所以 tests/data/ 这类同名目录也
 #   会被一起忽略——那时 git add 会安静地什么都不做。要放行就写 !tests/data/。
 data/
 # 运行时数据的两个目录。**用复数是为了跟源码目录区分**：运行时是 sessions/，
-# 源码是 src/biosnn_memterm/session/（单数）。裸名字在任何层级都匹配，所以这里
+# 源码是 src/axo/session/（单数）。裸名字在任何层级都匹配，所以这里
 # 差一个字母就会把源码目录一起忽略掉。
 sessions/
 wallpapers/

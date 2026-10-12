@@ -16,9 +16,9 @@ from pathlib import Path
 
 import pytest
 
-from biosnn_memterm import paths
-from biosnn_memterm.llm.ollama import DEFAULT_OLLAMA_HOST
-from biosnn_memterm.ui.settings_store import (
+from axo import paths
+from axo.llm.ollama import DEFAULT_OLLAMA_HOST
+from axo.ui.settings_store import (
     DEFAULT_CLOUD_BASE_URL,
     DEFAULT_HOST,
     PROVIDER_CLOUD,
@@ -29,7 +29,7 @@ from biosnn_memterm.ui.settings_store import (
     ToolSettings,
     wallpaper_file,
 )
-from biosnn_memterm.ui.theme import (
+from axo.ui.theme import (
     CUSTOM_PRESET,
     DEFAULT_THEME,
     PRESETS,
@@ -67,7 +67,7 @@ def test_roundtrip_each_preset(preset) -> None:
     """存进去的是**用户选的那一支**（暗色那支），不是浅色解析后的那一支。
 
     这条区分很要紧：设置里存的永远是"用户选了什么"，而"实际画出来的是什么"由
-    :func:`~biosnn_memterm.ui.theme.resolve` 在渲染时决定。两者混起来之后，用户在
+    :func:`~axo.ui.theme.resolve` 在渲染时决定。两者混起来之后，用户在
     浅色模式下点一下"确定"，主色就被永久换掉了——而且再也换不回来。
     """
     store = SettingsStore(FakeBackend())
@@ -203,7 +203,7 @@ def test_default_cloud_url_matches_the_openai_compat_module() -> None:
     漂了的表现是"界面预填的地址与实际请求的地址不是同一个"——用户按预填的填完，
     点测试连接是通的（界面拿的那份），一说话就 404（后端拿的那份）。
     """
-    from biosnn_memterm.llm.openai_compat import DEFAULT_OPENAI_BASE_URL
+    from axo.llm.openai_compat import DEFAULT_OPENAI_BASE_URL
 
     assert DEFAULT_CLOUD_BASE_URL == DEFAULT_OPENAI_BASE_URL
 
@@ -262,7 +262,7 @@ def test_allow_remote_survives_the_type_trap(stored: object, expected: bool) -> 
 @pytest.fixture
 def wallpapers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """把数据目录指到 tmp_path，免得往真实用户目录里写东西。"""
-    monkeypatch.setenv("BIOSNN_MEMTERM_DATA", str(tmp_path))
+    monkeypatch.setenv("AXO_DATA", str(tmp_path))
     return paths.wallpapers_dir()
 
 

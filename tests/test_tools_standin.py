@@ -26,8 +26,8 @@ import ast
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-_REAL_VIEW = _REPO_ROOT / "src" / "biosnn_memterm" / "ui" / "chat_view.py"
-_MAIN_WINDOW = _REPO_ROOT / "src" / "biosnn_memterm" / "ui" / "main_window.py"
+_REAL_VIEW = _REPO_ROOT / "src" / "axo" / "ui" / "chat_view.py"
+_MAIN_WINDOW = _REPO_ROOT / "src" / "axo" / "ui" / "main_window.py"
 _STANDIN = _REPO_ROOT / "tools" / "tools_support.py"
 
 _REAL_CLASS = "ChatView"

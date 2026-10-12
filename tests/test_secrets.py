@@ -16,7 +16,7 @@ import sys
 
 import pytest
 
-from biosnn_memterm import secrets
+from axo import secrets
 
 _WINDOWS_ONLY = pytest.mark.skipif(sys.platform != "win32", reason="DPAPI 是 Windows 的系统调用")
 

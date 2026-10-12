@@ -29,16 +29,16 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-# 必须在 import biosnn_memterm 之前设好——paths 模块在首次调用时解析并缓存目录。
+# 必须在 import axo 之前设好——paths 模块在首次调用时解析并缓存目录。
 _TMP = Path(tempfile.mkdtemp(prefix="memterm-memui-"))
-os.environ["BIOSNN_MEMTERM_DATA"] = str(_TMP)
+os.environ["AXO_DATA"] = str(_TMP)
 
 import numpy as np  # noqa: E402
 from PySide6.QtCore import Qt, QTimer  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from tools_support import RecordingChatView  # noqa: E402
 
-import biosnn_memterm.ui.main_window as main_window_module  # noqa: E402
+import axo.ui.main_window as main_window_module  # noqa: E402
 from memcore.ids import new_ulid  # noqa: E402
 from memcore.sdr import encode_lexical  # noqa: E402
 from memcore.types import MemoryItem, MemoryKind, Taint, Tier  # noqa: E402
@@ -205,7 +205,7 @@ def main() -> int:
     if not finished:
         problems.append(f"线索召回等了 {PROBE_DEADLINE_S:.0f} 秒没有回结果")
     else:
-        from biosnn_memterm.memory.browse import probe_position
+        from axo.memory.browse import probe_position
 
         detail = probe_position(mw._probe_ledger, keep.memory_id)
         print("[5] 线索召回：", flush=True)
@@ -236,7 +236,7 @@ def main() -> int:
     # 应该推过一次 ``asking=True``；而**"忘了在 ``_wire`` 里接 ```persona_answered``"
     # 这种漏法在别处看不出来**——卡片答完了、库却没变，界面上只是一张卡片不肯消失。
     # gui 单元测试不建 ``MainWindow``，所以那条线只有真进程能测。
-    from biosnn_memterm.memory.persona import builtin_anchor, user_anchor
+    from axo.memory.persona import builtin_anchor, user_anchor
 
     chat = window.chat_view
     if chat.persona_state is None or not chat.persona_state["asking"]:

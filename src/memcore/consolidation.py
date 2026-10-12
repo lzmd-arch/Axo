@@ -621,7 +621,7 @@ class RunReport:
     def replayed(self) -> int:
         """真回放了的条数——**辨认率的分母**。
 
-        ``skip`` 不进分母，与基线的 :func:`~biosnn_memterm.bench.substrate.completion_summary`
+        ``skip`` 不进分母，与基线的 :func:`~axo.bench.substrate.completion_summary`
         拿探针数当分母同一姿态：被跳过的条目根本没有探针，把它们算进分母等于
         把"没测"记成"没测中"。
         """

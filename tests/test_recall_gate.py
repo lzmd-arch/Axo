@@ -1,12 +1,12 @@
 """金标准集上的端到端断言：结构不变量、可复现性、词法门槛。
 
-这个文件把 :mod:`biosnn_memterm.bench` 真正跑起来。它**不是**在测"召回对不对"
+这个文件把 :mod:`axo.bench` 真正跑起来。它**不是**在测"召回对不对"
 ——召回的质量由 ``tests/test_recall.py`` 用可控的小库逐条断言。它测的是三件
 只有"整套量具一起跑"才暴露得出来的事：
 
 1. **结构不变量**：pinned / cold / excluded 一条都不许进注入。这是 bug，不是
    统计倾向，所以它是 ``== []`` 而不是某个门槛（见
-   :func:`~biosnn_memterm.bench.harness.structural_violations`）。
+   :func:`~axo.bench.harness.structural_violations`）。
 2. **可复现**：连跑两遍逐位相同。``settle=False`` 加 ``:memory:`` 库加固定的
    "现在"，三者合起来才让"这个数字可复现"成立——少一个就有一遍会不一样。
 3. **门槛**：四项 headline 指标不跌破 ``baseline_lexical.json`` 的容差。
@@ -20,7 +20,7 @@ import json
 
 import pytest
 
-from biosnn_memterm.bench import (
+from axo.bench import (
     GoldSet,
     QueryOutcome,
     build_store,
@@ -31,7 +31,7 @@ from biosnn_memterm.bench import (
     structural_violations,
     summarize,
 )
-from biosnn_memterm.bench.gates import gate_rows, sanity_problems
+from axo.bench.gates import gate_rows, sanity_problems
 
 BASELINE = default_gold_dir() / "baseline_lexical.json"
 
@@ -156,7 +156,7 @@ def test_baseline_row_was_frozen_on_this_corpus(baseline: dict) -> None:
     "达标"的形态出现（两边的数碰巧接近）或者"跌破"（不接近），两种都不会提到
     真正的原因。
     """
-    from biosnn_memterm.bench import corpus_digests
+    from axo.bench import corpus_digests
 
     assert baseline["corpus"] == corpus_digests(default_gold_dir()), (
         "baseline_lexical.json 记的语料指纹与现在的不一致。改语料要在同一次提交里"

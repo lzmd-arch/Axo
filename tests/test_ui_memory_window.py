@@ -28,7 +28,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from biosnn_memterm.memory.browse import MemoryStatus
+from axo.memory.browse import MemoryStatus
 from memcore.ids import new_ulid
 from memcore.sdr import encode_lexical
 from memcore.spaces import Space, make_space_id
@@ -58,7 +58,7 @@ def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> MemoryStore:
     ——不指的话，这几条测试的结果会随"这台机器上跑没跑过巩固"而变。库与
     ``last.json`` 指向两个不同的地方本身就是个说不通的组合。
     """
-    monkeypatch.setenv("BIOSNN_MEMTERM_DATA", str(tmp_path))
+    monkeypatch.setenv("AXO_DATA", str(tmp_path))
     with MemoryStore(tmp_path / "mem.db") as opened:
         yield opened
 
@@ -78,7 +78,7 @@ def make_item(text: str, **overrides: object) -> MemoryItem:
 
 
 def make_window(qapp: Any, store: MemoryStore):  # noqa: ANN202 — 返回值是 Qt 类
-    from biosnn_memterm.ui.memory_window import MemoryWindow
+    from axo.ui.memory_window import MemoryWindow
 
     return MemoryWindow(memory=store)
 
@@ -145,7 +145,7 @@ def test_the_search_box_can_find_an_item_beyond_the_page(qapp: Any, store: Memor
     列表一屏只装最近若干条，而"我明明记过这件事"要找的很可能是更早的那条。
     分层的理由就是这个：不这样做，搜索框在库里条目多起来之后会开始"找不到"。
     """
-    from biosnn_memterm.ui import memory_window as module
+    from axo.ui import memory_window as module
 
     store.add(make_item("埋在深处的老记忆。"))
     for index in range(4):
@@ -173,7 +173,7 @@ def test_hitting_the_page_limit_is_said_out_loud(qapp: Any, store: MemoryStore) 
     悄悄截断的话，"列表里没有"会被读成"库里没有"——而这两件事该做的下一步完全
     相反（一个是"往下翻/搜一下"，一个是"它真的忘了"）。
     """
-    from biosnn_memterm.ui import memory_window as module
+    from axo.ui import memory_window as module
 
     for index in range(5):
         store.add(make_item(f"第 {index} 条。"))
@@ -798,7 +798,7 @@ def test_the_builtin_persona_cannot_be_edited_or_deleted(qapp: Any, store: Memor
     它是"任何模型读到的身份完全一样"那句话的落点——改掉它就等于改掉那个前提。
     一个灰了却不说理由的按钮，用户会读成"程序坏了"或者"这条记忆有古怪"。
     """
-    from biosnn_memterm.memory.persona import ensure_builtin_anchor
+    from axo.memory.persona import ensure_builtin_anchor
 
     builtin = ensure_builtin_anchor(store)
     assert builtin is not None
@@ -819,7 +819,7 @@ def test_the_user_persona_is_editable_and_deletable(qapp: Any, store: MemoryStor
     反过来写（"但凡是人设锚就锁死"）会拒绝用户改自己写下的东西——那比误放开一条
     更糟：用户没有任何办法修正它，除非去动库文件。
     """
-    from biosnn_memterm.memory.persona import set_user_persona
+    from axo.memory.persona import set_user_persona
 
     written = set_user_persona(store, "说话简短一点。")
     window = make_window(qapp, store)
@@ -859,7 +859,7 @@ def test_the_builtin_persona_is_not_reachable_from_the_delete_button(
 ) -> None:
     """按钮已灰，但**规则与按钮状态分居两处**（判据在核心腿里），所以再调一次
     ``_on_delete``：它必须什么都不删，并把理由说出来。"""
-    from biosnn_memterm.memory.persona import ensure_builtin_anchor
+    from axo.memory.persona import ensure_builtin_anchor
 
     builtin = ensure_builtin_anchor(store)
     assert builtin is not None
@@ -883,8 +883,8 @@ def test_the_delete_warning_for_the_user_persona_promises_a_second_ask(
     """
     from PySide6.QtWidgets import QMessageBox
 
-    from biosnn_memterm.memory.persona import set_user_persona
-    from biosnn_memterm.ui import memory_window as memory_window_module
+    from axo.memory.persona import set_user_persona
+    from axo.ui import memory_window as memory_window_module
 
     written = set_user_persona(store, "说话简短一点。")
     window = make_window(qapp, store)

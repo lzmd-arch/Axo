@@ -126,7 +126,7 @@ class RecallConfig:
     """扩散一步的衰减。**与 :attr:`graph_weight` 是两件事。**
 
     这里管"传得动多远"（沿边每走一步乘多少），上面那个管"这条通道说的话有多算数"。
-    与 :func:`biosnn_memterm.bench.substrate.graph_outcomes` 的 ``decay`` 同值——
+    与 :func:`axo.bench.substrate.graph_outcomes` 的 ``decay`` 同值——
     量具与生产要量的是同一个算子，各调各的就等于在量两个东西。
     """
 
@@ -202,7 +202,7 @@ def recall(
         store: 记忆库。
         query_text: 用户这一轮的输入。词法通道的输入，也是唯一必需的。
         budget_tokens: 这些记忆总共能占多少 token。**不含**装配器加在它们外面的
-            说明文字与消息模板开销——那是 :mod:`biosnn_memterm.session.budget`
+            说明文字与消息模板开销——那是 :mod:`axo.session.budget`
             的账。
         query_vector: 用户输入在 ``space_id`` 下的 embedding。给 ``None`` 就
             只用词法通道——**这是一种正常状态，不是降级**：没装嵌入模型时

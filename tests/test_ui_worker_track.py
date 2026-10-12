@@ -65,7 +65,7 @@ def _drive(qapp: Any, job: Any, delivered: list[bool]) -> tuple[Any, list[int]]:
     """跑一轮完整的 ``_track`` 生命周期，返回（线程, 界面 tick 次数）。"""
     from PySide6.QtCore import QThread, QTimer
 
-    from biosnn_memterm.ui.main_window import MainWindow
+    from axo.ui.main_window import MainWindow
 
     # ``_track`` 只碰 ``_live_threads`` 与两个由 slot 拼出来的成员名，不碰任何控件，
     # 所以这里不必造一个真窗口（造了就要连 Ollama，测试会变得又慢又脆）。

@@ -46,7 +46,7 @@ ANCHOR_TEXT = "你是记忆终端。回答简洁，不确定时说不确定，�
 
 SAMPLE_TEXTS = [
     "我家的路由器放在书房书架顶层。",
-    "我在做一个叫 BioSNN 记忆终端的项目，记忆必须独立于所调用的模型。",
+    "我在做一个叫 Axo的项目，记忆必须独立于所调用的模型。",
     "今天午饭吃的是番茄炒蛋和米饭。",
     "每周三晚上八点要开组会，会议纪要在共享盘上。",
 ]
@@ -108,7 +108,7 @@ def _sdr_bytes(sdr: SDR | None) -> bytes | None:
 
 def _graph_file(db_path: Path) -> Path:
     """图缓存该在的位置。**与生产布局同形**：``memory/mem.db`` 与 ``memory/graph.npz``
-    并列（见 ``biosnn_memterm.paths``），所以测试里也放在 ``mem.db`` 旁边而不是
+    并列（见 ``axo.paths``），所以测试里也放在 ``mem.db`` 旁边而不是
     另起一个目录——布局本身就是这条承诺的一部分。
     """
     return db_path.parent / "graph.npz"

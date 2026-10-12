@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 
-from biosnn_memterm.llm.base import ChatBackendError, ChatChunk, ChatRequest, ToolCall
+from axo.llm.base import ChatBackendError, ChatChunk, ChatRequest, ToolCall
 
 __all__ = ["ScriptedBackend", "text_chunk", "tool_chunk"]
 
