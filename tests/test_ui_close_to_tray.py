@@ -47,6 +47,11 @@ def _window(*, tray: Any, quitting: bool = False, **rest: Any) -> SimpleNamespac
     那个，分支测试也不会红——而"分支与判据是同一份代码"正是这组测试要钉的东西。
     """
     window = SimpleNamespace(_tray=tray, _quitting=quitting, **rest)
+    if not hasattr(window, "_end_voice"):
+        # ``closeEvent`` 在收起来之前会**把麦关掉**（窗口看不见了，而录音还在继续）。
+        # 默认给一个空操作：那件事本身有一条专门的测试（见下），其余几条不该被它搅乱
+        # ——它们断言的是"收起来没走收尾"，多一个记账项会让顺序断言失准。
+        window._end_voice = lambda **_kwargs: None
     window._close_should_hide = lambda: MainWindow._close_should_hide(window)
     return window
 
@@ -117,6 +122,25 @@ def test_closing_with_a_tray_hides_and_returns(qapp: Any) -> None:
     # 一定是 ``show_message_once``：``show_message`` 每次关窗都说，而那是噪音。
     assert "托盘" in calls[1][2]
     assert "shutdown" not in calls, "收起来不是退出，不该走收尾"
+
+
+def test_hiding_closes_the_microphone_first(qapp: Any) -> None:
+    """收进托盘之前**先关麦**，而且排在 ``hide()`` 前面。
+
+    窗口看不见了，而录音还在继续——那一段最长会录满三十秒（``ui/voice.py`` 的上限），
+    而托盘图标不会说这件事。顺序也要紧：先隐藏再关麦的话，中间那一瞬用户看不到任何
+    提示，而这一句的代价只是把两行调个个儿。
+    """
+    seen: list[str] = []
+    window = _window(
+        tray=SimpleNamespace(active=True, show_message_once=lambda *_args: True),
+        _end_voice=lambda **_kwargs: seen.append("end_voice"),
+        hide=lambda: seen.append("hide"),
+    )
+
+    MainWindow.closeEvent(window, QCloseEvent())
+
+    assert seen[0] == "end_voice", "先藏了窗口才关麦"
 
 
 def test_hiding_does_not_touch_the_shutdown_path(qapp: Any) -> None:

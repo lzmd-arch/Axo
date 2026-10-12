@@ -653,6 +653,48 @@ body.busy .msg-assistant:last-child .msg-body::after {
   }
 }
 
+/* 「说话」与「发送」同一族玻璃，但**不做成实心主色**：这一页的主行动键只有一个
+   （发送），而麦克风是它旁边那个动作。"我在听"由描边换成强调色来说——同一条判断
+   在 Qt 外壳那边是 `kind="primary"` 只给一个按钮。 */
+#mic {
+  flex: 0 0 auto;
+  height: 44px;
+  padding: 0 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--glass-line);
+  background: color-mix(in srgb, var(--bg-bubble-user) 88%, transparent);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  backdrop-filter: blur(16px) saturate(160%);
+  box-shadow:
+    inset 0 1px 0 var(--glass-hi),
+    inset 0 -1px 0 var(--glass-lo),
+    0 1px 2px var(--glass-shadow);
+}
+
+/* 正在听：描边与文字都换成强调色。**这是"麦还开着"唯一看得见的地方**——托盘图标与
+   状态栏都不会说这件事，而用户按第二次之前它一直在录。 */
+#mic.listening {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* 正在识别：等一会儿，没什么可做的（也不转圈——那会让这一页多一个动画，而它此刻
+   要说的只是"别急着再按一次"）。 */
+#mic.recognizing {
+  color: var(--fg-muted);
+}
+
+#mic:disabled {
+  opacity: 0.45;
+  cursor: default;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
 #send:disabled {
   opacity: 0.45;
   cursor: default;

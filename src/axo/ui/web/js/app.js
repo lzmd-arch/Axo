@@ -1,9 +1,11 @@
 /* 对话页。
  *
- * 与 Python 的契约见 chat_view.py 的模块文档：网页提供 window.ChatHost 的十一个
- * 方法，Python 通过 runJavaScript 调用它们；网页通过 window.bridge.send(text)
- * 把用户输入送回去，通过 window.bridge.answer_persona(text) 把人设卡片的答案送
- * 回去（空串 = 这一次先不写）。两边都**只增不改**——改签名会让旧的一方静默失联。
+ * 与 Python 的契约见 chat_view.py 的模块文档：网页提供 window.ChatHost 那一组方法，
+ * Python 通过 runJavaScript 调用它们；网页通过 window.bridge.send(text) 把用户输入
+ * 送回去、通过 window.bridge.answer_persona(text) 把人设卡片的答案送回去
+ * （空串 = 这一次先不写）、通过 window.bridge.voice_toggle() 说"麦克风按钮被按了"。
+ * **方法个数不在这里数**（数过两次，两次都数错了）——要看清单去 chat_view.py 那张
+ * 契约表，它是唯一一处两边都认的账。两边都**只增不改**：改签名会让旧的一方静默失联。
  *
  * 两条性能纪律：
  *
@@ -18,6 +20,7 @@
   var stream = document.getElementById("stream");
   var input = document.getElementById("input");
   var sendButton = document.getElementById("send");
+  var micButton = document.getElementById("mic");
   var statusLabel = document.getElementById("status");
   var emptyState = document.getElementById("empty");
   var welcome = document.getElementById("welcome");
@@ -28,6 +31,9 @@
 
   var bridge = null;
   var busy = false;
+  //: 录音那一路的状态："" / "listening" / "recognizing"。**它由终端推过来**
+  //: （`setVoiceState`），因为录音与识别都在 Python 侧——网页只知道"按了哪一下"。
+  var voiceState = "";
   var active = null; // 正在流式写入的消息体
   var pending = null; // 待渲染的增量文本缓冲
 
@@ -82,22 +88,41 @@
     return wrap;
   }
 
-  /* 输入区两个控件的启用状态**只有这一个出口**。此前 setBusy 自己写 disabled、
-     通道失败时又各写各的，三处各有一套说法；加上人设卡片之后"能不能打字"由两个
-     条件共同决定（正忙 / 正等人设），再分开写就一定会漏掉一种组合。 */
+  /* 输入区三个控件（输入框 / 麦克风 / 发送）的启用状态与措辞**只有这一个出口**。
+     此前 setBusy 自己写 disabled、通道失败时又各写各的，三处各有一套说法；加上人设
+     卡片之后"能不能打字"由两个条件共同决定（正忙 / 正等人设），再分开写就一定会漏掉
+     一种组合。
+
+     **麦克风也归这里**，理由多一层：生成中按它会让识别结果发不出去（`_on_submit` 那
+     一支直接 return），而那句话会人间蒸发——所以它跟着发送键一起禁。 */
   function updateComposer() {
     if (channelDead) {
       input.disabled = true;
       sendButton.disabled = true;
+      micButton.disabled = true;
       return;
     }
     sendButton.disabled = busy || personaPending;
     input.disabled = personaPending;
+    // 麦克风跟着发送键一起禁：生成中她说不了话，而"识别完一句却发不出去"（`_on_submit`
+    // 那一支直接 return）在界面上是一句人间蒸发的话。**不静默丢一次点击。**
+    micButton.disabled = busy || personaPending;
     input.placeholder = personaPending
       ? "先回答上面的问题，或者选「这一次先不写」。"
-      : busy
-        ? "正在生成…"
-        : "说点什么…（Enter 发送，Shift+Enter 换行）";
+      : voiceState === "listening"
+        ? "正在听…（再按一下结束）"
+        : busy
+          ? "正在生成…"
+          : "说点什么…（Enter 发送，Shift+Enter 换行）";
+    micButton.classList.toggle("listening", voiceState === "listening");
+    micButton.classList.toggle("recognizing", voiceState === "recognizing");
+    micButton.title =
+      voiceState === "listening"
+        ? "正在听…（再按一下结束）"
+        : voiceState === "recognizing"
+          ? "正在识别…"
+          : "说一句（按一下开始，再按一下结束）";
+    micButton.textContent = voiceState === "recognizing" ? "识别中…" : "说话";
   }
 
   /* 空状态显隐。#empty 自己住在 #stream 里，所以判据就是"stream 里有没有 .msg"
@@ -310,6 +335,11 @@
       statusLabel.textContent = text || "";
     },
 
+    setVoiceState: function (state) {
+      voiceState = state || "";
+      updateComposer();
+    },
+
     clear: function () {
       resetStream();
     },
@@ -424,6 +454,13 @@
     }
   });
   sendButton.addEventListener("click", submit);
+
+  // 麦克风：**只发一次"切换"**，说什么由终端那边的识别决定（见 `app.py` 那张契约表）。
+  // 守卫与 `submit` 同形：通道死了、正忙、正等人设时都不该开始录。
+  micButton.addEventListener("click", function () {
+    if (busy || personaPending || channelDead || !bridge) return;
+    bridge.voice_toggle();
+  });
 
   // ── 人设卡片 ──────────────────────────────────────────────────────────────
   //

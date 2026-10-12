@@ -32,6 +32,7 @@ from PySide6.QtCore import QCoreApplication, QEvent, QObject
 from axo import autostart
 from axo.agent.gate import APPROVAL_TIMEOUT_S
 from axo.agent.reminders import Alert, Occurrence, Reminder
+from axo.asr import Transcription
 from axo.llm.base import ChatMessage, ToolCall
 from axo.session.store import Message
 from axo.ui.main_window import SPEECH_TIMEOUT_MS, MainWindow, display_rows
@@ -71,6 +72,9 @@ class Recorder:
 
     def set_status(self, text: str) -> None:
         self.calls.append(("setStatus", text))
+
+    def set_voice_state(self, state: str) -> None:
+        self.calls.append(("setVoiceState", state))
 
 
 class FakeWorker:
@@ -145,6 +149,18 @@ class FakeSettingsStore:
         self.saved.append(settings)
 
 
+class FakeVoice:
+    """``VoiceRecorder`` 那一半：只记"在不在录"与"关过几次"。"""
+
+    def __init__(self) -> None:
+        self.listening = False
+        self.stops = 0
+
+    def stop(self) -> None:
+        self.stops += 1
+        self.listening = False
+
+
 class FakeSpeechWorker:
     """``ChatWorker`` 那一半：只记"被叫停过"。"""
 
@@ -181,6 +197,12 @@ class Stub(QObject):
     _time_out_speech = MainWindow._time_out_speech
     _stop_speech = MainWindow._stop_speech
     _on_reminders_changed = MainWindow._on_reminders_changed
+    _on_voice_toggled = MainWindow._on_voice_toggled
+    _begin_voice = MainWindow._begin_voice
+    _end_voice = MainWindow._end_voice
+    _on_voice_finished = MainWindow._on_voice_finished
+    _on_voice_done = MainWindow._on_voice_done
+    _discard_voice = MainWindow._discard_voice
     _track = MainWindow._track
 
     def __init__(
@@ -218,6 +240,13 @@ class Stub(QObject):
         self._settings_store = FakeSettingsStore()
         #: 设置窗口（可能还没开）。``_on_reminders_changed`` 往它上面回填结果那一行。
         self._settings_dialog: Any = None
+        # ── 语音输入那一档 ──
+        self._voice = FakeVoice()
+        self._voice_state = ""
+        self._voice_worker: Any = None
+        self._voice_thread: Any = None
+        #: ``_on_voice_done`` 会把识别结果交给 ``_on_submit``——这里换成一个记录器，
+        #: **要验的正是"它走的是那扇门"**（真 `_on_submit` 要连 Ollama、起线程）。
         # 窗口状态：默认"正开着"。三档叫醒各由一条测试改这两个值。
         self.visible = True
         self.minimized = False
@@ -271,6 +300,22 @@ def reminder_alert(*texts: str, late: bool = False) -> Alert:
         for index, text in enumerate(texts)
     )
     return Alert(items=items, late=late)
+
+
+class VoiceStub(Stub):
+    """语音那一族用的替身：**只换掉 `_on_submit`**。
+
+    不给基类换（那会让 C4 那条"用户开口 = 她让路"的测试打到一个假门上——它要的正是真的
+    那个 `_on_submit`）。这一族要验的是"识别结果进的是那扇门，与打字同一处"，而真门要连
+    Ollama、起线程，所以这里记一笔就够。
+    """
+
+    def __init__(self, **fields: Any) -> None:
+        super().__init__(**fields)
+        self.submitted: list[str] = []
+
+    def _on_submit(self, text: str) -> None:
+        self.submitted.append(text)
 
 
 def statuses(stub: Stub) -> list[str]:
@@ -1074,3 +1119,105 @@ def test_the_switch_takes_effect_on_the_next_alert_and_is_saved(qapp: Any) -> No
     assert stub._reminder_settings == changed
     stub._on_reminder_fired(reminder_alert("该睡了"))
     assert backend.calls == 0, "换了设置，下一个到点还是问了模型"
+
+
+# ── 语音输入那条链 ──────────────────────────────────────────────────────────
+#
+# 录音与识别在 Python 侧（网页那个按钮只发"切换"），所以这一族验的是**接线**：
+# 按一下会发生什么、识别回来的文字走哪扇门、以及"用不了"时说不说。
+
+
+def test_the_mic_button_toggles_recording(qapp: Any) -> None:
+    """按一下开始、再按一下结束——**同一个入口，看状态分岔**。"""
+    stub = VoiceStub(streaming=False)
+
+    # 先按一下：没在录 → 走"开始"那一支。真录音起不来（本机没装库），所以它只会说一句
+    # "用不了"——这一条要验的不是那一步，而是**同一个入口按状态分岔**。
+    stub._on_voice_toggled()
+    assert stub._voice.stops == 0, "没在录却按成了停"
+
+    # 已经在录（`listening` 与 `_voice_state` 是同一个事实的两处表示，见 `_end_voice`）
+    stub._voice.listening = True
+    stub._voice_state = "listening"
+    stub._on_voice_toggled()
+
+    assert stub._voice.stops == 1, "在录的时候按一下应当是停"
+
+
+def test_without_the_library_it_says_so_and_does_not_start(qapp: Any) -> None:
+    """库没装（或模型没放）→ **说出来，而且不开始录**。
+
+    这一条在路上很要紧：先说再录，与"录三十秒之后再说没有模型"是两种体验——后者用户
+    对着屏幕说了半天话，而它一个字都没记下。这里跑的是**真的** `DecodeWorker`，所以
+    本机没装 vosk 时它正好走这一支（装了的话这一条会变成"模型没放"，同样说出来）。
+    """
+    stub = VoiceStub(streaming=False)
+
+    stub._begin_voice()
+
+    told = [call for call in stub.chat_view.calls if call[0] == "appendMessage"]
+    assert told and "语音输入用不了" in told[0][2]
+    assert stub._voice.stops == 0, "说了用不了却还是开始录了"
+    assert stub._voice_state == ""
+
+
+def test_the_recognized_text_goes_through_the_same_door_as_typing(qapp: Any) -> None:
+    """识别出来的文字**走 `_on_submit`**——与打字完全同一条路。
+
+    这条是这个功能的设计要点：进逐字稿、进记忆库、走路由、走闸门，一处都不绕。
+    换一条"语音专用"的路的话，同一句话从嘴里说出来和从键盘敲出来结果不同——而那是
+    最难向用户解释的一类怪。
+    """
+    stub = VoiceStub()
+    stub._voice_state = "listening"
+
+    stub._on_voice_done(Transcription(text="帮我记一下牛奶喝完了"))
+
+    assert stub.submitted == ["帮我记一下牛奶喝完了"]
+    assert stub._voice_state == ""
+    assert ("setVoiceState", "") in stub.chat_view.calls
+
+
+def test_nothing_heard_is_told_not_swallowed(qapp: Any) -> None:
+    """没听清 → **说出来**，而且**不进** `_on_submit`（那会把一句空话发出去）。"""
+    stub = VoiceStub()
+
+    stub._on_voice_done(Transcription(reason="没有听清（离麦克风近一点）"))
+
+    assert stub.submitted == []
+    told = [call for call in stub.chat_view.calls if call[0] == "appendMessage"]
+    assert told and "没有听清" in told[0][2]
+
+
+def test_the_user_speaking_discards_the_recording(qapp: Any) -> None:
+    """用户开口说了话 → **刚才那段语音不要了**（连结果一起）。
+
+    继续跑的话，识别结果会在几秒后突然作为一条"新消息"发出去——而那时用户已经在说别的
+    了。只丢结果不够：那段文字会从别的路冒出来。
+    """
+    stub = Stub()
+    stub._voice.listening = True
+    stub._voice_state = "listening"
+
+    stub._on_submit("等一下")
+
+    assert stub._voice.stops == 1, "用户说话了，录音没停"
+    assert stub._voice_state == ""
+    assert ("setVoiceState", "") not in stub.chat_view.calls, "丢弃那一遍不该闪一下「正在识别」"
+
+
+def test_recording_that_hits_the_cap_still_gets_transcribed(qapp: Any) -> None:
+    """录满上限自己停时，**照样走收尾**（那一句不该白说）。
+
+    `_on_voice_finished` 是两种收场共用的那一个槽：用户按停会经由 `_end_voice` 走到它，
+    而"录满三十秒"是它**自己**发出来的。前者那时状态已经改过（所以它放行），后者才刚要
+    开始收尾——这一条验的就是后者的入口。
+    """
+    stub = Stub()
+    stub._voice_state = "listening"
+
+    stub._on_voice_finished()
+
+    assert stub._voice.stops == 1
+    assert stub._voice_state == "recognizing"
+    assert ("setVoiceState", "recognizing") in stub.chat_view.calls

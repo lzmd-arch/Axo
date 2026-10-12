@@ -13,6 +13,7 @@ JS 与 Python 的契约（两边都是**只增不改**，否则旧前端会静�
     JS   → Python   window.bridge.send(text)                          一条聊天消息
                     window.bridge.answer_persona(text)               首启人设卡片的答案；"" = 不写
                     window.bridge.tool_confirm(call_id, granted)     确认卡片上的一次点击
+                    window.bridge.voice_toggle()                     麦克风按钮：开始/结束听
     Python → JS     window.ChatHost.appendMessage(role, text, meta)   role: user|assistant|system|tool|proactive
                     window.ChatHost.pushToken(text)                  流式增量
                     window.ChatHost.endMessage()                     一片回复结束
@@ -24,6 +25,7 @@ JS 与 Python 的契约（两边都是**只增不改**，否则旧前端会静�
                     window.ChatHost.setTheme({mode, accent})         mode: dark|light
                     window.ChatHost.setWallpaperOpacity(percent)     0–100
                     window.ChatHost.setPersonaState({asking, builtin}) 首启人设卡片的显隐
+                    window.ChatHost.setVoiceState(state)             "" | listening | recognizing
                     window.ChatHost.appendToolConfirm(call_id, name, summary, meta)
                     window.ChatHost.resolveToolConfirm(call_id, granted, accepted)
 
@@ -104,7 +106,7 @@ _INDEX = _WEB_ROOT / "index.html"
 class WebBridge(QObject):
     """暴露给网页的 Python 对象。网页侧通过 ``window.bridge`` 访问它。
 
-    **三个 slot，不是一个。** 原本这里写着"只暴露一个"，理由是每多一个方法就多
+    **四个 slot，不是一个。** 原本这里写着"只暴露一个"，理由是每多一个方法就多
     一处"Python 与 JS 必须同时改"的耦合点。人设的答案是第二个，加它是因为**它不
     能走 ``send``**：``send`` 发出去的每条消息都会进逐字稿与记忆库，而"叫我小林"
     这句人设混在里面的话，它下次被召回时就是"用户说过的某句话"，而不是身份约束。
@@ -114,7 +116,12 @@ class WebBridge(QObject):
     混进 ``send`` 的话，用户点「允许」会被当成他说了一句"允许"——那句话进记忆库，
     下次召回时它会是一条孤零零的、指向不明的陈述。
 
-    三个 slot 都只做一件事：把结果转成信号。网页侧不该在这里被判断，理由同
+    **麦克风是第四个，而且它与前三个不同类**：它不带正文——按一下只是"开始听"
+    或"结束听"，而被识别出来的文字走的是 ``MainWindow._on_submit``（与打字**同一条
+    路**），不从这里回流。理由与 :meth:`send` 那句一样："用户发了一条消息"在生产
+    代码里只该有一个入口。
+
+    四个 slot 都只做一件事：把结果转成信号。网页侧不该在这里被判断，理由同
     "用户输入这条路径尤其应该只有一个入口"。
     """
 
@@ -142,6 +149,15 @@ class WebBridge(QObject):
         # **不在这里判空**（与 send 相反）：空串在这条路径上是有含义的答案。
         # 去空白照做——全是空格的答案与没写是一回事，而 can_encode 也这么看。
         self.persona_answered.emit((text or "").strip())
+
+    @Slot()
+    def voice_toggle(self) -> None:
+        """麦克风按钮被按了一下。**不带参数**：它只表达"切换"，不表达"要说什么"。
+
+        识别出来的文字不走这里（见类文档最后一段）——那一条路是
+        ``MainWindow._on_submit``，与打字完全同一条。
+        """
+        self.voice_toggled.emit()
 
     @Slot(str, bool)
     def tool_confirm(self, call_id: str, granted: bool) -> None:
@@ -180,12 +196,16 @@ class ChatView(QWidget):
     tool_confirm_decided = Signal(str, bool)
     """确认卡片被点了一下：``(call_id, 是否允许)``。由 :class:`WebBridge` 转发。"""
 
+    voice_toggled = Signal()
+    """麦克风按钮被按了一下。**主窗口据此开始/结束录音**（见 ``ui/voice.py``）。"""
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._bridge = WebBridge(self)
         self._bridge.submitted.connect(self.message_submitted)
         self._bridge.persona_answered.connect(self.persona_answered)
         self._bridge.tool_confirm_decided.connect(self.tool_confirm_decided)
+        self._bridge.voice_toggled.connect(self.voice_toggled)
 
         #: 外观三件套的**当前值**。存下来是为了在 ``loadFinished`` 之后重推：
         #: 网页是异步加载的，构造期那次推送落在空页面上。不缓存的话就只能等
@@ -199,6 +219,11 @@ class ChatView(QWidget):
         #: 网页侧的输入框在"正等人设"期间是禁用的，推送丢了就是输入框点不动，
         #: 而页面上没有任何一处会说为什么。``None`` = 还没设过。
         self._persona: dict[str, Any] | None = None
+
+        #: 录音那一路的状态（``""`` / ``"listening"`` / ``"recognizing"``），
+        #: **同样缓存 + 重推**。它比外观那三项还要紧一点：页面一刷新，按钮会显示成
+        #: 空闲，而麦克风**还开着**——用户看着一个说"没在听"的按钮，它却在听。
+        self._voice_state: str = ""
 
         self._view = QWebEngineView(self)
         self._page = _SafePage(self._view)
@@ -246,6 +271,9 @@ class ChatView(QWidget):
         # setStatus 之类的后面才不会被别的东西把焦点拿走。
         if self._persona is not None:
             self._call("setPersonaState", self._persona)
+        # 语音状态与外观同一条理由：页面是后加载的，只推一次会落在空页面上。
+        if self._voice_state:
+            self._call("setVoiceState", self._voice_state)
 
     # ── 向网页推送 ──────────────────────────────────────────────────────────
 
@@ -280,6 +308,15 @@ class ChatView(QWidget):
 
     def set_status(self, text: str) -> None:
         self._call("setStatus", text)
+
+    def set_voice_state(self, state: str) -> None:
+        """录音那一路的状态：``""`` / ``"listening"`` / ``"recognizing"``。
+
+        **认不出的值当空串**：网页侧只认这三个，而一个错字在那里表现为"按钮不亮"——
+        与"没在听"长得一模一样。宁可不亮。
+        """
+        self._voice_state = state if state in ("", "listening", "recognizing") else ""
+        self._call("setVoiceState", self._voice_state)
 
     def clear(self) -> None:
         self._call("clear")

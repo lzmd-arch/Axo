@@ -36,6 +36,7 @@ class RecordingChatView(QWidget):
     message_submitted = Signal(str)
     persona_answered = Signal(str)
     tool_confirm_decided = Signal(str, bool)
+    voice_toggled = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -61,6 +62,9 @@ class RecordingChatView(QWidget):
 
     def set_status(self, text: str) -> None:
         self.calls.append("setStatus")
+
+    def set_voice_state(self, state: str) -> None:
+        self.calls.append(f"setVoiceState({state})")
 
     def clear(self) -> None:
         self.calls.append("clear")

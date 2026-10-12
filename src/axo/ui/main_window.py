@@ -71,6 +71,7 @@ from ..agent.proactive import build_reminder_messages
 from ..agent.reminders import Alert, CancelledStore, FiredStore, ReminderStore
 from ..agent.router import HELP_TEXT, Register, RegisterState, RoutedTurn, route_turn
 from ..agent.tools import Capture, ToolContext, ToolRegistry
+from ..asr import Transcription
 from ..llm.base import ChatBackendError, ChatRequest
 from ..llm.ollama import (
     MODEL_ID_PREFIX as OLLAMA_MODEL_ID_PREFIX,
@@ -156,6 +157,7 @@ from .theme import Resolved, Theme, resolve
 from .theme_qt import QSettingsBackend, apply_theme, os_color_scheme
 from .thread_tracking import track, wait_for_all
 from .tray import TrayController, build_icon
+from .voice import DecodeWorker, VoiceRecorder
 from .widgets import SESSION_TIME_ROLE, SESSION_TITLE_ROLE, ElidedLabel, SessionItemDelegate
 from .window_place import place_window
 
@@ -586,6 +588,16 @@ class MainWindow(QMainWindow):
         self._speak_timeout = QTimer(self)
         self._speak_timeout.setSingleShot(True)
         self._speak_timeout.timeout.connect(self._time_out_speech)
+
+        #: 录音那一路（见 ``ui/voice.py``）。**采集就在界面线程**：`QAudioSource` 的
+        #: `readyRead` 是它属主线程的信号，把它搬走要自己管一个事件循环与一次对象
+        #: 迁移，而采集本身极轻——重活（解码）在下面那个 worker 里。
+        self._voice = VoiceRecorder(parent=self)
+        #: 两种收场都走这一个槽：用户按了第二次，或者录满 30 秒自己停。
+        self._voice.finished.connect(self._on_voice_finished)
+        #: 这一遍的状态："" = 没在录；"listening" / "recognizing"。
+        #: **它是唯一的事实来源**（网页那个按钮显示的也是它）。
+        self._voice_state: str = ""
 
         #: 周期巩固的表。**与上面那个并存、不打架**：两个独立 ``QTimer``、两个不同的
         #: 槽、没有共享可变状态（见 ``ui/consolidation_scheduler.py`` 的模块文档）。
@@ -1029,6 +1041,7 @@ class MainWindow(QMainWindow):
     def _wire(self) -> None:
         self.chat_view.message_submitted.connect(self._on_submit)
         self.chat_view.persona_answered.connect(self._on_persona_answered)
+        self.chat_view.voice_toggled.connect(self._on_voice_toggled)
         self.chat_view.tool_confirm_decided.connect(self._on_tool_confirm)
         self.model_combo.currentIndexChanged.connect(self._on_model_changed)
         self.refresh_button.clicked.connect(self._refresh_models)
@@ -1475,6 +1488,10 @@ class MainWindow(QMainWindow):
         # ``tell=True`` 是必需的：她是被抢话打断的，而那条提醒**真的响过**。不补一句
         # 由程序说的，用户这一轮的气泡就会把"刚刚发生过什么"整个顶掉。
         self._stop_speech(tell=True)
+        # **用户开口说了话 = 刚才那段语音不要了。** 让它继续跑的话，识别结果会在几秒后
+        # 突然作为一条"新消息"发出去——而那时用户已经在说别的了。丢弃要连结果一起丢
+        # （`discard=True`），只丢结果的话那段文字会从别的路冒出来。
+        self._discard_voice()
         if self._streaming:
             # 生成中还能提交，说明界面状态与后端脱节了；直接忽略比排队更安全
             return
@@ -1736,6 +1753,100 @@ class MainWindow(QMainWindow):
         self._show_context(None)
         self.ledger_view.setPlainText(_LEDGER_PLACEHOLDER)
         self.recall_updated.emit(None)
+
+    # ── 语音输入 ────────────────────────────────────────────────────────────
+    #
+    # 网页侧只有一个按钮，它发过来的是"切换"。录音、识别、以及"识别出来的文字往哪儿
+    # 去"全在这里。**识别结果走 `_on_submit`**——与打字完全同一条路（进逐字稿、进记忆
+    # 库、走路由、走闸门），一处都不绕。
+
+    @Slot()
+    def _on_voice_toggled(self) -> None:
+        """麦克风按钮被按了一下：在听就停，没在听就开始。"""
+        if self._voice.listening:
+            self._end_voice(discard=False)
+            return
+        self._begin_voice()
+
+    def _begin_voice(self) -> None:
+        """开始录。
+
+        **库/模型不在就先说，不要开始录**：录了三十秒再说"没有模型"，用户会以为它一直
+        在听——而那三十秒里他对着屏幕说了话。
+        """
+        if self._streaming:
+            # 按钮那边已经禁了（`updateComposer`），这一句是兜底：宁可说一句，
+            # 也不要让这次点击静默消失。
+            self.chat_view.set_status("等她说完再说话")
+            return
+        worker = DecodeWorker()
+        problem = worker.recognizer.problem
+        if problem:
+            self.chat_view.append_message("system", f"**语音输入用不了**\n\n{problem}")
+            return
+        thread = QThread(self)
+        worker.done.connect(self._on_voice_done)
+        worker.done.connect(thread.quit)
+        self._track(thread, worker, what="语音解码线程", slot="voice")
+        problem = self._voice.start(worker.push)
+        if problem:
+            # 起不来（Windows 的隐私设置会整个拦下桌面应用）：把这一对收掉，
+            # 它们还没开始跑，所以不会留下等不到的线程。
+            worker.stop(discard=True)
+            thread.quit()
+            self.chat_view.append_message("system", f"**语音输入用不了**\n\n{problem}")
+            return
+        thread.start()
+        self.chat_view.set_voice_state("listening")
+
+    @Slot()
+    def _on_voice_finished(self) -> None:
+        """录完了（用户按停，或者录满上限）：让解码线程把剩下的喂完。
+
+        **只有"正在听"才接**：用户自己按停那一下也会走到这里（`_end_voice` 里调的
+        `stop()` 会发这个信号），而那时状态已经被改掉了——这一句就是那道闸。
+        """
+        if self._voice_state != "listening":
+            return
+        self._end_voice(discard=False)
+
+    def _end_voice(self, *, discard: bool) -> None:
+        """结束这一遍：停录 + 让解码线程收尾。**幂等。**
+
+        ``discard=True`` 那两条（用户开口说了话、程序要关了）**连结果都不算**：只把结果
+        丢掉的话，那段文字会从别的路冒出来——而用户已经改口说别的了。
+        """
+        state, self._voice_state = self._voice_state, "" if discard else "recognizing"
+        if state == "":
+            return
+        # 这一下会发 `finished`，而上面那一位**已经改过**了——所以
+        # `_on_voice_finished` 那道闸会把它放过去，不会绕回来。
+        self._voice.stop()
+        worker = self._voice_worker
+        if worker is not None:
+            worker.stop(discard=discard)
+        if discard and self._voice_thread is not None:
+            # 丢弃那一遍不发 `done`，而线程总得有人叫停（`_track` 记着它，收尾时等它）。
+            self._voice_thread.quit()
+        if not discard:
+            self.chat_view.set_voice_state("recognizing")
+
+    @Slot(object)
+    def _on_voice_done(self, result: Transcription) -> None:
+        """识别回来了：**成功就走 `_on_submit`**（与打字同一条路），失败就说出来。"""
+        self._voice_state = ""
+        self.chat_view.set_voice_state("")
+        if result.ok:
+            self._on_submit(result.text)
+            return
+        # 失败要说出来（同 `_remember` 那条纪律）：不说的话，用户对着屏幕说了半天、
+        # 界面回到空闲、而没有任何一处提到那句话去哪了。
+        self.chat_view.append_message("system", f"**没有听清**\n\n{result.reason}")
+
+    def _discard_voice(self) -> None:
+        """用户开口说话了 → **这一遍不要了**（在 :meth:`_on_submit` 开头调）。"""
+        if self._voice.listening or self._voice_state:
+            self._end_voice(discard=True)
 
     @Slot(str, dict)
     def _on_reply_finished(self, text: str, statistics: dict[str, Any]) -> None:
@@ -3091,6 +3202,9 @@ class MainWindow(QMainWindow):
         ``ui/agent_worker.py`` 与 ``thread_tracking`` 里的同一段教训）。
         """
         if self._close_should_hide():
+            # **收进托盘之前先把麦关掉。** 窗口看不见了，而录音还在继续——那一段最长
+            # 会录满三十秒，而用户完全不知道（托盘图标不会说这件事）。
+            self._end_voice(discard=True)
             event.ignore()
             self.hide()
             # **说一次就够**：通知区域在很多机器上默认是折叠的，不说的话用户会以为
@@ -3350,6 +3464,10 @@ class MainWindow(QMainWindow):
         if self._shutting_down:
             return
         self._shutting_down = True
+        # **先关麦，再等线程。** 录音那一半在界面线程（`QAudioSource`），而解码线程要
+        # 有人叫停才会退出——两件都在 `_end_voice(discard=True)` 里（收尾时那一遍
+        # 本来也不要了）。
+        self._end_voice(discard=True)
         if self._chat_worker is not None:
             self._chat_worker.stop()
         if self._speak_worker is not None:
