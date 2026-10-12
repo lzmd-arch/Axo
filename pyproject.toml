@@ -46,6 +46,11 @@ llm = ["httpx>=0.27"]
 # 打包（P6a 起用；构建入口是 tools/build_exe.py）。装它要跑 `uv sync --all-extras`
 # 而不是 `--extra pack`：uv sync 是精确同步，只给 pack 会把 PySide6 与 httpx 摘掉。
 pack = ["pyinstaller>=6.0"]
+# 语音输入（离线识别）。**这一个是"库随产物发、模型用户自己放"里的那一半库**：
+# 冻结产物里装不了 pip 包，不随产物发的话，打包版的语音输入根本不可能工作；而模型
+# （约 42 MB）不进仓也不进包，由用户解压到数据根下的 `models/`（见 `axo/asr.py` 的
+# 模块文档与 README「从源码跑」那一节）。
+voice = ["vosk>=0.3.45"]
 
 [dependency-groups]
 dev = [
@@ -59,6 +64,10 @@ dev = [
   "pytest-qt>=4.4",
   "PySide6>=6.7",
   "httpx>=0.27",
+  # 与 `voice` extra 同步：CI 的 `uv sync --locked` 装的是这一组，而 `axo/asr.py`
+  # 只在函数内 import 它——装不装都不影响那几条测试（它们塞的是假件），但本机开发
+  # 与打包自检都要有它。
+  "vosk>=0.3.45",
 ]
 
 [project.urls]

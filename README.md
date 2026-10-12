@@ -38,6 +38,24 @@
 * **云端**：设置 → 云端后端，填一个 API key（DeepSeek，或任何 OpenAI 兼容的端点）。
   这条路不需要显卡，也不需要 Ollama。
 
+**语音输入还要自己放一个模型。** 输入框旁边那个麦克风按钮是**离线**识别的（声音不出这台
+机器），但识别模型（约 42 MB）不进安装包——它与"Ollama 的模型要你自己 pull"同一个姿态。
+去 [vosk 的模型页](https://alphacephei.com/vosk/models) 下 `vosk-model-small-cn-0.22.zip`
+（Apache-2.0），解压到数据目录下的 `models/`：
+
+```
+%LOCALAPPDATA%\axo\models\vosk-model-small-cn-0.22\
+```
+
+没放的话，按下去会说一句"还没有语音模型"并告诉你放到哪儿——**不会静默失败**。
+（识别出来的字是**直接发出去**的，没有"确认一下再发"这一步，所以**识别错的那句会进记忆库**。
+一次最长录 30 秒。）
+
+**"看一眼屏幕"要一个看得见图的模型。** 本机用 `ollama pull minicpm-v:8b`（8 GB 显存这一档
+比较稳），云端要挑一个支持视觉的端点。模型看不见图时这个工具**根本不会登记**——它在不在
+看的是模型的能力，不是某个开关。第一次用会弹一张确认卡片，**每次都要点一次头**，没有
+"以后别再问了"。
+
 产物是**免安装**的：解开就能用，删掉那个目录就等于卸载——你的数据不在里面，
 见「数据放在哪」。
 
@@ -72,8 +90,8 @@ uv sync --all-extras
 uv run python -m axo.ui.app
 ```
 
-`uv` 会自己把 Python 3.12 拉下来，不需要你预装。`--all-extras` 把三组可选依赖
-（`app` 界面、`llm` HTTP 客户端、`pack` 打包器）都装上；[operations.md](docs/operations.md)
+`uv` 会自己把 Python 3.12 拉下来，不需要你预装。`--all-extras` 把四组可选依赖
+（`app` 界面、`llm` HTTP 客户端、`pack` 打包器、`voice` 语音识别）都装上；[operations.md](docs/operations.md)
 里各节写的是更窄的 `--extra app --extra llm`，因为跑测试只要这几组——**但 `uv sync` 是精确同步**，
 写窄了它会把没提到的那些摘掉，所以每一节都带全自己需要的那几组。
 
@@ -272,7 +290,8 @@ uv run python -m axo.ui.app
 
 **在程序里就能改：设置 → 数据 → 更改位置。** 挑一个新文件夹，程序会把库、逐字稿、
 壁纸、提醒**一起搬过去**（先复制、逐文件校验，通过之后才改用新位置），然后重启一次
-生效。那一页也能「打开文件夹」直接跳到记忆所在的地方。
+生效。那一页也能「打开文件夹」直接跳到记忆所在的地方。**语音模型（`models/`）也跟着
+数据根走**——好处是"这个程序的东西都在一个文件夹里"这条不破，代价是搬迁时多搬 42 MB。
 
 这个选择记在**注册表**里，而注册表与程序所在文件夹毫无关系——所以**删掉解压出来的
 那份、重新下载一个新的，它还在**。
@@ -315,9 +334,12 @@ x64**（它是 PyInstaller 冻结的产物，而冻结只能在目标平台上�
 产物里带着别人的东西，逐个列在 [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)——
 那份文件也随 zip 一起发出去（名字是 `THIRD-PARTY-NOTICES.txt`），拿到的人不用回仓库找。
 
-概括起来只有一处 copyleft：**PySide6 / shiboken6**。它的许可是
-`LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only`——**三选一，不是一个**——本项目按
-**LGPL-3.0** 那一支使用。于是 LGPLv3 的三件义务对应着三件事：zip 里的 `licenses/`
+概括起来有两处 copyleft，都按 **LGPL-3.0** 用：**PySide6 / shiboken6**，以及 Qt 的多媒体
+后端带进来的 **FFmpeg 运行库**（语音输入那条链拉的，是 LGPL 版不是 GPL 版——从 DLL 里
+读得出它自己的构建配置，那一串写在 NOTICES 里）。
+
+PySide6 的许可是 `LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only`——**三选一，不是一个**
+——本项目按 **LGPL-3.0** 那一支使用。于是 LGPLv3 的三件义务对应着三件事：zip 里的 `licenses/`
 带 GPL-3.0 与 LGPL-3.0 的**逐字节原文**（`tests/test_licenses.py` 用 sha256 钉住，
 因为被格式化过的文本不再是 §4(b) 要的那份副本）；产物是 **onedir** 布局，所以 Qt 的
 DLL 是独立文件、可以被替换而不用重新链接本程序；Qt 与 PySide6 的源码地址写在
@@ -340,7 +362,7 @@ NOTICES 里。
 |---|---|
 | [development.md](docs/development.md) | 目录结构与依赖方向、几个刻意的取舍、开发日志、以及"你的对话绝不进版本控制"那三层防线 |
 | [memory.md](docs/memory.md) | 记忆核心：编码的两条轴、人格锚、关联基质量具（图 A / W）、联想通道、睡眠巩固 |
-| [agent.md](docs/agent.md) | 语域与词表、七个工具与确认闸门、托盘与定时触发、云端后端、Live2D 接缝 |
+| [agent.md](docs/agent.md) | 语域与词表、十个工具与确认闸门、托盘与定时触发、云端后端、屏幕识别与语音输入、Live2D 与语音回复两条接缝 |
 | [bench.md](docs/bench.md) | 金标准集与四项指标的精确口径、路由语料、门槛怎么读 |
 | [operations.md](docs/operations.md) | 跑测试与 CI、出问题时先跑哪个脚本、排障、退出码、打包与 `--release` |
 

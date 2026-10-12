@@ -110,7 +110,7 @@ job 排除 `tests/test_ui_*`，而那两百多条里有两条守卫守的是本�
 > 三个地方都带着它：`.github/workflows/ci.yml`、`tools/ci_local.py`、pre-commit 的
 > `memcore-layering`。gui 腿那一条不要加——加了是 `fixture 'qtbot' not found`。
 >
-> 代价是核心腿末尾挂一行 `1962 passed, 1 warning`，那条警告是
+> 代价是核心腿末尾挂一行 `2004 passed, 1 skipped, 1 warning`，那条警告是
 > `Unknown config option: qt_api`（插件没加载，所以它注册的 ini 键没人认领）。无害，
 > **别顺手加 `--strict-config` 把它变成错误**——那会让几条腿一起红，理由写在
 > `pyproject.toml` 那段注释里。
@@ -127,7 +127,7 @@ job 排除 `tests/test_ui_*`，而那两百多条里有两条守卫守的是本�
 > 的 LF 与库里的 LF 相符），而那个文件仍然是坏的。修法是让 git 重写一遍：
 > `rm run.bat && git checkout -- run.bat`。
 
-核心腿 **1962** 条、gui 腿 **469** 条，合计 2431。新增测试会让这三个数字变化；数条数用
+核心腿 **2005** 条（跑起来是 `2004 passed, 1 skipped`）、gui 腿 **503** 条，合计 2508。新增测试会让这三个数字变化；数条数用
 `--collect-only -q` 加一段求和（摘要行被 `addopts="-q"` 压掉了）：
 
 ```bash
@@ -139,7 +139,7 @@ uv run pytest --collect-only -q | awk -F': ' '/^tests\/.*: [0-9]+$/ {s+=$2} END 
 | 腿 | 测什么 | 为什么在这儿 |
 |---|---|---|
 | **核心腿** | 记忆与召回、装配与预算、逐字稿 schema、**工具注册表与沙箱**、**agent 循环与闸门**、**路由的每一条判定**、三份基准 | 这些模块**一行 Qt 都没有**，所以能跑得快、跑得稳、在没有图形栈的机器上也能跑 |
-| **gui 腿** | 确认卡片出现在对话流里、点了允许/拒绝的去向、**等待确认期间点停止**、**收尾落在卡着等确认的 worker 上时进程退出码是 0**、`tools=()` 时 `AgentWorker` 与 `ChatWorker` 产出同一段文本、**语域路由真的接进了对话回合**（`test_ui_router_wire.py`）、**顶栏状态文字真的拿得到宽度**（`test_ui_elided_label.py`，见下）、**被拒绝的工具行回看时不把写给模型的文案渲染给用户**（`test_ui_tool_rows_display.py`）、**关窗的两支与托盘的菜单**（`test_ui_close_to_tray.py` / `test_ui_tray.py`）、**提醒到点真的会响**（`test_ui_reminder_scheduler.py`）、**到点由她开口那一族的接线与两条降级**（`test_ui_agent_slots.py`：让路、超时、空回复、报错、两个开关、叫醒窗口的三档、live 与 reload 画得一样）、**联想开关与图真的从设置页走到了召回配置**（`test_ui_graph_chain.py`） | 只验**接线**。gui 测试一律不构造真的 `MainWindow`。**CI 排除了它**（无头 Linux 上不装 Qt），但 `tools/ci_local.py` 会跑它——本地跑一次就带上，不必手敲，`--fast` 也跳不过 |
+| **gui 腿** | 确认卡片出现在对话流里、点了允许/拒绝的去向、**等待确认期间点停止**、**收尾落在卡着等确认的 worker 上时进程退出码是 0**、`tools=()` 时 `AgentWorker` 与 `ChatWorker` 产出同一段文本、**语域路由真的接进了对话回合**（`test_ui_router_wire.py`）、**顶栏状态文字真的拿得到宽度**（`test_ui_elided_label.py`，见下）、**被拒绝的工具行回看时不把写给模型的文案渲染给用户**（`test_ui_tool_rows_display.py`）、**关窗的两支与托盘的菜单**（`test_ui_close_to_tray.py` / `test_ui_tray.py`）、**提醒到点真的会响**（`test_ui_reminder_scheduler.py`）、**到点由她开口那一族的接线与两条降级**（`test_ui_agent_slots.py`：让路、超时、空回复、报错、两个开关、叫醒窗口的三档、live 与 reload 画得一样）、**联想开关与图真的从设置页走到了召回配置**（`test_ui_graph_chain.py`）、**截图那根线三步都接上了**（`test_ui_capture_chain.py`：worker 要图 → 界面截 → 直连送回去；以及看过屏幕那一轮不写库）、**语音的状态推送与收尾真的把录音停掉**（`test_ui_voice.py`）、**截图这一层的几何与全黑判定**（`test_ui_screen.py`，离屏下它单独跑会硬崩，理由在那份文件里） | 只验**接线**。gui 测试一律不构造真的 `MainWindow`。**CI 排除了它**（无头 Linux 上不装 Qt），但 `tools/ci_local.py` 会跑它——本地跑一次就带上，不必手敲，`--fast` 也跳不过 |
 
 **`tools` 非空才走 `AgentWorker`，为空仍走 `ChatWorker`**，所以两条消费路径短期并存。
 缓解是一条平价测试（上面表里最后一行），而**移除准则写在那条测试自己的 docstring 里**：
@@ -337,8 +337,8 @@ worker 却是被 `started` 以 `Qt.DirectConnection` 直连进 `run()` 的——
 > **`--ignore` 不认通配符。** 它收的是**路径**。写成 `--ignore=tests/test_ui_*` 或
 > `--ignore=tests/test_ui_` 时它一条都排不掉，而且**不报错**——命令照常跑、照常
 > 全绿，只是"核心腿"里混进了 gui 测试。要通配就用 `--ignore-glob`（它要引号，
-> 否则由 shell 先展开）；按标记排则是 `-m "not gui"`。两条现在都给出 1962 条，
-> gui 腿是 469 条（数条数的办法见上面「跑测试与 CI」）。
+> 否则由 shell 先展开）；按标记排则是 `-m "not gui"`。两条现在都给出 2005 条，
+> gui 腿是 503 条（数条数的办法见上面「跑测试与 CI」）。
 
 **还有一个长得一样但性质不同的退出码**，只在冒烟脚本里出现：脚本自己在收尾前
 **没把事件队列排空**。窗口的 `show()`/`close()` 会投递事件，`deleteLater` 要等事件
@@ -392,8 +392,15 @@ QtWebEngine——解压那一下正好压在启动路径上（现在实测**起�
 1. 产物在（`dist/axo/axo.exe`）。
 2. **镜像路径假设成立**：`_internal/axo/ui/` 下的 qss 与三处网页资产都在。
    这一条成立，应用代码才一个字都不用改（那两处读取是 `Path(__file__).with_name(...)`）。
-3. **QtWebEngine 的运行件在**：`QtWebEngineProcess.exe`、`translations/qtwebengine_locales/`、
-   `plugins/`，以及 `resources/` 下四份运行件（它们是第 6 条删掉的那些的孪生）。
+3. **Qt 与语音的运行件在**：`QtWebEngineProcess.exe`、`translations/qtwebengine_locales/`、
+   `plugins/`，以及 `resources/` 下四份运行件（它们是第 6 条删掉的那些的孪生）；
+   外加**麦克风那一套**（`QtMultimedia.pyd` 与 `plugins/multimedia/` 下两个后端插件，
+   2026-10-12 加）和**语音识别的四个原生库**（`vosk/libvosk.dll` 等）。后面两组各自
+   对着一种"构建这边全绿、用户那边不能用"：少了多媒体插件，
+   `QMediaDevices.audioInputs()` 给出的是空列表（症状被那段文案引到 Windows 隐私设置
+   上去）；少了 vosk 的 C 库，`axo/asr.py` 那句运行时 `dlopen` 才失败——**它不在
+   PyInstaller 的缺失清单里**（`vosk` 这个 Python 包好好地进了 PYZ），所以第 4 条
+   挡不住它。
 4. **缺失清单干净**：读 PyInstaller 自己写的 `warn-<name>.txt`，只比**整名**——numpy 会留下
    一大坨 `numpy._core.atleast_2d` 这种**属性式**记录（实测 175 行），按前缀比会让这份名单
    天天在响。
@@ -405,12 +412,15 @@ QtWebEngine——解压那一下正好压在启动路径上（现在实测**起�
    着一格——而三处里只有一处会被顺手注意到。
 6. **调试变体真的删了**（见下一条）。
 
-**体积：521.2 MB，其中删掉了 77.2 MB。** 首次构建 598.4 MB，量出来的构成是 QtWebEngine
-自己（`Qt6WebEngineCore.dll` 194.1 MB）、它的资源与语言包（`resources/` 101.4 MB +
-`translations/` 53.0 MB）、软件 OpenGL 兜底（`opengl32sw.dll` 19.7 MB）、numpy 的
-BLAS（`numpy.libs/` 20.2 MB）。里面**能删且删得干净**的只有一组：`resources/` 里的
-**调试变体**——`qtwebengine_devtools_resources.debug.pak` 一个文件 72.3 MB，加上另外四份
-`.debug.pak` / `.debug.bin`，共 77.2 MB。它们是给 Qt WebEngine 的**调试版**用的（这里链的
+**体积：583.3 MB**（2026-10-12 那次 `--clean` 构建报的数，**剔完之后**的；没剔之前还要
+多出 77.1 MB 的调试变体与 12.7 MB 的 GPL-only 模块）。构成里占大头的是 QtWebEngine 自己
+（`Qt6WebEngineCore.dll` 194.1 MB）、它的资源与语言包（`resources/` 剔调试变体前
+101.4 MB、之后 24.2 MB；`translations/` 53.4 MB）、软件 OpenGL 兜底（`opengl32sw.dll`
+19.7 MB）、numpy 的 BLAS（`numpy.libs/` 20.2 MB），以及这一批新进来的两块：**语音识别
+那一族 51.5 MB**（`vosk`）与**多媒体那几个文件 20.9 MB**（FFmpeg 运行库 18.7 MB、两个
+后端插件、`QtMultimedia.pyd` 一类、29 份语言包）。里面**能删且删得干净**的只有一组：
+`resources/` 里的**调试变体**——`qtwebengine_devtools_resources.debug.pak` 一个文件
+72.3 MB，加上另外四份 `.debug.pak` / `.debug.bin`，共 77.1 MB。它们是给 Qt WebEngine 的**调试版**用的（这里链的
 是发布版 DLL），而且**每一个都有同名的非调试孪生一起进了镜像**，所以删的是"同一份东西的
 另一版"。自检第 3 条钉住孪生那一侧、第 6 条钉住"真的删掉了"，`tests/test_packaging.py`
 里那条守卫则钉住"名单里只许出现调试变体"。删完当场实测：主窗口照常开出来（窗口类

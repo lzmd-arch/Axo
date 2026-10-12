@@ -6,6 +6,40 @@
 
 ## 当前状态
 
+**屏幕识别与语音输入——两条接缝填上了。** 输入框旁边多了一个麦克风按钮（离线识别，
+声音不出这台机器），工具表里多了一个 `look_at_screen`（看一眼屏幕，**一次一授权**）。
+两件都按当初登记接缝时写下的形状落。值得记下来的几件事：
+
+* **语音：库随产物发，模型不。** 冻结产物里装不了 pip 包——不随产物发的话，打包版的
+  语音输入根本不可能工作；而模型（约 42 MB）与"Ollama 的模型要你自己 pull"同一个姿态，
+  由用户解压到数据根下的 `models/`。找不到时说一句人话（去哪儿下、放到哪个目录）。
+* **采集留在界面线程，解码去工作线程。** `QAudioSource` 的 `readyRead` 是属主线程的信号，
+  搬它要自己管一个事件循环与一次对象迁移，而采集本身极轻。解码**边录边喂**，收尾那次
+  只剩尾巴——否则一段 30 秒的录音要在最后一起解码，那一下足够超过线程收尾的 3 秒预算
+  （超时的表现是 `0xC0000409`，没有回溯、没有 stderr）。
+* **截图那一步多了一次交接。** `grabWindow` 必须在界面线程，而工具跑在 worker 线程。
+  所以把闸门那套握手抽成 `agent/handoff.py` 的通用槽，截图是它的第二个实例——而
+  **token 是承重件**：不回带身份的话，一次超时之后才慢吞吞回来的图会被下一次截图吃掉，
+  模型描述的就是三秒前那张屏。
+* **图只在当前这一轮活着。** 结果标 `replayable=False` → L5 整对跳过 → **像素永不落盘**，
+  `store.py` 与 `assemble.py` 的 schema 一个字都不用改。而"看过屏幕的那一轮不写记忆库"
+  是**另一道闸**：不关它的话，模型对屏幕的那段文字描述会以答复正文的身份进库，而它恰好
+  是最有信息量的那一段。
+* **能力门走 `read_file` 那个先例。** 模型看不见图时 `look_at_screen` **根本不登记**
+  ——省一段 prompt、省一次必然失败的调用，也不弹一张注定白点的确认卡片。
+* **打包这一步出了两个"构建全绿、用户那边不能用"的洞。** 一，`vosk` 的 C 库靠一句
+  **运行时拼出来的** `dlopen` 加载，静态分析看不见，默认构建一个字节都不收——而它的
+  Python 包好好地进了 PYZ，所以"缺失清单"那条判据**挡不住它**。二，多媒体的 FFmpeg
+  运行库（18.7 MB）留在产物里没有剔：剔掉之后接手的是 Media Foundation 那个后端，而
+  实测只能证明**它枚举得出设备**，证明不了它录得到音。前一条的正确做法是
+  `--collect-binaries vosk` 加一条正向的布局断言，两条都写进 `_check_layout`。
+* **顺带修掉一个"应用根本起不来"。** `WebBridge` 上少了 `voice_toggled` 这个信号
+  （槽里发的是 `ChatView` 上那个**同名**信号，两个 `self` 是两个对象），构造对话区的
+  那一刻就 `AttributeError`。四条腿一条都没拦住，因为**没有任何一条测试构造真的
+  `ChatView`**（离屏下 QtWebEngine 一渲染就把进程硬杀掉，见 gui 腿那条纪律）。
+  补的是 `tests/test_bridge_contract.py`：纯源码分析、在核心腿里跑，两个方向都钉
+  ——连的那一侧必须存在，发的那一侧必须属于自己。
+
 **记忆放在哪，用户自己定。** 设置里多了一个「数据」页：显示**现在用的是哪个文件夹**、
 它**听谁的**（默认位置 / 你选的 / 便携指针文件 / 环境变量），并提供「更改位置」与
 「恢复默认位置」。换位置走的是**搬迁**：先把整棵数据根复制到新地方、逐文件按哈希校验，
@@ -296,13 +330,14 @@ src/
       gates.py        门槛政策：判哪几项、什么方向、多大容差
     agent/            Agent 纯层：工具、循环、闸门、路由（**不 import Qt/httpx**）
       tools.py        Tool 协议、ToolContext、ToolRegistry（机制）
-      catalog.py      七个具体工具（内容）
+      catalog.py      十个具体工具（内容），其中两个按条件登记（read_root / vision）
       fs.py           read_file 的沙箱校验与读取
       reminders.py    ReminderStore 落盘 + FiredStore（谁到点了 / 谁已经响过）
       proactive.py    「到点由她开口」那一轮的提示词：一条 system，人格锚 + 环境 + 说明（纯）
       trace.py        工具轨迹：把「这一轮做过什么」收成条目 meta 里的一小段（纯）
       loop.py         agent 循环：事件生成器，不是阻塞函数
       gate.py         确认策略 + ApprovalSlot（跨线程握手，无一行 Qt）
+      handoff.py      通用的跨线程握手槽（ApprovalSlot 与截图槽共用的那一套：token 身份 + 有界等待）
       router.py       斜杠 + 规则层 + 模型自分类（默认关）+ 不对称迟滞
     llm/              模型后端：Ollama（本机）+ OpenAI 兼容端点（云端，只做对话）
       base.py         ChatBackend / EmbeddingBackend 两个协议
@@ -338,6 +373,8 @@ src/
       web/              对话区前端（index.html / css/app.css / js/app.js）
       memory_window.py  记忆界面（独立窗口）
       memory_worker.py  记忆侧的后台动作：建图、以某条为线索召回一次（**唯一要联网的那件**）、跑一轮巩固（不碰网络）
+      screen.py         截一张屏：涂掉自己那一块、缩到长边 ≤1600、全黑算一种收场（**只在界面线程**）
+      voice.py          VoiceRecorder（采集，留在界面线程）+ DecodeWorker（解码，在工作线程）
       thread_tracking.py  worker/线程生命周期的唯一入口
       notify.py         登录时那一条气泡：`QSystemTrayIcon.showMessage` + 有限事件循环（唯一的 Qt 一侧）
     __main__.py       进程入口（`python -m axo`），**也是冻结产物的入口**
@@ -345,6 +382,7 @@ src/
     secrets.py        密钥加密：Windows DPAPI 的薄封装（**平台相关的东西集中在这一处**）
     autostart.py      开机自启：Windows 的 Run 键（同 `secrets.py`，平台相关的东西集中在一处）
     headless.py       登录时那一次：看一眼有没有到点的提醒，弹一条就退（**不 import Qt**）
+    asr.py            语音识别：一段 PCM → 一句话（**不 import Qt**；vosk 在函数内 import）
 benchmarks/gold/      金标准语料（量具，不是数据集）
   memories.jsonl        200 条虚构记忆
   queries.jsonl         76 条查询 + ground truth
@@ -369,9 +407,10 @@ tests/
   test_ollama_tools.py 冻下来的真实字节：tool_calls 的解析与构造（曾经零覆盖）
   test_ollama_errors.py HTTP 错误 → 人话；**流式请求撞非 2xx 时不许漏出 httpx 回溯**
   test_model_picks.py  用哪个模型做哪件事：谁能对话、谁做嵌入、**别取列表队首**
-  test_agent_tools.py  注册表：未知名 / 参数不合法 / 工具抛异常都吃成 ok=False
+  test_agent_tools.py  注册表：未知名 / 参数不合法 / 工具抛异常都吃成 ok=False；
+                    **恰好四个无条件过闸门**、快照型工具必须标 not replayable、look_at_screen 的两条失败
   test_agent_loop.py   工具循环 + **反空转四条**（见「跑测试与 CI」）
-  test_agent_gate.py   闸门策略（表驱动）+ ApprovalSlot（起真线程，断言不超时）
+  test_agent_gate.py   闸门策略（表驱动）+ ApprovalSlot（起真线程，断言不超时）+ 「没有参数的工具自己说那句话」
   test_agent_fs.py     沙箱：`../` 逃逸、符号链接、前缀陷阱、上限、坏编码
   test_router.py       路由的每一条判定：斜杠表、规则表、迟滞、歧义、模型层、`route_turn` 只推进粘连的那一半
   test_router_corpus_integrity.py 路由语料的指纹、自洽、类别不能空转
@@ -389,10 +428,16 @@ tests/
   test_ui_router_wire.py  语域路由真的接进了对话回合（跑 `_route` + ast 守卫，见「一个回合只判一次」）
   test_ui_elided_label.py 顶栏状态文字：省略号、样式表取色、以及**真顶栏到底给了它多少宽度**
   test_agent_trace.py  工具轨迹：参数取自逐字稿、配不上也留步、截断与 `result_chars`
+  test_agent_handoff.py 通用握手槽：有界等待、token 身份（迟到的回答进不了下一次）、cancel 单向
+  test_asr.py          语音识别（**vosk 是塞进 sys.modules 的假件**）：第一片才加载模型、
+                    半采样接上下一片、三条失败各说一句话
   test_agent_proactive.py 她开口那一轮的提示词：只有一条 system、人格锚逐字带、身份那句话在正文前面
   test_memory_policy.py `TaskPolicy`：有轨迹合成一条，**没轨迹时与 `PerItemPolicy` 逐字段相同**
   test_ui_tray.py      托盘：不可用时全无操作、图标不是空的、两项菜单真的接上了信号
   test_ui_notify.py    登录时那条气泡：没有托盘时不弹也不转循环、有托盘时弹完自己退
+  test_ui_screen.py    截图这一层：涂自己那块、等比缩小、全黑判成一种收场（**像素那几条只能在真屏幕手验**）
+  test_ui_capture_chain.py 截图那根线：worker 要图 → 界面截 → 直连送回去；以及看过屏幕那一轮不写库
+  test_ui_voice.py     语音：假 PCM 源 + 假识别，状态推送、失败路径、收尾真的把录音停掉
   test_headless.py     登录那一次的退出码三种、先标后弹、取消过的不回来、读不了就什么都不做
   test_autostart.py    自启那条值：命令行带引号、值一样就不写、非 Windows 什么都不做
   test_ui_window_icon.py 窗口图标：窗口与应用两级都装上了、画的是那一支主色、换外观那条路真的调它（ast）

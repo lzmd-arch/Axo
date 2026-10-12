@@ -75,7 +75,7 @@ def test_a_plain_task_sentence_gets_tools_without_any_slash(text: str) -> None:
 @pytest.mark.parametrize("text", ["今天天气不错", "早上好呀", "我有点累了", "谢谢你"])
 def test_chitchat_does_not_get_tools(text: str) -> None:
     """反向的一条。判据放宽到"总是给工具"的话，这条会红——而那不是修好了，是换了
-    一种坏法：每一轮都声明七个工具，模型在一句寒暄上翻用户的库。
+    一种坏法：每一轮都把全部工具声明一遍，模型在一句寒暄上翻用户的库。
     """
     routed = _route(_router(), text)
     assert routed.register is Register.CHAT
