@@ -42,14 +42,13 @@
 from __future__ import annotations
 
 import json
-import threading
-import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
 from ..llm.base import ToolCall
+from .handoff import HandoffSlot
 
 __all__ = [
     "APPROVAL_TIMEOUT_S",
@@ -191,127 +190,25 @@ def resolve_decision(answer: ApprovalDecision | None) -> ApprovalDecision:
     return ApprovalDecision.DENY if answer is None else answer
 
 
-class ApprovalSlot:
-    """一个待决请求的槽。**worker 线程在里面等，界面线程往里面答。**
+class ApprovalSlot(HandoffSlot["ApprovalRequest", "ApprovalDecision"]):
+    """一个待决的**确认**请求。**worker 线程在里面等，界面线程往里面答。**
 
-    ## 为什么是槽不是队列
+    机制（为什么是槽不是队列、身份比对、单向取消、线程约定）全在
+    :class:`~axo.agent.handoff.HandoffSlot` 那份模块文档里——这里只说确认这一侧特有
+    的那件事：**身份就是 ``call_id``**。
 
-    **同一时刻最多一个待决请求。** 循环是顺序的：上一个工具的结果回灌进
-    ``messages`` 之后才可能发起下一个，所以"两张卡片同时在等"这件事在结构上不会
-    发生。写成队列的唯一效果，是给这个不存在的状态留出空间——而它一旦真的出现，
-    后果是配对错位（用户点的那一下被算到另一个调用头上）。这条写在这里是为了拦住
-    "顺手改成队列"这个看起来很自然的下一步。
+    界面回传裁决时必须把 ``call_id`` 一起带回来，对不上就丢弃。拦的是"用户点得慢"这
+    种最常见的时序：卡片还在屏幕上，而 worker 已经因为超时/停止走掉了、或已经进了下一
+    轮。没有这道比对，那次点击会算到**别的**调用头上——一次张冠李戴的允许。
 
-    ## 单向取消
-
-    :meth:`cancel` 是**闩**，不是复位：翻过去之后这个槽就永久没有待决请求，
-    :meth:`request` 直接抛。因为取消意味着这一轮正在被拆掉，而"拆掉之后又有东西
-    来问"只可能是接线错了——那种错如果被安静地容忍，表现是"点了停止之后又弹出一张
-    卡片"。**所以一个槽只服务一次生成**：要开下一轮，就造一个新的。
-
-    ## 线程约定
-
-    ``request`` / ``wait`` 在 worker 线程；``provide`` / ``cancel`` 在界面线程
-    （``cancel`` 也可能来自收尾路径）。状态由一把 :class:`threading.Lock` 护住，
-    另有一个 :class:`threading.Event` 只用来"叫醒"——**它不承载状态**，所以即使
-    某次改动忘了 set，:meth:`wait` 的有界轮询也会在一个 ``poll`` 之后重新看一遍
-    状态，而不是永远睡下去。
+    （计划书里 :meth:`provide` 的签名只有 ``decision``；比对所需的 ``call_id`` 是它
+    自己那张"pending 到达时用户已点过停止"的表要求的。签名照表来。）
     """
 
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._wake = threading.Event()
-        self._pending: ApprovalRequest | None = None
-        self._decision: ApprovalDecision | None = None
-        self._cancelled = False
-
     def request(self, req: ApprovalRequest) -> None:
-        """登记一个待决请求。**worker 线程调用**。
+        """登记一个待决问询。**worker 线程调用**。
 
-        已经在等一个、或者这一轮已被取消时抛 :class:`RuntimeError`：两种都是接线
-        错误，而它们安静通过的表现分别是"两个卡片"和"停止之后又弹一张"。
+        身份直接取 :attr:`ApprovalRequest.call_id`：它本来就是"这一次调用"的身份证，
+        而且从循环一路带到界面、再带回来，是这条链上唯一一个两边都认得的字符串。
         """
-        with self._lock:
-            if self._cancelled:
-                raise RuntimeError("这一轮已经取消，不能再发起确认请求（一个槽只服务一次生成）")
-            if self._pending is not None:
-                raise RuntimeError(
-                    f"已经有一个待决请求 {self._pending.call_id!r}；闸门同一时刻只支持一个"
-                )
-            self._pending = req
-            self._decision = None
-
-    @property
-    def pending(self) -> ApprovalRequest | None:
-        """当前待决的请求，没有则 ``None``。给界面与测试看。"""
-        with self._lock:
-            return self._pending
-
-    def provide(self, call_id: str, decision: ApprovalDecision) -> bool:
-        """界面线程回传一次裁决。返回**它是否被采纳**。
-
-        ``call_id`` 必须与当前待决的那次调用对得上，否则丢弃并返回 ``False``。
-        拦的是"用户点得慢"这一种最常见的时序：卡片还在屏幕上，而 worker 已经因为
-        超时/停止走掉了，或已经进了下一轮。没有这道比对，那次点击会算到别的调用头
-        上——一次**张冠李戴的允许**。
-
-        （计划书里这个签名只有 ``decision``；比对所需的 ``call_id`` 是它自己那张
-        "pending 到达时用户已点过停止"的表要求的。签名照表来。）
-
-        **已经答过的那张卡片不再接受第二次点击**。挡的不是"点两下"这种小事：两次
-        点击的值可以不同，于是「拒绝」之后再点一下「允许」会把裁决**翻**成同意——
-        而那正是一个从来没有被批准过的动作。方向必须是单向的：第一次点击定案。
-        """
-        with self._lock:
-            if self._cancelled or self._pending is None:
-                return False
-            if self._pending.call_id != call_id:
-                return False
-            if self._decision is not None:
-                return False  # 这张卡片已经答过了，第一次点击定案
-            self._decision = decision
-            self._wake.set()
-            return True
-
-    def cancel(self) -> None:
-        """停止 / 收尾：立刻唤醒还卡在 :meth:`wait` 里的 worker。
-
-        **连已经攒下的裁决一起清掉**：这一轮正在被拆掉，那它就不该再执行任何改变
-        状态的动作。fail-closed 的方向和超时一致。
-        """
-        with self._lock:
-            self._cancelled = True
-            self._pending = None
-            self._decision = None
-            self._wake.set()
-
-    def wait(self, *, timeout: float | None = None, poll: float = 0.05) -> ApprovalDecision | None:
-        """等一个裁决。**worker 线程调用**。
-
-        返回 ``None`` 覆盖超时与取消两种收场，由 :func:`resolve_decision` 归成拒绝。
-
-        **取走一次就清空**：同一个槽 ``wait`` 第二次会一直阻塞到超时并按拒绝收场。
-        这也是 fail-closed 的方向——万一循环被写成了"答完再等一次"，代价是这一轮
-        白等（用户看到的是模型没反应），而不是把同一个动作执行两遍。
-
-        ``poll`` 是有界轮询的步长：即使唤醒事件没被 set（将来的某次改动），最长
-        一个 ``poll`` 之后也会重新看一遍状态与期限。
-        """
-        deadline = None if timeout is None else time.monotonic() + timeout
-        while True:
-            with self._lock:
-                self._wake.clear()
-                if self._decision is not None:
-                    decision = self._decision
-                    self._decision = None
-                    self._pending = None
-                    return decision
-                if self._cancelled:
-                    return None
-            if deadline is None:
-                remaining = poll
-            else:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    return None
-            self._wake.wait(min(poll, remaining))
+        super().request(req, token=req.call_id)
