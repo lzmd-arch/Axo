@@ -606,6 +606,19 @@ def _app_window_icons(windows: Sequence[tuple[int, str, str]]) -> tuple[int, int
 #: 探测用的数据目录前缀。落在系统临时目录里，起完就删。
 _PROBE_DATA_PREFIX = "axo-probe-"
 
+#: 探测用的**界面设置与 Qt 缓存**目录前缀，同样是临时目录、起完就删。
+_PROBE_STATE_PREFIX = "axo-probe-state-"
+
+#: 让应用把 ``QSettings`` 与 Qt 的缓存挪进上面那个目录的环境变量。
+#:
+#: **名字必须与 ``src/axo/ui/app.py`` 的 ``_ISOLATED_STATE_ENV`` 逐字相同**——
+#: 两边各写一份字符串就会出现"设了一个没人认的变量"，症状是自检以为隔离好了，
+#: 而它照样在改使用者的真注册表。``tests/test_packaging.py`` 断言两者一致。
+#:
+#: 只设 ``AXO_DATA`` 是不够的：那只重定向 ``axo.paths``（记忆与数据），而程序还会
+#: 往注册表写 ``backend/last_model``、往 ``%LOCALAPPDATA%`` 写 WebEngine 的管线缓存。
+_PROBE_STATE_ENV = "AXO_ISOLATED_STATE"
+
 #: 窗口出现之后、杀进程之前多留的几秒。
 #:
 #: 窗口是**建到一半**就可见的（``show()`` 一返回它就在了），而首启那几件事——建库、
@@ -716,6 +729,17 @@ def _probe(name: str, wait: float) -> list[str]:
     也一并被这条路读到。而这一切在构建日志里一个字都不显示。给子进程一个临时目录
     之后，"这次构建碰过我的库没有"这个问题才有答案，而且答案是"没有"。
 
+    **但那只隔离了一半。** ``AXO_DATA`` 只管得到 :mod:`axo.paths`（记忆与数据），
+    而程序还会往两个与它无关的地方写：``QSettings`` 落真注册表
+    （``HKCU\\Software\\Axo\\axo\\backend\\last_model``——拉完模型列表无条件回填那一句），
+    WebEngine 的管线缓存落真 ``%LOCALAPPDATA%\\Axo\\axo\\cache``。两条都不受
+    ``AXO_DATA`` 影响，所以还得再设一个 :data:`_PROBE_STATE_ENV`（见
+    :func:`axo.ui.app._configure_isolated_state`）。
+
+    这条**先于新手引导**修的理由：引导那个"走过了"的标记就写在同一个注册表里。
+    探测一旦把它写成 1，这台机器上引导再也不会出现，而构建日志里仍然一个字都不显示
+    ——"这次构建碰过我的东西没有"这个问题的答案会重新变成"碰了，但你看不见"。
+
     **图标为什么要机器验。** 它是这条探测里唯一"窗口开出来了、看着像好了、其实是半
     成品"的那一档：``--icon`` 嵌进 exe 的那份只影响资源管理器里那个文件的外观，窗口
     自己不设图标，标题栏左上角就空着一格。用户实测报过一次，而三处（标题栏、任务栏、
@@ -731,6 +755,11 @@ def _probe(name: str, wait: float) -> list[str]:
     # 使用者的真库在起应用，而构建日志里一个字都看不出来。
     probe_data = Path(tempfile.mkdtemp(prefix=_PROBE_DATA_PREFIX))
     environment["AXO_DATA"] = str(probe_data)
+    # **界面设置与 Qt 的缓存也要隔离。** 上面那一句只管记忆与数据；不管这个的话，
+    # 每次构建都会往使用者的真注册表写一次 `backend/last_model`、往真
+    # `%LOCALAPPDATA%` 写 WebEngine 的管线缓存——同样是构建日志里看不出来的改动。
+    probe_state = Path(tempfile.mkdtemp(prefix=_PROBE_STATE_PREFIX))
+    environment[_PROBE_STATE_ENV] = str(probe_state)
 
     process = subprocess.Popen([str(exe)], cwd=str(exe.parent), env=environment)
     code: int | None = None
@@ -795,6 +824,7 @@ def _probe(name: str, wait: float) -> list[str]:
         return _first_run_shape(probe_data)
     finally:
         shutil.rmtree(probe_data, ignore_errors=True)
+        shutil.rmtree(probe_state, ignore_errors=True)
 
 
 def _size_of(path: Path) -> int:

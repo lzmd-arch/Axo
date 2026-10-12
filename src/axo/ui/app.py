@@ -1,8 +1,13 @@
 """应用入口。
 
-入口函数只做四件事：**建 app、定样式、建窗口、进事件循环**。日志、配置、数据库
-连接、模型探活都不在这里——那些属于各自模块的职责，塞进入口只会让"启动时到底
-发生了什么"变得不可读。
+入口函数只做六件事：**定两处环境变量、建 app、定样式、建窗口、进事件循环**。
+日志、配置、数据库连接、模型探活都不在这里——那些属于各自模块的职责，塞进入口
+只会让"启动时到底发生了什么"变得不可读。
+
+那两处环境变量（:func:`configure_isolated_state` 与
+:func:`_configure_webengine_environment`）是**唯一必须先于 ``QApplication``** 的
+东西，所以它们是入口的职责，而不是某个模块的——Qt 初始化之后再设环境变量对已经
+起来的 Chromium 无效，而 ``QStandardPaths`` 的路径问过一次就定死了。
 
 ``main`` 刻意不 import :mod:`axo.ui.cli`（尚未存在）也不 import
 ``MainWindow``，后者的导入推迟到 ``QApplication`` 建好之后：PySide6 的窗口类在
@@ -18,12 +23,99 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
+from typing import TYPE_CHECKING
 
-__all__ = ["main"]
+from .settings_store import SETTINGS_APP, SETTINGS_ORG
+
+if TYPE_CHECKING:  # pragma: no cover - 只为类型标注，运行时不 import Qt
+    from PySide6.QtCore import QSettings
+
+__all__ = ["configure_isolated_state", "main", "make_settings"]
 
 
 #: 设了这个环境变量就强制软件光栅（值不重要，存在即可）
 _SOFTWARE_RENDER_ENV = "AXO_SOFTWARE_RENDER"
+
+#: 设了这个环境变量就把**界面设置与 Qt 的缓存**也挪到它指的那个目录里。
+#:
+#: 只给打包自检与冒烟脚本用（见 ``tools/build_exe.py`` 的活体探测），**不是给用户的
+#: 功能**。它与 ``AXO_DATA`` 是两件事、各管各的：那个管记忆与数据放哪，这个管程序
+#: 自己往系统里写的那点东西。两个都设上才算真的隔离。
+_ISOLATED_STATE_ENV = "AXO_ISOLATED_STATE"
+
+
+def configure_isolated_state() -> None:
+    """把界面设置与 Qt 的缓存重定向到 ``AXO_ISOLATED_STATE`` 那个目录。
+
+    **公开**（不叫 ``_configure_...``）是因为 ``tools/_smoke_*.py`` 那几个脚本自己
+    建 ``QApplication``、不走 :func:`main`，而它们在同一条"别碰使用者的真东西"的
+    约束下——所以这个函数得能被它们调到。
+
+    **必须早于 ``QApplication``。** ``QStandardPaths.setTestModeEnabled`` 在第一次
+    问过路径之后就改不动了，而 ``QSettings`` 的默认格式要在任何 ``QSettings`` 被
+    构造之前定下来。
+
+    **为什么需要这一条。** 活体探测原来只设了 ``AXO_DATA``，那只重定向了
+    :mod:`axo.paths`——于是每次构建都往**使用者的真注册表**写一次
+    ``HKCU\\Software\\Axo\\axo\\backend\\last_model``（拉完模型列表无条件回填那一句），
+    并往真的 ``%LOCALAPPDATA%\\Axo\\axo\\cache`` 写 WebEngine 的管线缓存。而这一切在
+    构建日志里一个字都不显示——"这次构建碰过我的东西没有"于是没有答案。
+
+    它也**必须先于新手引导落地**：引导那个"走过了"的标记写在同一个注册表里，探测
+    一旦把它写成 1，这台机器上引导再也不会出现，而构建日志里同样什么都不显示。
+
+    **只在变量存在时才切。** 无条件切会把所有已有用户的设置从注册表搬到一个空文件
+    里，症状是"换了个版本，外观与 API key 全没了"——而 API key 还是 DPAPI 加密的，
+    换个位置就解不开。
+
+    缓存那一条用 ``setTestModeEnabled``，它把 ``QStandardPaths`` 那些位置整体挪到
+    平台自己的"测试"位置去，而不是挪进下面这个目录。够用（碰不到使用者的真东西），
+    代价是留一份在那儿不随构建清理——比"每次构建都改使用者的注册表"轻得多。
+    """
+    raw = os.environ.get(_ISOLATED_STATE_ENV)
+    if not raw:
+        return
+
+    from PySide6.QtCore import QSettings, QStandardPaths
+
+    root = Path(raw)
+    (root / "settings").mkdir(parents=True, exist_ok=True)
+
+    # **只设 ``setPath``，不设 ``setDefaultFormat``。** 后者看着更直接，实际管不到
+    # 我们要用的那个构造——它只影响 ``QSettings(parent)`` 那个单参数形式；而
+    # ``QSettings("Axo", "axo")`` 这个两参数的，在 Windows 上**永远**用原生格式
+    # （注册表），默认格式说不上话。实测过：设完之后
+    # ``QSettings("Axo", "axo").format()`` 仍然是 ``NativeFormat``，于是"隔离"只
+    # 成立在日志里。真正让它走 ini 的是 :func:`make_settings`——那个函数显式传格式。
+    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(root / "settings"))
+    QSettings.setPath(
+        QSettings.Format.IniFormat, QSettings.Scope.SystemScope, str(root / "settings")
+    )
+    QStandardPaths.setTestModeEnabled(True)
+
+
+def make_settings() -> QSettings:
+    """建一个 ``QSettings``。**建 QSettings 的地方都要走这里。**
+
+    两件事只有在这里能同时说清楚：
+
+    1. **隔离模式下显式指定 ini 格式。** 理由见 :func:`configure_isolated_state`
+       里那段——两参数的构造在 Windows 上认不出默认格式。少了这一句，
+       ``configure_isolated_state`` 就只是在日志里成立。
+    2. **组织名/应用名只有一处。** 它们从 ``settings_store`` 来，而这里是唯一把它们
+       喂给 Qt 的地方。
+
+    隔离与否**从环境变量现读**，不缓存：调用方可能在任何时候建 QSettings，而缓存会
+    让"先建 QSettings 再设环境变量"这种顺序问题变得不可见。
+    """
+    from PySide6.QtCore import QSettings
+
+    if os.environ.get(_ISOLATED_STATE_ENV):
+        return QSettings(
+            QSettings.Format.IniFormat, QSettings.Scope.UserScope, SETTINGS_ORG, SETTINGS_APP
+        )
+    return QSettings(SETTINGS_ORG, SETTINGS_APP)
 
 
 def _configure_webengine_environment() -> None:
@@ -48,9 +140,12 @@ def _configure_webengine_environment() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     """启动桌面终端，返回进程退出码。"""
+    # 环境那两件**必须**排在最前：都要在 Qt 初始化之前做完（各自 docstring 里写了
+    # 为什么），而 app 一旦建出来就晚了。
+    configure_isolated_state()
     _configure_webengine_environment()
 
-    # 这两个 import 必须在 _configure_webengine_environment 之后
+    # 这两个 import 必须在上面那两句之后
     from PySide6.QtWidgets import QApplication
 
     from .. import __version__

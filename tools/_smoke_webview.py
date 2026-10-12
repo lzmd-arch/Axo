@@ -31,6 +31,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -40,6 +41,7 @@ from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import QApplication
 
 from axo.memory.persona import DEFAULT_PERSONA
+from axo.ui.app import configure_isolated_state
 from axo.ui.chat_view import ChatView
 from axo.ui.theme import PRESETS, Theme, resolve
 
@@ -79,6 +81,12 @@ def _make_wallpaper() -> Path:
 
 
 def main() -> int:
+    # 隔离。这个脚本会起真的 QWebEngineView，不设这两句它会往使用者的真数据目录与
+    # 真注册表里写东西（WebEngine 的管线缓存也在其中），而在输出里一个字都看不出来。
+    # **都必须在建 QApplication 之前**——理由见 configure_isolated_state 的 docstring。
+    os.environ["AXO_DATA"] = tempfile.mkdtemp(prefix="memterm-webview-")
+    os.environ["AXO_ISOLATED_STATE"] = tempfile.mkdtemp(prefix="memterm-webview-state-")
+    configure_isolated_state()
     app = QApplication.instance() or QApplication(sys.argv)
     view = ChatView()
     view.resize(900, 700)

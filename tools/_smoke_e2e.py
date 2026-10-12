@@ -38,12 +38,14 @@ from pathlib import Path
 # 必须在 import axo 之前设好——paths 模块在首次调用时解析并缓存目录。
 _TMP = Path(tempfile.mkdtemp(prefix="memterm-smoke-"))
 os.environ["AXO_DATA"] = str(_TMP)
+os.environ["AXO_ISOLATED_STATE"] = tempfile.mkdtemp(prefix="memterm-smoke-state-")
 
 from PySide6.QtCore import QTimer  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from tools_support import RecordingChatView  # noqa: E402
 
 import axo.ui.main_window as main_window_module  # noqa: E402
+from axo.ui.app import configure_isolated_state  # noqa: E402
 
 # 提示词要能让模型正经生成几十个字，而不是回两个字就停。
 #
@@ -58,6 +60,7 @@ POLL_INTERVAL_MS = 2000
 
 
 def main() -> int:
+    configure_isolated_state()
     app = QApplication.instance() or QApplication(sys.argv)
 
     # 换掉真视图**必须在构造窗口之前**——真件一被构造出来就会起 QtWebEngine，

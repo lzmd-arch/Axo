@@ -27,15 +27,26 @@
 
 from __future__ import annotations
 
+import os
 import sys
+import tempfile
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
+from axo.ui.app import configure_isolated_state
 from axo.ui.main_window import MainWindow
 
 
 def main() -> int:
+    # 隔离。**这个脚本构造真 MainWindow**，不设这两句它会用使用者的真记忆库、并往
+    # 真注册表写 ``backend/last_model``——而在输出里一个字都看不出来。两件都必须在
+    # 建 ``QApplication`` 之前做完（理由见 configure_isolated_state 的 docstring）。
+    #
+    # 它原来是五个冒烟脚本里唯一一个连 ``AXO_DATA`` 都没设的。
+    os.environ["AXO_DATA"] = tempfile.mkdtemp(prefix="memterm-window-")
+    os.environ["AXO_ISOLATED_STATE"] = tempfile.mkdtemp(prefix="memterm-window-state-")
+    configure_isolated_state()
     app = QApplication.instance() or QApplication(sys.argv)
 
     window = MainWindow()
