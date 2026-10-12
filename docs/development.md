@@ -339,9 +339,12 @@ src/
       memory_window.py  记忆界面（独立窗口）
       memory_worker.py  记忆侧的后台动作：建图、以某条为线索召回一次（**唯一要联网的那件**）、跑一轮巩固（不碰网络）
       thread_tracking.py  worker/线程生命周期的唯一入口
+      notify.py         登录时那一条气泡：`QSystemTrayIcon.showMessage` + 有限事件循环（唯一的 Qt 一侧）
     __main__.py       进程入口（`python -m axo`），**也是冻结产物的入口**
     paths.py          数据目录解析
     secrets.py        密钥加密：Windows DPAPI 的薄封装（**平台相关的东西集中在这一处**）
+    autostart.py      开机自启：Windows 的 Run 键（同 `secrets.py`，平台相关的东西集中在一处）
+    headless.py       登录时那一次：看一眼有没有到点的提醒，弹一条就退（**不 import Qt**）
 benchmarks/gold/      金标准语料（量具，不是数据集）
   memories.jsonl        200 条虚构记忆
   queries.jsonl         76 条查询 + ground truth
@@ -389,6 +392,9 @@ tests/
   test_agent_proactive.py 她开口那一轮的提示词：只有一条 system、人格锚逐字带、身份那句话在正文前面
   test_memory_policy.py `TaskPolicy`：有轨迹合成一条，**没轨迹时与 `PerItemPolicy` 逐字段相同**
   test_ui_tray.py      托盘：不可用时全无操作、图标不是空的、两项菜单真的接上了信号
+  test_ui_notify.py    登录时那条气泡：没有托盘时不弹也不转循环、有托盘时弹完自己退
+  test_headless.py     登录那一次的退出码三种、先标后弹、取消过的不回来、读不了就什么都不做
+  test_autostart.py    自启那条值：命令行带引号、值一样就不写、非 Windows 什么都不做
   test_ui_window_icon.py 窗口图标：窗口与应用两级都装上了、画的是那一支主色、换外观那条路真的调它（ast）
   test_ui_close_to_tray.py 关窗两支：真值表、隐藏时给一次提示、`_quit` 先置位再关
   test_ui_reminder_scheduler.py 到点只响一次、先落盘再弹、重启不重弹、错过的收成一句、

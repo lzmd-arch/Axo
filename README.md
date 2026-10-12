@@ -296,7 +296,8 @@ HKEY_CURRENT_USER\Software\Axo\axo
 Windows 账户 + 当前机器」加密的，拷到别的账户或别的机器上解不开——这是 `secrets.py`
 的全部理由，也是"把设置从一台机器搬到另一台"会看到"没配过"的原因。
 
-程序本身不留别的东西：没有服务、没有开机启动项、没有安装到 `Program Files`。
+程序本身不留别的东西：没有服务、没有安装到 `Program Files`。**唯一一处例外是用户显式勾选的「开机自启」**（设置 → 提醒，默认关）：它往
+`HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run` 写一个值，让登录时跑一次无头入口（`axo.exe --remind`），把机器关着那段时间里到点的提醒补上；取消勾选就把那个值删掉，别的什么都不留。
 
 ## 限制
 

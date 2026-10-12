@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -142,12 +143,53 @@ def _configure_webengine_environment() -> None:
         os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = f"{existing} --disable-gpu".strip()
 
 
+REMIND_FLAG = "--remind"
+"""无头入口那个开关。**与 ``src/axo/autostart.py`` 的同名常量逐字相同**，由
+``tests/test_packaging.py`` 断言——因为它写进注册表之后就固定在那儿了：两处改岔了，
+已经设过自启的机器会在下次登录时把一个不认识的参数交给程序。
+
+**同一个 exe 分流，不新增产物。** 第二个入口会带出第二份 ~520 MB 的 ``_internal``，
+而"把第二个 exe 塞进同一个 ``_internal`` 旁边"依赖 PyInstaller 的实现细节，属于这个仓
+最不信任的那类"看起来在工作"。
+"""
+
+
+def _remind_once() -> int:
+    """登录时那一次：看一眼有没有到点的提醒，弹一条就退（见 :mod:`axo.headless`）。
+
+    **数据目录必须走同一套四档解析**（``resolve_data_root``）。这一句漏了的症状最阴：
+    用户在设置里把数据目录搬到了别处，而无头入口还在读默认位置的那一本**空**提醒簿，
+    于是**每天开机什么都不做，界面上一个字都不显示**。
+    """
+    from ..agent.reminders import CancelledStore, FiredStore, ReminderStore
+    from ..headless import run
+    from ..paths import reminders_cancelled_path, reminders_fired_path, reminders_path
+    from .data_root import resolve_data_root
+    from .notify import show_balloon
+
+    resolve_data_root(make_settings())
+    return run(
+        reminders=ReminderStore(reminders_path()),
+        fired=FiredStore(reminders_fired_path()),
+        cancelled=CancelledStore(reminders_cancelled_path()),
+        now=time.time(),
+        notify=show_balloon,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
-    """启动桌面终端，返回进程退出码。"""
+    """启动桌面终端，返回进程退出码。**带 ``--remind`` 时走无头那一支。**"""
+    args = list(sys.argv[1:] if argv is None else argv)
     # 环境那两件**必须**排在最前：都要在 Qt 初始化之前做完（各自 docstring 里写了
-    # 为什么），而 app 一旦建出来就晚了。
+    # 为什么），而 app 一旦建出来就晚了。无头那一支同样要——尤其隔离状态那一条：
+    # ``_check_remind`` 起的就是一个带隔离数据目录的无头进程。
     configure_isolated_state()
     _configure_webengine_environment()
+
+    if REMIND_FLAG in args:
+        # **在这一句之前不能有任何 Qt 对象**：登录时绝大多数情况下没有到点的提醒，
+        # 而那一次不该去建一个应用（见 ``headless.run`` 的 ``notify`` 参数）。
+        return _remind_once()
 
     # 这两个 import 必须在上面那两句之后
     from PySide6.QtWidgets import QApplication

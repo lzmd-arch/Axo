@@ -84,6 +84,7 @@ _K_CONSOLIDATION_INTERVAL_S = "memory/consolidation_interval_s"
 #: 映射，而测试那边的"两个键各跑一遍同一张表"也能靠 ``key.split("/")[-1]`` 拿到字段。
 _K_WAKE_ON_ALERT = "reminders/wake_on_alert"
 _K_SPEAK_ON_ALERT = "reminders/speak_on_alert"
+_K_AUTOSTART = "reminders/autostart"
 
 #: **这台机器**级别的两个键。与上面四族分开，因为它们不是"某一块功能怎么跑"，
 #: 而是"程序自己住哪、用户看过说明没有"。
@@ -238,10 +239,11 @@ class MemorySettings:
 
 @dataclass(frozen=True)
 class ReminderSettings:
-    """提醒设置：**到点那一刻要不要打扰他**。两个开关，默认都开。
+    """提醒设置：**到点那一刻要不要打扰他**，以及**程序没开着的时候怎么办**。
 
-    它俩管的是"提醒响的时候发生什么"，**不改变提醒本身**：关掉任意一个，那条提醒照旧
-    被标成响过、托盘照旧弹气泡、对话区照旧留一条——变的只是"是谁说的、有没有把他叫过来"。
+    前两项管的是"提醒响的时候发生什么"，**不改变提醒本身**：关掉任意一个，那条提醒
+    照旧被标成响过、托盘照旧弹气泡、对话区照旧留一条——变的只是"是谁说的、有没有把
+    他叫过来"。第三项管的是另一种时候：**程序根本没开着**。
 
     Attributes:
         wake_on_alert: 到点时把窗口叫出来。分寸在 ``main_window._wake_up`` 里：**窗口
@@ -257,10 +259,22 @@ class ReminderSettings:
             慢、或者说话声吵的时候，用户会想关掉它。**关掉之后提醒照响**：托盘气泡与
             对话区那条系统消息一个字都不变（见 ``main_window._on_reminder_fired`` 里
             那条降级路径）——那正是这个功能可以放心默认开着的理由。
+        autostart: 开机时自动运行一次无头入口（``--remind``），把机器关着的那段时间里
+            到点的提醒补上。
+
+            **默认关，而且是这三个里唯一一个默认关的。** 它不是"程序内部的一个行为"，
+            是**在用户的机器上装一个东西**：往 ``HKCU\\...\\Run`` 写一个值。这种事只能由
+            用户显式要求——与工具页那条"可读目录空着 = 没授权过任何地方"同一个姿态：
+            不替他做一个他从没做过的授权决定。
+
+            它同时是**唯一一项在源码检出下做不到的设置**（``sys.executable`` 是
+            python.exe，写进去等于让登录时开一个没有脚本的 Python），所以设置页那个
+            勾选框会按 ``autostart.unavailable_reason()`` 灰掉，而不是勾上之后没反应。
     """
 
     wake_on_alert: bool = True
     speak_on_alert: bool = True
+    autostart: bool = False
 
 
 class SettingsStore:
@@ -412,12 +426,17 @@ class SettingsStore:
         return ReminderSettings(
             wake_on_alert=_as_bool(self._backend.value(_K_WAKE_ON_ALERT, True), True),
             speak_on_alert=_as_bool(self._backend.value(_K_SPEAK_ON_ALERT, True), True),
+            # **这一位的默认是 ``False``**，所以这里那个 ``, False`` 正是"三处默认值"
+            # 里的第二处——写成 ``, True`` 的话，新装好的程序会在**用户没要求过**的
+            # 情况下往注册表里写自启（见 :attr:`ReminderSettings.autostart`）。
+            autostart=_as_bool(self._backend.value(_K_AUTOSTART, False), False),
         )
 
     def save_reminders(self, settings: ReminderSettings) -> None:
         """写回。存真 bool，读取侧仍然按 :func:`_as_bool` 收一遍（同记忆那一节）。"""
         self._backend.setValue(_K_WAKE_ON_ALERT, bool(settings.wake_on_alert))
         self._backend.setValue(_K_SPEAK_ON_ALERT, bool(settings.speak_on_alert))
+        self._backend.setValue(_K_AUTOSTART, bool(settings.autostart))
 
     # ── 这台机器（app/*）────────────────────────────────────────────────────
 

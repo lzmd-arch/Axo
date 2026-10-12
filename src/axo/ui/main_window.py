@@ -64,6 +64,7 @@ from memcore.graph import GraphIndex
 from memcore.recall import RecallConfig
 from memcore.store import MemoryStore
 
+from .. import autostart
 from ..agent.catalog import default_tools
 from ..agent.gate import APPROVAL_TIMEOUT_S
 from ..agent.proactive import build_reminder_messages
@@ -407,6 +408,14 @@ class MainWindow(QMainWindow):
         #: **每次到点现读这一个成员，不把它塞进调度器**：勾选框改完要在下一次到点就生效，
         #: 而调度器（与它的那三本账）压根不该知道"用户想不想被打扰"。
         self._reminder_settings: ReminderSettings = self._settings_store.load_reminders()
+        # **自启那条值的自愈。** 程序换过位置之后（用户把 exe 挪了、或者换了安装目录），
+        # 注册表里那一行还指着旧路径，而症状是"登录时什么都没发生"——离改动已经过去
+        # 几周。所以开着这一项就启动时对一次表。
+        #
+        # ``autostart.apply`` **自己先读一遍**，值一样就什么都不做：每次启动都动那个键
+        # 会让杀软与用户都觉得这程序在做可疑的事（它天天改注册表，而界面上什么都没发生）。
+        if self._reminder_settings.autostart:
+            autostart.apply(True)
         #: 用不用**联想通道**（第三通道）。默认关，与任务记忆同住在
         #: ``QSettings`` 的 ``memory/*`` 里，由设置窗口的「记忆」页改。
         #:
@@ -2552,6 +2561,20 @@ class MainWindow(QMainWindow):
         """
         self._reminder_settings = settings
         self._settings_store.save_reminders(settings)
+        # 自启那条注册表值：勾上就写、取消就删。**只在用户显式勾选时才写**（这一句
+        # 就是那条对策的落点），源码检出下 `current_exe()` 是 None、于是它什么都不做。
+        try:
+            changed = autostart.apply(settings.autostart)
+        except OSError as exc:
+            # **写不进去要说出来**（同 `_remember` 那条纪律）：勾了却没生效，而界面上
+            # 那个框仍然勾着——不说的话，用户要等到某天早上的提醒没响才发现。
+            if self._settings_dialog is not None:
+                self._settings_dialog.set_reminder_note(f"自启没能写成：{exc}")
+            return
+        if self._settings_dialog is not None:
+            self._settings_dialog.set_reminder_note(
+                "已设成开机自启。" if changed and settings.autostart else ""
+            )
 
     @Slot(object)
     def _on_memory_changed(self, settings: MemorySettings) -> None:

@@ -42,6 +42,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import QApplication, QLabel
 
+from axo import autostart
 from axo.ui import settings_dialog
 from axo.ui.settings_dialog import (
     AppearancePage,
@@ -1687,3 +1688,68 @@ def test_revert_puts_the_reminder_boxes_back(qapp: Any) -> None:
     before = len(seen)
     page.revert()
     assert len(seen) == before
+
+
+# ── 提醒页：开机自启那一格 ──────────────────────────────────────────────────
+#
+# 这一格与前两格不同：它**可能在本次运行里根本设不了**（源码检出、或者不是 Windows），
+# 而那时界面的责任是"说清为什么"，不是"勾上之后没反应"。
+
+
+def test_the_autostart_box_is_greyed_out_when_it_cannot_work(qapp: Any, data_root: Path) -> None:
+    """设不了的时候：框灰着，命令行那一行**写的正是原因**。
+
+    这一版跑的是源码（不是打包出来的 exe），``sys.executable`` 是 python.exe——写进去的话
+    "开机自启"启动的是一个没有脚本可跑的 Python。所以那个框勾不上，而旁边那行把它说清楚。
+    **"勾了却没生效"比"勾不上"坏得多。**
+    """
+    page, _seen = _reminder_page()
+
+    assert page.autostart_box.isEnabled() is False
+    assert page.command_label.text() == autostart.unavailable_reason()
+    assert page.command_label.text(), "灰着却一个字都不说"
+
+
+def test_the_autostart_box_shows_the_exact_command(qapp: Any, data_root: Path, monkeypatch) -> None:
+    """能设的时候：命令行**逐字摆出来**。
+
+    它是"用户看得见他同意了什么"的落点，也是排查"自启没生效"唯一要看的东西——命令行
+    对了，问题就在别处。所以这里比的是那一整串，而不是"含 axo 这个词"。
+    """
+    exe = Path(r"C:\Program Files\Axoxo.exe")
+    monkeypatch.setattr(autostart, "is_supported", lambda: True)
+    monkeypatch.setattr(autostart, "current_exe", lambda: exe)
+    page, seen = _reminder_page()
+
+    assert page.autostart_box.isEnabled() is True
+    assert page.command_label.text() == f"登录时会执行：{autostart.command_for(exe)}"
+
+    page.autostart_box.setChecked(True)
+    assert seen[-1].autostart is True
+
+
+def test_a_greyed_autostart_box_keeps_the_stored_value(qapp: Any, data_root: Path) -> None:
+    """设不了的时候，那一格**原样带着快照走**。
+
+    不这样的话：源码检出下打开设置页、随手勾一下「由她说一句」，就会把打包版设好的自启
+    **静默写成关**——而那个框本来就是灰的，用户完全看不出这件事发生过。
+    """
+    page, seen = _reminder_page(ReminderSettings(autostart=True))
+
+    page.speak_box.setChecked(False)
+
+    assert seen == [ReminderSettings(wake_on_alert=True, speak_on_alert=False, autostart=True)]
+
+
+def test_the_autostart_note_has_its_own_line(qapp: Any, data_root: Path) -> None:
+    """主窗口回填结果的那一行（"已设成开机自启" / "自启没能写成：…"）。
+
+    与图状态、巩固那两行同一个形状：**成功也走这里**（空串 = 没事），复述两处就会出现
+    两个说法，而它们迟早会在某条分支上分叉。
+    """
+    page, _seen = _reminder_page()
+
+    page.set_note("自启没能写成：拒绝访问")
+    assert page.autostart_note.text() == "自启没能写成：拒绝访问"
+    page.set_note("")
+    assert page.autostart_note.text() == ""

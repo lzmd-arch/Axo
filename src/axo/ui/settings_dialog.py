@@ -61,6 +61,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .. import autostart
 from ..llm import openai_compat
 from ..llm.ollama import probe
 from ..paths import wallpapers_dir
@@ -1351,7 +1352,44 @@ class ReminderPage(QWidget):
                 "托盘气泡与对话区那一条一个字都不变。"
             )
         )
+
+        outer.addSpacing(6)
+        outer.addWidget(_section("程序没开着的时候"))
+        #: 这台机器上为什么设不了自启（空串 = 能设）。**灰掉那个框，而不是让它勾上
+        #: 之后没反应**——"勾了却没生效"比"勾不上"坏得多，而这里两种情形都说得清。
+        self._autostart_reason = autostart.unavailable_reason()
+        self.autostart_box = QCheckBox("开机时自动运行，把错过的补上", self)
+        self.autostart_box.setObjectName("autostartBox")
+        self.autostart_box.setChecked(self._snapshot.autostart)
+        self.autostart_box.setEnabled(not self._autostart_reason)
+        self.autostart_box.toggled.connect(self._on_toggled)
+        outer.addWidget(self.autostart_box)
+        outer.addWidget(
+            _hint(
+                "程序关着的那段时间里到点的提醒，会在下次登录时由它补一条气泡。"
+                "这一项与上面两项无关：上面两项管「提醒响的时候」，它管「程序根本没在跑」。"
+            )
+        )
+        # **完整命令行摆出来。** 用户看得见他同意了什么（写进注册表的就是这一行），
+        # 而"自启没生效"时这也是唯一要看的东西——命令行对了，问题就在别处。
+        self.command_label = QLabel(self._command_text(), self)
+        self.command_label.setObjectName("autostartCommand")
+        # 可选中：出问题时用户能把它复制出来。
+        self.command_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.command_label.setWordWrap(True)
+        outer.addWidget(self.command_label)
+        self.autostart_note = _hint("")
+        self.autostart_note.setObjectName("autostartNote")
+        outer.addWidget(self.autostart_note)
         outer.addStretch(1)
+
+    def _command_text(self) -> str:
+        """那一行命令行；设不了的时候写的是原因（见 ``autostart.unavailable_reason``）。"""
+        if self._autostart_reason:
+            return self._autostart_reason
+        exe = autostart.current_exe()
+        assert exe is not None, "unavailable_reason 非空时才会走到上面那一支"
+        return f"登录时会执行：{autostart.command_for(exe)}"
 
     def set_state(self, settings: ReminderSettings) -> None:
         """**打开窗口时调，陈述现状。** 顺带重置快照（同记忆页的道理：撤销回到的是
@@ -1367,6 +1405,7 @@ class ReminderPage(QWidget):
         try:
             self.wake_box.setChecked(settings.wake_on_alert)
             self.speak_box.setChecked(settings.speak_on_alert)
+            self.autostart_box.setChecked(settings.autostart)
         finally:
             self._syncing = False
 
@@ -1377,6 +1416,14 @@ class ReminderPage(QWidget):
         return ReminderSettings(
             wake_on_alert=self.wake_box.isChecked(),
             speak_on_alert=self.speak_box.isChecked(),
+            # **设不了的时候，这一位原样带着快照走。** 不这样写的话：源码检出下打开
+            # 设置页、随手勾一下上面那两项，就会把打包版设好的自启**静默写成关**——
+            # 那个框本来就是灰的，用户完全看不出这件事发生过。
+            autostart=(
+                self._snapshot.autostart
+                if self._autostart_reason
+                else self.autostart_box.isChecked()
+            ),
         )
 
     def revert(self) -> None:
@@ -1385,6 +1432,14 @@ class ReminderPage(QWidget):
             return
         self.set_state(self._snapshot)
         self.changed.emit(self.current())
+
+    def set_note(self, text: str) -> None:
+        """由主窗口回填"注册表那条值改成了没有"。**成功也走这里**（空串 = 没事）。
+
+        与图状态、巩固那两行同一个形状：复述两处就会出现两个说法，而它们迟早会在某条
+        分支上分叉。
+        """
+        self.autostart_note.setText(text)
 
     def _on_toggled(self, _checked: bool) -> None:
         if self._syncing:
@@ -1677,6 +1732,10 @@ class SettingsDialog(QDialog):
 
     def set_backend_note(self, note: str) -> None:
         self.backend.set_note(note)
+
+    def set_reminder_note(self, note: str) -> None:
+        """同上，转给提醒页那一行（自启那条注册表值改没改成）。"""
+        self.reminders.set_note(note)
 
     def set_graph_note(self, note: str) -> None:
         """图状态的唯一出口。**空串会写成默认那句**，见 ``MemoryPage.set_graph_note``。"""

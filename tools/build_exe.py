@@ -42,6 +42,7 @@ import ast
 import base64
 import hashlib
 import importlib.metadata
+import json
 import mmap
 import os
 import re
@@ -827,6 +828,153 @@ def _probe(name: str, wait: float) -> list[str]:
         shutil.rmtree(probe_state, ignore_errors=True)
 
 
+_REMIND_FLAG = "--remind"
+"""登录时那一支的开关（``axo.exe --remind``）。
+
+**名字必须与 ``src/axo/ui/app.py`` 的 ``REMIND_FLAG`` 逐字相同**，理由与
+:data:`_PROBE_STATE_ENV` 那条一样，只是后果更持久：这个字符串会被 ``axo.autostart``
+写进 ``HKCU\\...\\Run``，从此固定在那台机器上。两边改岔了，已经设过自启的机器会在
+下次登录时把一个不认识的参数交给程序——而那个症状（登录时什么都不发生）离这次改动
+已经过去几周。``tests/test_packaging.py`` 断言两者一致。
+"""
+
+#: ``--remind`` 那一次最多等多久（秒）。
+#:
+#: 它**不是** :func:`_probe` 那种"等窗口出现"的等待：那是一个跑完就退的进程，自己
+#: 最多花 6 秒（气泡在屏幕上待的时间，见 ``axo.ui.notify.BALLOON_MS``）。30 秒是留给
+#: 冷启动读盘的余量——冻结产物第一次读盘那几秒是实打实的。
+_REMIND_TIMEOUT = 30.0
+
+#: ``--remind`` 自检用的数据目录前缀，同样是临时目录、起完就删。
+_REMIND_DATA_PREFIX = "axo-remind-"
+
+
+def _check_remind(name: str) -> list[str]:
+    """第 7 条：``--remind`` 那一次**真的跑通了**。
+
+    **它为什么值得一条自检。** 那是登录时跑的、没有控制台的一条路：坏掉的表现是
+    "某天早上的提醒没响"，而那时离改动已经过去几周——没有任何一处会报错，用户也
+    想不起来该去哪儿看。构建那一刻是这个 bug 唯一便宜的可观测窗口。
+
+    **判据是两件事：**
+
+    1. **它跑完了**——退出码 0（通知弹出来了）或 1（到点了但气泡弹不出来）。
+       ``headless.run`` 的退出码里 2 是"提醒那几本账读不了"，那是**真的坏了**，所以
+       不收。1 收下的理由见下。
+    2. **fired 账多了恰好一行，而且那行带 ``by: "remind"``**——这一条比退出码值钱：
+       它证明这次真的走完了"先标 fired 再弹"那两步，而不是在某一支上提前返回了。
+       ``by`` 是那两个入口（GUI / 无头）唯一的区分标志，也是"多开了两次各弹一遍"那条
+       已知取舍的诊断依据。
+
+    **通知弹没弹不判**（计划书那句）：无头会话下弹不出来是正常的，而那种机器上退出码
+    就是 1。所以这里收 0 与 1 两种，并把是哪一个打出来——"这台机器上气泡弹不出来"
+    是一件该被知道、但不该让构建失败的事。
+
+    自检喂进去的那条提醒**是六十秒前到点的**，于是这一次必然有活干：不喂的话，一个
+    "因为没东西可做而什么都不做"的产物也会拿到退出码 0。
+    """
+    exe = _DIST / name / f"{name}.exe"
+    if not exe.is_file():
+        return [f"没有产物可起：{exe.relative_to(_ROOT).as_posix()}"]
+
+    # 退出码从那一边取，不在这里抄一遍：抄的话，某天改了 `headless.run` 的那三个常量，
+    # 这条自检会开始对着一个过时的值点头（同 :func:`_builtin_persona_ref` 那条理由）。
+    sys.path.insert(0, str(_ROOT / "src"))  # 与其他 tools/ 脚本同一手法
+    from axo.headless import EXIT_NOTIFY_FAILED, EXIT_OK, EXIT_UNREADABLE
+
+    data = Path(tempfile.mkdtemp(prefix=_REMIND_DATA_PREFIX))
+    state = Path(tempfile.mkdtemp(prefix=_PROBE_STATE_PREFIX))
+    try:
+        due = time.time() - 60
+        # 手写一行登记簿：**不经过工具层**（那要一个模型）。形状与
+        # ``agent/reminders.py`` 的 ``to_dict`` 一致，而这里只用得到这四个键
+        # ——一次性的提醒没有 ``repeat`` / ``weekdays``。
+        # 正文刻意写成"不该真的打扰你"：万一有人在真机器上跑自检时它真的弹了气泡，
+        # 那句话本身就是解释。
+        (data / "reminders.jsonl").write_text(
+            json.dumps(
+                {
+                    "reminder_id": "build-check-remind",
+                    "text": "构建自检：这条不该真的打扰你",
+                    "due_at": due,
+                    "created_at": due - 10,
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+
+        environment = os.environ.copy()
+        # 与 :func:`_probe` 同一条：本进程画图标那一步设过 ``offscreen``，而 ``Popen``
+        # 默认继承环境——被继承的话 Qt 不建 Win32 托盘，气泡必然弹不出来（那会让这条
+        # 自检在一个本来好好的机器上报 1）。
+        environment.pop("QT_QPA_PLATFORM", None)
+        environment["AXO_DATA"] = str(data)
+        environment[_PROBE_STATE_ENV] = str(state)
+
+        try:
+            done = subprocess.run(
+                [str(exe), _REMIND_FLAG],
+                cwd=str(exe.parent),
+                env=environment,
+                timeout=_REMIND_TIMEOUT,
+                capture_output=True,
+            )
+        except subprocess.TimeoutExpired:
+            return [
+                f"{exe.name} {_REMIND_FLAG} 在 {_REMIND_TIMEOUT:.0f} 秒内没有退出——"
+                "登录时那条路会挂在那儿，而且没有任何人会看见。"
+            ]
+
+        if done.returncode == EXIT_UNREADABLE:
+            return [
+                f"{exe.name} {_REMIND_FLAG} 说「提醒那几本账读不了」（退出码 2）。"
+                "登录时那条路会在读盘这一步上停住，而它读的是隔离目录里刚写下的那一本。"
+            ]
+        if done.returncode not in (EXIT_OK, EXIT_NOTIFY_FAILED):
+            return [
+                f"{exe.name} {_REMIND_FLAG} 退出了，但退出码是 {done.returncode}"
+                f"（只认 {EXIT_OK} 与 {EXIT_NOTIFY_FAILED}）。"
+                f"stderr：{done.stderr.decode('utf-8', 'replace').strip()[:400]}"
+            ]
+
+        ledger = data / "reminders.fired.jsonl"
+        if not ledger.is_file():
+            return [
+                f"{exe.name} {_REMIND_FLAG} 跑完了，但 fired 账根本没有被创建——"
+                "那条提醒没有在任何地方留下「响过」的痕迹，于是下次登录会再弹一遍。"
+            ]
+        rows = [
+            json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines() if line
+        ]
+        if len(rows) != 1:
+            return [
+                f"{exe.name} {_REMIND_FLAG} 往 fired 账里写了 {len(rows)} 行，应当是 1 行"
+                "（喂进去的只有一条到点的提醒）。"
+            ]
+        if rows[0].get("by") != "remind":
+            return [
+                f"{exe.name} {_REMIND_FLAG} 写下的那一行 by={rows[0].get('by')!r}，"
+                '应当是 "remind"——那个字段是两个入口唯一的区分标志。'
+            ]
+
+        # **不是问题，是一条该被知道的事实。**
+        print(
+            f"  {_REMIND_FLAG} 自检：退出码 {done.returncode}"
+            + (
+                "（气泡没弹出来——这台机器上托盘不可用，登录时那样是正常的）"
+                if done.returncode == EXIT_NOTIFY_FAILED
+                else "（气泡弹出来了）"
+            )
+        )
+        return []
+    finally:
+        shutil.rmtree(data, ignore_errors=True)
+        shutil.rmtree(state, ignore_errors=True)
+
+
 def _size_of(path: Path) -> int:
     """一个文件或一棵目录树的字节数（目录递归）。"""
     if path.is_file():
@@ -1028,6 +1176,16 @@ HKEY_CURRENT_USER\\Software\\Axo\\axo，删掉即清空。
 
 另外，把一行绝对路径写进程序文件夹旁边的 axo-data.txt，程序也会认——那是便携用法，
 把整个文件夹拷到别的机器上也带着走。这个文件程序只读，不会自己创建或改动。）
+
+程序没开着的时候
+----------------
+提醒只在程序开着的时候才会响。想让它在你不开程序的时候也管用，去"设置 → 提醒"勾上
+"开机时自动运行，把错过的补上"：以后每次登录 Windows，它都会安静地看一眼有没有到点
+的提醒，有就弹一条气泡，然后自己退出。
+
+**默认是关的，要你自己勾。** 勾上之后程序会在注册表里加一行（位置是
+HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run）；
+取消勾选会把那一行删掉，不留下别的东西。
 
 先说清楚哪里还不行
 ------------------
@@ -1559,6 +1717,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         problems += _check_gpl_pruned(name)
         problems += _probe(name, args.wait)
+        # ``--remind`` 那一条与活体探测同一批：它也是一个"起一次真产物看结果"的判据，
+        # 而且比探测便宜得多（跑完就退，最多 6 秒）。
+        problems += _check_remind(name)
 
     if args.release and not problems:
         problems += _check_residue(name)

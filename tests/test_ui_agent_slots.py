@@ -29,6 +29,7 @@ import pytest
 from fakes import ScriptedBackend, text_chunk
 from PySide6.QtCore import QCoreApplication, QEvent, QObject
 
+from axo import autostart
 from axo.agent.gate import APPROVAL_TIMEOUT_S
 from axo.agent.reminders import Alert, Occurrence, Reminder
 from axo.llm.base import ChatMessage, ToolCall
@@ -124,6 +125,16 @@ class FakeTimer:
         self.stops += 1
 
 
+class FakeDialog:
+    """``SettingsDialog`` 那一半：只记"被回填了哪句话"。"""
+
+    def __init__(self) -> None:
+        self.notes: list[str] = []
+
+    def set_reminder_note(self, note: str) -> None:
+        self.notes.append(note)
+
+
 class FakeSettingsStore:
     """``SettingsStore`` 那一半：只记"存过哪几份"。"""
 
@@ -205,6 +216,8 @@ class Stub(QObject):
         #: 提醒那两个开关（设置 → 提醒）。默认那一份 = 两个都开，与真程序一致。
         self._reminder_settings = ReminderSettings()
         self._settings_store = FakeSettingsStore()
+        #: 设置窗口（可能还没开）。``_on_reminders_changed`` 往它上面回填结果那一行。
+        self._settings_dialog: Any = None
         # 窗口状态：默认"正开着"。三档叫醒各由一条测试改这两个值。
         self.visible = True
         self.minimized = False
@@ -995,6 +1008,54 @@ def test_the_wake_switch_off_means_the_window_stays_put(qapp: Any) -> None:
     assert stub.window_calls == [] and stub.flashes == 0, "叫醒开关关了还把窗口弄动了"
     assert stub._tray.messages, "托盘气泡跟着一起没了"
     assert stub.chat_view.calls[-1][1] == "system"
+
+
+def test_the_autostart_switch_is_parked_on_the_registry_helper(qapp: Any) -> None:
+    """「开机自启」那一格的接线：**它走的是 ``autostart.apply``，而且值原样传过去**。
+
+    这里把那个函数换掉（真跑一遍会往**这台机器**的 ``HKCU\...\Run`` 写一个值——
+    那正是本仓最不想发生的一类副作用：不留痕迹、也不报错）。换掉之后要证的只剩接线：
+    勾上 → ``apply(True)``、取消 → ``apply(False)``。
+
+    顺带钉住"改完开关就说一句"：成功时回填空串（= 没事），因为那一行本来就写着命令行，
+    再写一遍"已设成开机自启"是噪音。
+    """
+    stub = Stub()
+    stub._settings_dialog = FakeDialog()
+    applied: list[bool] = []
+    monkeypatch = pytest.MonkeyPatch()
+    # 替身按"勾上就真的写成了"回话，于是两条分支都走得到：True → 回填那句话，
+    # False（取消，本来就没写）→ 回填空串。
+    monkeypatch.setattr(autostart, "apply", lambda enabled: applied.append(enabled) or enabled)
+    try:
+        stub._on_reminders_changed(ReminderSettings(autostart=True))
+        stub._on_reminders_changed(ReminderSettings(autostart=False))
+    finally:
+        monkeypatch.undo()
+
+    assert applied == [True, False]
+    assert stub._settings_dialog.notes == ["已设成开机自启。", ""]
+
+
+def test_a_registry_failure_is_told_on_the_page(qapp: Any) -> None:
+    """写不进去要说出来（同 ``_remember`` 那条纪律）：勾了却没生效，而界面上那个框
+    仍然勾着——不说的话，用户要等到某天早上的提醒没响才发现。
+    """
+    stub = Stub()
+    stub._settings_dialog = FakeDialog()
+    monkeypatch = pytest.MonkeyPatch()
+
+    def boom(_enabled: bool) -> bool:
+        raise PermissionError("拒绝访问")
+
+    monkeypatch.setattr(autostart, "apply", boom)
+    try:
+        stub._on_reminders_changed(ReminderSettings(autostart=True))
+    finally:
+        monkeypatch.undo()
+
+    assert stub._settings_dialog.notes
+    assert "拒绝访问" in stub._settings_dialog.notes[-1]
 
 
 def test_the_switch_takes_effect_on_the_next_alert_and_is_saved(qapp: Any) -> None:

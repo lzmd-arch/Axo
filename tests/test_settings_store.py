@@ -535,29 +535,50 @@ def test_the_memory_keys_live_in_their_own_namespace() -> None:
 # 提醒照旧响（托盘气泡 + 对话区那条），变的只是"是谁说的、有没有把他叫过来"。
 
 
-def test_both_reminder_switches_are_on_by_default() -> None:
-    """**默认都开。** 三处默认值里的第二处（另外两处在 dataclass 字段与设置页控件）。
+def test_the_reminder_switches_have_their_documented_defaults() -> None:
+    """**前两项默认开、第三项默认关。** 三处默认值里的第二处（另外两处在 dataclass
+    字段与设置页控件）。
 
-    少写这一处（比如写成 ``False``）的症状：新装好的程序里那两个框没勾上，于是
+    少写前两项（比如都写成 ``False``）的症状：新装好的程序里那两个框没勾上，于是
     "到点由她开口"一次都不跑，而**界面上一点异常都看不出来**——提醒照旧弹气泡、
     照旧留一条记录，只是再也不开口。
+
+    第三项反过来：它默认该是**关**。写成 ``True`` 的话，一个刚装好的程序会在用户
+    从没提过这件事的情况下往 ``HKCU\...\Run`` 写一个值——那不是"多一个功能"，
+    是替用户在他的机器上装了一个东西。
     """
     assert SettingsStore(FakeBackend()).load_reminders() == ReminderSettings(
-        wake_on_alert=True, speak_on_alert=True
+        wake_on_alert=True, speak_on_alert=True, autostart=False
     )
 
 
-@pytest.mark.parametrize("wake,speak", [(True, True), (True, False), (False, True), (False, False)])
-def test_the_two_reminder_switches_do_not_share_a_key(wake: bool, speak: bool) -> None:
+@pytest.mark.parametrize(
+    "wake,speak,autostart",
+    [
+        (True, True, False),
+        (True, False, True),
+        (False, True, True),
+        (False, False, False),
+        (True, True, True),
+        (False, False, True),
+    ],
+)
+def test_the_reminder_switches_do_not_share_a_key(wake: bool, speak: bool, autostart: bool) -> None:
     """两个开关读写**各自的键**，四种组合都不许串（同记忆那一组，理由一字不差：
 
     "各自往返"四条在**两个默认值相同时**全绿，而真实症状是两个勾选框永远同进同出。
     这里两个默认值都是真，所以更必须让两格取值不同才构成判别。
     """
     store = SettingsStore(FakeBackend())
-    store.save_reminders(ReminderSettings(wake_on_alert=wake, speak_on_alert=speak))
+    store.save_reminders(
+        ReminderSettings(wake_on_alert=wake, speak_on_alert=speak, autostart=autostart)
+    )
     loaded = store.load_reminders()
-    assert (loaded.wake_on_alert, loaded.speak_on_alert) == (wake, speak)
+    assert (loaded.wake_on_alert, loaded.speak_on_alert, loaded.autostart) == (
+        wake,
+        speak,
+        autostart,
+    )
 
 
 @pytest.mark.parametrize("key", ["reminders/wake_on_alert", "reminders/speak_on_alert"])
@@ -602,6 +623,32 @@ def test_the_reminder_switches_survive_the_type_trap(
     assert getattr(loaded, key.split("/")[-1]) is expected
 
 
+def test_the_autostart_key_keeps_its_own_default_direction() -> None:
+    """这一位读不出来时回落的是**关**，而它走的是同一个 :func:`_as_bool`。
+
+    **它不能搭上面那张表。** 那张表是对着"默认开"的两个键写的（里面有一行
+    ``None → True``）；搭上去的话，代码会为了迁就那张表把"读不出来"写成"开"。
+    而方向在这一位上特别要紧：它管的是"在用户的机器上装一个东西"
+    （写 ``HKCU\...\Run``），把读坏的值变成"开"就是程序替用户做了一个他从没做过
+    的授权决定——与工具页那条"可读目录空着 = 没授权过任何地方"同一个姿态。
+
+    分两半，因为它们由 `_as_bool` 的两个不同分支决定：
+
+    * **形状不对**（``None``、字典、列表）→ 走"回落默认"那一支 → 关；
+    * **形状对、内容是否定**（空串、认不出的词、``0``）→ 关；内容是肯定 → 开。
+      这一半与另外两个开关**完全一样**（同一个函数、同一张词表），不为这一位另立一套。
+    """
+    for stored in (None, {"a": 1}, []):
+        loaded = SettingsStore(FakeBackend({"reminders/autostart": stored})).load_reminders()
+        assert loaded.autostart is False, f"{stored!r} 这种形状回落成了开"
+    for stored in ("", "随便什么", "false", "0", "no", 0):
+        loaded = SettingsStore(FakeBackend({"reminders/autostart": stored})).load_reminders()
+        assert loaded.autostart is False, f"{stored!r} 读成了开"
+    for stored in (True, "true", "1", "yes", 1):
+        loaded = SettingsStore(FakeBackend({"reminders/autostart": stored})).load_reminders()
+        assert loaded.autostart is True, f"{stored!r} 读成了关"
+
+
 def test_the_reminder_keys_live_in_their_own_namespace() -> None:
     """**键的空间分开**（同前面几组）。
 
@@ -615,6 +662,7 @@ def test_the_reminder_keys_live_in_their_own_namespace() -> None:
     assert [key for key, _ in backend.writes] == [
         "reminders/wake_on_alert",
         "reminders/speak_on_alert",
+        "reminders/autostart",
     ]
 
 

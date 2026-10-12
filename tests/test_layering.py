@@ -124,6 +124,13 @@ _PURE_LAYERS = (
     # 密钥加解密（Windows DPAPI）。放进来是为了让「平台相关的代码集中在一个模块」
     # 是一条**可断言**的事实：它只 import ctypes/base64，不碰 Qt、也不碰 httpx。
     "axo/secrets.py",
+    # 自启那条注册表值（Windows 的 Run 键）。**与 ``secrets.py`` 同一条理由**：
+    # 平台相关的代码集中在一个模块，而"它自己不 import Qt"因此是可断言的——这一层
+    # 也不弹任何 UI，要不要写那个键是设置页的事。
+    "axo/autostart.py",
+    # 登录时那一次"看一眼有没有到点的提醒"。它收三本账与一个可注入的通知函数，
+    # 于是整条逻辑（含"通知弹不出来"那一支）在核心腿里能用假件逐条断言。
+    "axo/headless.py",
     "axo/session",
     "axo/ui/color.py",
     "axo/ui/theme.py",

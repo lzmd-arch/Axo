@@ -301,6 +301,47 @@ def test_the_probe_isolates_the_settings_and_the_qt_cache() -> None:
     assert "rmtree" in names, "探测起完没清理，临时目录会攒在系统临时目录里"
 
 
+def test_the_two_copies_of_the_remind_flag_agree() -> None:
+    """``--remind`` 这个名字也写了两份，而**后果比环境变量那条更持久**：
+
+    ``axo.autostart`` 会把它写进 ``HKCU\...\Run``，从此固定在那台机器上。两边改岔了，
+    已经设过自启的机器会在下次登录时把一个**不认识的参数**交给程序——而那个症状
+    （登录时什么都不发生）离这次改动已经过去几周。
+    """
+    from axo.ui.app import REMIND_FLAG
+
+    assert _declared("_REMIND_FLAG") == REMIND_FLAG
+
+
+def test_the_remind_check_runs_the_real_product_with_an_isolated_data_dir() -> None:
+    """``--remind`` 那条自检必须：起真产物、喂一条到点的提醒、**隔离数据目录**。
+
+    与 ``test_the_probe_isolates_the_settings_and_the_qt_cache`` 同一条纪律，
+    而且这一条更硬一点：那一次会**写** fired 账。不隔离的话，每次构建都会往使用者的
+    真提醒簿里多写一行"构建自检：这条不该真的打扰你"——而构建日志里一个字都不显示。
+    """
+    tree = ast.parse(_BUILD_TOOL.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "_check_remind":
+            found = {item.id for item in ast.walk(node) if isinstance(item, ast.Name)}
+            found |= {item.attr for item in ast.walk(node) if isinstance(item, ast.Attribute)}
+            # **字符串字面量也算**：`environment["AXO_DATA"] = ...` 里那个键是一个常量，
+            # 而"有没有隔离数据目录"这件事正好只在那一行上看得出来。
+            found |= {
+                item.value
+                for item in ast.walk(node)
+                if isinstance(item, ast.Constant) and isinstance(item.value, str)
+            }
+            break
+    else:
+        raise AssertionError(f"{_BUILD_TOOL.name} 里没有 _check_remind 这个函数")
+
+    assert "_REMIND_FLAG" in found, "自检没有真的把那个开关交给产物"
+    assert "AXO_DATA" in found, "自检没有隔离数据目录"
+    assert "_PROBE_STATE_ENV" in found, "自检没有隔离界面设置（那次会读数据根的设置）"
+    assert "rmtree" in found, "自检起完没清理，临时目录会攒在系统临时目录里"
+
+
 def test_the_two_copies_of_the_environment_variable_name_agree() -> None:
     """那个环境变量名写了两份，而**写歪了的症状是"设了一个没人认的变量"**——
     自检以为隔离好了，实际照样在改使用者的注册表。

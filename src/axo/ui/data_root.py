@@ -166,6 +166,25 @@ def _refused(summary: str, source: Path, destination: Path, *notes: str) -> Move
     )
 
 
+def resolve_data_root(backend: SettingsBackend) -> None:
+    """**只解析**：把这次进程用哪个数据根定下来。不动盘、不读标记、不办搬迁。
+
+    抽出来是因为**无头入口也要走同一条解析**（``--remind``，登录时跑一次，见
+    :mod:`axo.headless`）：那一次要读提醒簿，而"提醒簿在哪"与主窗口是同一个问题。
+    它要是自己拼一个默认位置，症状是——用户在设置里把数据目录搬到了 ``D:\\AxoData``，
+    而无头入口读到的是一本**空的**提醒簿，于是**每天开机什么都不做，界面上一个字都
+    不显示**。四档优先级（环境变量 > 便携指针 > 注册表 > 默认）只该有一处实现，
+    这一处就是它。
+
+    **不办搬迁，也不读标记。** 迁移是跨重启的大事（先落旗、再动盘、最后提交位置），
+    不该由一个登录任务顺手办掉——那会让"搬了一半"发生在一个没人看着的进程里。
+    要办搬迁的只有 :func:`boot_data_root` 那一条路。
+    """
+    store = SettingsStore(backend)
+    stored = store.stored_data_root()
+    paths.set_data_root(Path(stored) if stored else None)
+
+
 def boot_data_root(
     backend: SettingsBackend,
     *,
@@ -181,8 +200,7 @@ def boot_data_root(
         paths.set_data_root(root)
 
     store = SettingsStore(backend)
-    stored = store.stored_data_root()
-    paths.set_data_root(Path(stored) if stored else None)
+    resolve_data_root(backend)
 
     marker = read_marker(backend)
     if marker is None:
