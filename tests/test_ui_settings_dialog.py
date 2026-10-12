@@ -117,7 +117,7 @@ def _page(theme: Theme | None = None) -> tuple[AppearancePage, list[Theme]]:
 def test_there_is_a_swatch_for_every_preset(qapp, data_root) -> None:
     page, _ = _page()
     assert set(page._swatches) == {item.key for item in PRESETS}
-    assert len(page._swatches) == 3
+    assert len(page._swatches) == 4
 
 
 def test_clicking_a_preset_emits_a_complete_theme(qapp, data_root) -> None:
