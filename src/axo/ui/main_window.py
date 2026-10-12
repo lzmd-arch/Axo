@@ -103,7 +103,14 @@ from ..memory import (
 )
 from ..memory.browse import format_ts
 from ..memory.consolidation import ConsolidationRun, last_run, summary_line
-from ..paths import memory_db_path, reminders_fired_path, reminders_path, sessions_dir
+from ..paths import (
+    data_dir,
+    data_root_source,
+    memory_db_path,
+    reminders_fired_path,
+    reminders_path,
+    sessions_dir,
+)
 from ..session.assemble import Assembly, Layer, layer_ceiling, stored_rows
 from ..session.budget import TokenBudget, TokenMeter
 from ..session.environment import build_environment
@@ -114,6 +121,7 @@ from .app import make_settings
 from .chat_view import ChatView
 from .chat_worker import ChatWorker, ModelListWorker
 from .consolidation_scheduler import MIN_DELAY_MS, ConsolidationScheduler
+from .data_root import MoveReport, discard_source
 from .layout import plan_pane_sizes
 from .memory_window import MemoryWindow
 from .memory_worker import (
@@ -379,6 +387,13 @@ class MainWindow(QMainWindow):
         self._consolidation_interval_s: int = (
             self._settings_store.load_memory().consolidation_interval_s
         )
+        #: **这个进程实际在用哪个数据目录**，以及它听谁的（默认位置 / 你选的 /
+        #: 便携指针文件 / 环境变量）。位置本身是 ``ui/app.py`` 在建本窗口**之前**定下
+        #: 来的（不能在构造函数里定：下面几行一执行，这四个 store 就把路径焊死了）。
+        #: 这里只是把结果记下来给设置页显示——它每次打开都现读，因为真源在 ``paths``
+        #: 那边，而搬迁是跨重启才生效的。
+        self._data_root: Path = data_dir()
+        self._data_source: str = data_root_source()
         self._store = SessionStore(sessions_dir())
         # 记忆库与逐字稿是**两个库**，见 session/store.py 的模块文档：删聊天记录
         # 不该有概率删掉长期记忆。参数可注入是为了让界面能在临时目录上被测试。
@@ -2632,6 +2647,54 @@ class MainWindow(QMainWindow):
         self.show()
         self.raise_()
         self.activateWindow()
+
+    def report_data_move(self, report: MoveReport) -> None:
+        """把这次启动在搬迁上做的事说出来。**由 ``ui/app.py`` 在 ``show()`` 之后调。**
+
+        为什么要等到这会儿：搬迁发生在**新进程打开任何东西之前**，那时还没有窗口，
+        既没有地方说、抛异常又等于"程序打不开"。
+
+        复制成功的那一路会问一句"旧的那份删不删"——那一问只能在这里问，因为"复制完
+        了"这个事实只存在于新进程里。失败与被拒都只说一句、落在对话流里，**不弹框**：
+        用户没做错什么，只是那次搬迁没成，而程序照常开着、用的还是原来那个位置。
+        """
+        summary = " ".join([report.summary, *report.notes])
+        if report.ok and report.offers_to_delete_source and report.source is not None:
+            self.chat_view.append_message("system", summary)
+            self._ask_about_the_old_copy(report.source)
+            return
+        self.chat_view.append_message("system", summary)
+
+    def _ask_about_the_old_copy(self, source: Path) -> None:
+        """问一句旧的那份留不留，并按回答处置。
+
+        **默认是"保留"。** 旧的那份是用户唯一的退路，而删掉不可逆——一个回车按下去
+        就没了。所以默认按钮是"保留"，而且真要删还得再确认一次它看起来确实像一份
+        数据根（见 :func:`~axo.ui.data_root.discard_source` 那三道闸）。
+        """
+        if not self._confirm_delete_source(source):
+            self.chat_view.append_message("system", f"旧的那份留在 `{source}`，你自己看着办。")
+            return
+        if discard_source(source, current_root=self._data_root):
+            self.chat_view.append_message("system", f"已经把 `{source}` 删掉了。")
+        else:
+            self.chat_view.append_message(
+                "system", f"`{source}` 没能删掉（它看起来不像一份数据根，或者删不动）。"
+            )
+
+    def _confirm_delete_source(self, source: Path) -> bool:
+        """问一句"旧的那份删不删"。**独立一个方法是为了让测试能盖掉它**——
+        弹真对话框的测试跑不了（同 ``settings_dialog`` 里那几个可覆盖的选择框）。"""
+        answer = QMessageBox.question(
+            self,
+            "记忆已经搬到新位置",
+            f"要不要把旧位置那份也删掉？\n\n{source}\n\n"
+            "留着它不占什么，而且万一新位置出问题，它还能用；"
+            "删掉之后就只剩新位置那一份了。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
 
     def _shutdown(self) -> None:
         """**唯一的退出路径。** 幂等。
