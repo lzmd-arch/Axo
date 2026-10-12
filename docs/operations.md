@@ -487,11 +487,32 @@ python tools/build_exe.py --release --skip-build    # 产物已经在 dist/ 里�
    那张表逐条比。**多一个、少一个、版本对不上，都红**——一份没人核对的手写清单，唯一的
    结局是慢慢与现实脱节，而那种失效看起来一切正常。
 
-**隔离数据目录这一条修掉的是个真毛病。** 原来的活体探测只弹掉了 `QT_QPA_PLATFORM`，
-没有隔离数据目录——于是子进程按 `paths.data_dir()` 落到 `%LOCALAPPDATA%\axo`，
-**每次构建都拿你自己的真库起一遍应用**，往真库里写内置锚、真库里本来就有的东西也一并被
-读到，而构建日志里一个字都不显示。现在子进程拿到一个临时目录，"这次构建碰过我的库没有"
-这个问题才有答案，而且答案是"没有"。
+**隔离这一条修掉的是个真毛病，而且修了两次。** 第一次：原来的活体探测只弹掉了
+`QT_QPA_PLATFORM`，没有隔离数据目录——于是子进程按 `paths.data_dir()` 落到
+`%LOCALAPPDATA%\axo`，**每次构建都拿你自己的真库起一遍应用**，往真库里写内置锚、真库里
+本来就有的东西也一并被读到，而构建日志里一个字都不显示。现在子进程拿到一个临时目录，
+"这次构建碰过我的库没有"这个问题才有答案，而且答案是"没有"。
+
+第二次（2026-10-12 实测发现的）：**`AXO_DATA` 只隔离了一半。** 它只管得到 `axo.paths`
+（记忆与数据），而程序还会往两个与它无关的地方写——`QSettings` 落真注册表里那个
+`backend/last_model`（拉完模型列表无条件回填那一句），WebEngine 的管线缓存落真
+`%LOCALAPPDATA%\Axo\axo\cache`（`app.py` 设了组织名/应用名之后，默认 profile 就按
+`QStandardPaths` 算）。两条都**不受 `AXO_DATA` 影响**。
+
+所以还得再设一个 `AXO_ISOLATED_STATE`：应用侧的处理在
+`axo.ui.app.configure_isolated_state`（把 `QSettings` 切到 ini 格式 + 把 `QStandardPaths`
+开到测试模式），`_probe` 那边由 `_PROBE_STATE_ENV` 传进去、并负责清理临时目录。
+`tests/test_packaging.py` 有两条判据钉着它——`_probe` 必须真的设那个变量并清理，以及那个
+变量名与 `axo/ui/app.py` 里的那一份**逐字相同**（写歪的症状是"设了一个没人认的变量"：
+自检以为隔离好了，实际照样在改使用者的注册表）。
+
+这一条**必须先于"新手引导"落地**，理由不是洁癖：引导那个"走过了"的标记写在同一个注册表
+里。探测一旦把它写成 `1`，这台机器上引导再也不会出现——而构建日志里仍然一个字都不显示。
+
+`tools/_smoke_*.py` 那五个脚本也各自设了这两样。它们自己建 `QApplication`、不走
+`axo.ui.app.main`，所以除了设环境变量，还得在建 `QApplication` **之前**调一次
+`configure_isolated_state()`——光设变量没用。其中 `_smoke_window.py` 原来连 `AXO_DATA`
+都没设，而它构造的是**真 `MainWindow`**；`_smoke_webview.py` 同样一个都没设。
 
 产物是 `dist/axo-<版本>-win64.zip`（版本从 `pyproject.toml` 读，不写第二份常量），
 顶层一个目录，里面是产物树 + `README.txt`（**写给拿到它的人**，不出现本仓行话——由

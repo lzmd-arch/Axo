@@ -38,7 +38,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, QSettings, Qt, QThread, QUrl, Signal, Slot
+from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal, Slot
 from PySide6.QtGui import QAction, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -110,6 +110,7 @@ from ..session.environment import build_environment
 from ..session.indicator import ContextState, context_state, format_context
 from ..session.store import Message, Session, SessionStore, new_session_id
 from .agent_worker import AgentWorker
+from .app import make_settings
 from .chat_view import ChatView
 from .chat_worker import ChatWorker, ModelListWorker
 from .consolidation_scheduler import MIN_DELAY_MS, ConsolidationScheduler
@@ -127,8 +128,6 @@ from .reminder_scheduler import ReminderScheduler
 from .settings_dialog import SettingsDialog
 from .settings_store import (
     PROVIDER_OLLAMA,
-    SETTINGS_APP,
-    SETTINGS_ORG,
     BackendSettings,
     MemorySettings,
     SettingsStore,
@@ -144,9 +143,10 @@ from .window_place import place_window
 
 __all__ = ["MainWindow"]
 
-#: ``QSettings`` 的组织名/应用名**不在这里**：``ui/app.py`` 也要在建主窗口之前
-#: 读一次位置指针，而两个入口各写一份字符串就会变成"启动时读的是 A、运行时读写的
-#: 是 B"，症状是"设置改了不生效"。真源是 :data:`~axo.ui.settings_store.SETTINGS_ORG`。
+#: ``QSettings`` 怎么建**不在这里**：``ui/app.py`` 的 :func:`~axo.ui.app.make_settings`
+#: 是唯一入口。两个地方各建一次的话，隔离模式下会变成"启动时读的是 ini 文件、运行时
+#: 读写的是注册表"（两参数的构造认不出默认格式，见那个函数的 docstring），症状是
+#: "设置改了不生效"。
 
 #: 账本面板展开时的名义宽度**不在这里**：它在
 #: :data:`axo.ui.layout.LEDGER_WIDTH`，与夹紧逻辑住在一起。这里再留
@@ -306,7 +306,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Axo")
         self._place_window()
 
-        self._settings = QSettings(SETTINGS_ORG, SETTINGS_APP)
+        self._settings = make_settings()
         self._settings_store = SettingsStore(QSettingsBackend(self._settings))
 
         # **外观必须在建控件之前定好。** 应用级样式表与调色板一旦设置，之后建的

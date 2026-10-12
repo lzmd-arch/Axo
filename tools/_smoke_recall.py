@@ -47,9 +47,19 @@ POLL_INTERVAL_MS = 1000
 
 
 def _prepare_env(data_dir: str) -> None:
-    """数据目录必须在 import axo 之前设好——paths 首次调用时缓存它。"""
+    """把数据目录与界面设置都在建 QApplication 之前定下来。
+
+    **不是因为"paths 首次调用时会缓存"**——那一层没有缓存，每次现算。
+    早设是因为 configure_isolated_state 必须在 Qt 初始化之前跑，而它读的
+    就是这里设的环境变量；数据目录早设只是让"谁在什么时候读到哪个值"
+    没有歧义。父进程与子进程都过这里（子进程是重新跑一遍本文件）。
+    """
     os.environ["AXO_DATA"] = data_dir
+    os.environ["AXO_ISOLATED_STATE"] = tempfile.mkdtemp(prefix="memterm-p1-state-")
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from axo.ui.app import configure_isolated_state
+
+    configure_isolated_state()
 
 
 # ── 两段共用的一段：起窗口、提交一句话、等回复落地 ─────────────────────────────

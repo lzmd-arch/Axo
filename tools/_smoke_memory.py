@@ -32,6 +32,7 @@ from typing import Any
 # 必须在 import axo 之前设好——paths 模块在首次调用时解析并缓存目录。
 _TMP = Path(tempfile.mkdtemp(prefix="memterm-memui-"))
 os.environ["AXO_DATA"] = str(_TMP)
+os.environ["AXO_ISOLATED_STATE"] = tempfile.mkdtemp(prefix="memterm-memui-state-")
 
 import numpy as np  # noqa: E402
 from PySide6.QtCore import Qt, QTimer  # noqa: E402
@@ -39,6 +40,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from tools_support import RecordingChatView  # noqa: E402
 
 import axo.ui.main_window as main_window_module  # noqa: E402
+from axo.ui.app import configure_isolated_state  # noqa: E402
 from memcore.ids import new_ulid  # noqa: E402
 from memcore.sdr import encode_lexical  # noqa: E402
 from memcore.types import MemoryItem, MemoryKind, Taint, Tier  # noqa: E402
@@ -90,6 +92,7 @@ def _select(mw: Any, memory_id: str) -> bool:
 
 
 def main() -> int:
+    configure_isolated_state()
     app = QApplication.instance() or QApplication(sys.argv)
     problems: list[str] = []
 

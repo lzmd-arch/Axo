@@ -265,3 +265,51 @@ def test_the_release_readme_answers_the_questions_a_reader_has() -> None:
         "LGPL-3.0",  # 唯一的 copyleft 依赖，读者有权知道
     ):
         assert needle in text, f"发给读者的说明里没提 {needle}"
+
+
+def _probe_names() -> set[str]:
+    """``_probe`` 函数体里出现过的标识符（含 ``shutil.rmtree`` 那个 ``rmtree``）。
+
+    按 AST 读而不是 grep 源码：grep 会把注释与 docstring 里的同一个词也算上，而
+    这条要问的是"代码里到底调没调它"——`_probe` 的 docstring 里恰好大段讨论这件事，
+    所以两种读法给出的答案会不一样。
+    """
+    tree = ast.parse(_BUILD_TOOL.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "_probe":
+            found = {item.id for item in ast.walk(node) if isinstance(item, ast.Name)}
+            found |= {item.attr for item in ast.walk(node) if isinstance(item, ast.Attribute)}
+            return found
+    raise AssertionError(f"{_BUILD_TOOL.name} 里没有 _probe 这个函数")
+
+
+def test_the_probe_isolates_the_settings_and_the_qt_cache() -> None:
+    """**这条挡的是"以为隔离好了，其实没有"。**
+
+    活体探测原来只给子进程设了 ``AXO_DATA``，而那只重定向 ``axo.paths``（记忆与
+    数据）。程序还会往两个与它无关的地方写：``QSettings`` 落真注册表
+    （``backend/last_model``）、WebEngine 的管线缓存落真 ``%LOCALAPPDATA%``。
+
+    这两条**在构建日志里一个字都不显示**，所以"这次构建碰过我的东西没有"只能靠
+    机器判据回答。它也是新手引导的前置：引导那个"走过了"的标记写在同一个注册表里，
+    探测一旦把它写成 1，这台机器上引导再也不会出现。
+    """
+    names = _probe_names()
+
+    assert "_PROBE_STATE_ENV" in names, "_probe 没有给子进程设隔离界面设置的那个变量"
+    assert "_PROBE_STATE_PREFIX" in names, "_probe 没有为隔离出来的设置目录建临时目录"
+    assert "rmtree" in names, "探测起完没清理，临时目录会攒在系统临时目录里"
+
+
+def test_the_two_copies_of_the_environment_variable_name_agree() -> None:
+    """那个环境变量名写了两份，而**写歪了的症状是"设了一个没人认的变量"**——
+    自检以为隔离好了，实际照样在改使用者的注册表。
+
+    为什么是两份而不是 import 过来：``build_exe.py`` 是**构建工具**，它在 ``src``
+    还没进 ``sys.path`` 的时候就要能被 AST 读出来（``_declared`` 的 docstring 说了
+    为什么按 AST 读）。所以这里照 ``settings_store.DEFAULT_HOST`` 那条"刻意写两遍、
+    用测试钉死一致"的姿态办。
+    """
+    from axo.ui.app import _ISOLATED_STATE_ENV
+
+    assert _declared("_PROBE_STATE_ENV") == _ISOLATED_STATE_ENV
