@@ -138,6 +138,17 @@ class WebBridge(QObject):
     这里只保证"一次点击 = 一次信号"，把 ``call_id`` 原样带过去由调用方比对。
     """
 
+    voice_toggled = Signal()
+    """麦克风按钮被按了一下。:class:`ChatView` 把它原样转发出去。
+
+    **信号与槽同名，但必须在这里各声明一次**：``ChatView`` 连的是
+    ``self._bridge.voice_toggled``，而 :meth:`voice_toggle` 里发的是
+    ``self.voice_toggled``——那两个 ``self`` 是两个不同的对象。少这一行的症状是
+    **应用根本起不来**（构造 ``ChatView`` 时 ``AttributeError``），而它发生在
+    真实窗口里、不在任何一条测试里（gui 腿一律不构造 ``ChatView``）。
+    钉住它的是 ``tests/test_ui_bridge_contract.py``。
+    """
+
     @Slot(str)
     def send(self, text: str) -> None:
         text = (text or "").strip()
