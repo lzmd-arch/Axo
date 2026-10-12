@@ -295,6 +295,32 @@ def _used_screen(tool_trace: Sequence[Mapping[str, Any]]) -> bool:
     return any(entry.get("name") == _SCREEN_TOOL for entry in tool_trace)
 
 
+def _empty_reply_note(*, text: str, interrupted: bool) -> str:
+    """一条**空回复**该说的那句话；不该说的时候返回空串。
+
+    空回复有两种来源，而它们要说的话完全不同：
+
+    * **用户按了停止**（``interrupted``）——那一轮是他自己叫停的，状态栏已经说了
+      "已停止"，再补一句是啰嗦。
+    * **模型一个字都没吐出来**——这才是要解释的那一种。最常见的成因是**生成额度被
+      "思考"用完了**：会思考的模型（DeepSeek 那几档、本机的 ``qwen3`` 也一样）把思考
+      也记在同一个 ``max_tokens`` 里，额度不够时正文一个字都轮不到。2026-10-12 实测过
+      这一支：同一个问题给 32 token，思考了 1259 字、正文是空串；给 768，思考 118 字、
+      正文就是答案。
+
+    **不说的话，用户看到的是一个空气泡**，而它会看起来像界面坏了——所以这一句与"看过
+    屏幕的那一轮不写记忆要说出来"是同一条纪律。
+    """
+    if interrupted or text.strip():
+        return ""
+    return (
+        "**它这一轮一个字都没说出来。**" + "\n\n"
+        "多半是**生成额度被思考用完了**——会思考的模型（DeepSeek 那几档、本机的 "
+        "qwen3 也一样）把思考也记在同一个额度里，不够时正文一个字都轮不到。"
+        "再问一次通常就好；一直这样的话，把问题问短一点。"
+    )
+
+
 def display_rows(messages: Sequence[Message]) -> list[dict[str, Any]]:
     """把逐字稿的行转成网页要的那份 ``[{role, text, meta}, ...]``。
 
@@ -1938,6 +1964,11 @@ class MainWindow(QMainWindow):
     def _on_reply_finished(self, text: str, statistics: dict[str, Any]) -> None:
         interrupted = bool(statistics.get("interrupted"))
         self.chat_view.end_message()
+        # **空回复要说出来**（见 :func:`_empty_reply_note`）：不说的话，用户看到的是一个
+        # 空气泡——而那个看起来像界面坏了，不像"模型这一轮没说话"。
+        note = _empty_reply_note(text=text, interrupted=interrupted)
+        if note:
+            self.chat_view.append_message("system", note)
         self._append(
             Message(
                 role="assistant",

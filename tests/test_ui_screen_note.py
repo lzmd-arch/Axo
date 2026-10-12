@@ -24,7 +24,7 @@ from typing import Any
 
 import pytest
 
-from axo.ui.main_window import MainWindow
+from axo.ui.main_window import MainWindow, _empty_reply_note
 
 pytestmark = pytest.mark.gui
 
@@ -37,6 +37,9 @@ class _Recorder:
 
     def append_message(self, role: str, text: str, meta: dict | None = None) -> None:
         self.calls.append((role, text))
+
+    def end_message(self) -> None:
+        self.calls.append(("endMessage", ""))
 
 
 class _Combo:
@@ -161,3 +164,40 @@ def test_the_local_judgement_still_comes_from_the_backend() -> None:
     assert (
         MainWindow._model_can_see(_seer(cloud=False, declared=True, caps=("completion",))) is False
     ), "本机不该被那个开关影响"
+
+
+# ── 空回复：空气泡要说成一句话 ──────────────────────────────────────────────
+#
+# 同一族的问题：**看起来像坏了**的那种静默。会思考的模型把思考也记在 max_tokens 里，
+# 额度不够时正文一个字都轮不到——用户看到的是一个空气泡（2026-10-12 实测：同一个问题
+# 给 32 token，思考 1259 字、正文空串；给 768，正文就是答案）。
+
+
+def test_an_empty_reply_is_explained_not_left_blank(qapp: Any) -> None:
+    """模型一个字都没说 → **说清大概为什么**，而不是留一个空气泡。"""
+    assert "思考" in _empty_reply_note(text="", interrupted=False)
+
+
+def test_a_stopped_turn_needs_no_excuse() -> None:
+    """用户自己按了停止 → 那句"已停止"就够了，再补一句是啰嗦。"""
+    assert _empty_reply_note(text="", interrupted=True) == ""
+
+
+def test_a_normal_reply_gets_no_note() -> None:
+    """有正文时一个字都不加——反空转。"""
+    assert _empty_reply_note(text="你好", interrupted=False) == ""
+
+
+def test_the_slot_actually_pushes_that_sentence(qapp: Any) -> None:
+    """接线：那个槽真的把它推出去了（纯函数对了不等于接上了）。"""
+    window = SimpleNamespace(
+        chat_view=_Recorder(),
+        _append=lambda _message: None,
+        _remember=lambda *_args, **_kwargs: None,
+        _reset_generation_state=lambda: None,
+    )
+
+    MainWindow._on_reply_finished(window, "", {"interrupted": False})  # type: ignore[arg-type]
+
+    told = [text for role, text in window.chat_view.calls if role == "system"]
+    assert told and "一个字都没说" in told[0], f"没推那句话：{window.chat_view.calls}"
