@@ -271,6 +271,21 @@ def _last_run_note() -> str:
     return f"最近一次：{format_ts(at)}{count_text}。"
 
 
+_SCREEN_TOOL = "look_at_screen"
+"""看过屏幕那个工具的名字。**与 :class:`~axo.agent.catalog.LookAtScreenTool` 同名**，
+但这里只用来判一次（见 :func:`_used_screen`），不参与任何声明。"""
+
+
+def _used_screen(tool_trace: Sequence[Mapping[str, Any]]) -> bool:
+    """这一轮有没有看过屏幕。
+
+    判据是工具轨迹里的名字（``agent/trace.py`` 的 ``_step`` 会写下 ``name``）。用轨迹
+    而不是另起一个标志位：轨迹本来就是"这一轮做过什么"的权威记录，而它已经一路传到
+    :meth:`MainWindow._remember` 手上了。
+    """
+    return any(entry.get("name") == _SCREEN_TOOL for entry in tool_trace)
+
+
 def display_rows(messages: Sequence[Message]) -> list[dict[str, Any]]:
     """把逐字稿的行转成网页要的那份 ``[{role, text, meta}, ...]``。
 
@@ -1772,6 +1787,19 @@ class MainWindow(QMainWindow):
         这一轮没调过工具，不表示"不知道调没调过"。
         """
         if not self._pending_text:
+            return
+        if _used_screen(tool_trace):
+            # **看过屏幕的那一轮不写库，而且要说出来。**
+            #
+            # 图本身不落盘（工具的结果标了不可回放、逐字稿只存正文），但**模型对屏幕
+            # 的那段文字描述**会以"答复正文"的身份进库——"图里有密码所以不存图"那条
+            # 理由会被它原样绕过，而且绕得很自然：写进去的恰好是最有信息量的那一段。
+            #
+            # **跳过必须可见。** 不说的话，这一轮与"记忆写失败"在界面上长得一模一样，
+            # 而用户会以为它记住了（这个项目里"以为记住了"比"没记住"坏得多）。
+            self.chat_view.append_message(
+                "system", "这一轮看过屏幕，**没有写进记忆**（屏幕上的东西不进库）。"
+            )
             return
         turn_seq = sum(1 for message in self._session.messages if message.role == "user")
         try:

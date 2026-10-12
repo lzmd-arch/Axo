@@ -1,4 +1,4 @@
-"""截图那根线：worker 要一张图 → 界面线程截 → 交回 worker。
+"""截图那根线：worker 要一张图 → 界面线程截 → 交回 worker；以及看过屏幕那一轮的记忆。
 
 这一条交接横跨三处，而每一处单独看都正常：``AgentWorker.grab_screen``（worker 线程里
 登记并等）、``capture_requested`` 信号（把请求送到界面线程）、``MainWindow`` 的槽
@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -149,3 +150,87 @@ def test_the_window_slot_survives_a_dead_worker() -> None:
     window._agent_worker = None
 
     MainWindow._on_capture_requested(window, "tok-1")  # type: ignore[arg-type]
+
+
+# ── 看过屏幕的那一轮：不写记忆库，但要说出来 ────────────────────────────────
+#
+# 图本身不落盘（工具的结果标了不可回放、逐字稿只存正文），但**模型对屏幕的那段文字
+# 描述**会以"答复正文"的身份进库——而它恰好是最有信息量的那一段（表格里有什么、
+# 屏幕上开着什么窗口）。所以这条链要单独关一次闸，两半都要验。
+
+
+class _Recorder:
+    """对话区的替身：只记被推了什么。"""
+
+    def __init__(self) -> None:
+        self.calls: list[Any] = []
+
+    def append_message(self, role: str, text: str, meta: dict | None = None) -> None:
+        self.calls.append(("appendMessage", role, text, meta))
+
+    def set_status(self, text: str) -> None:
+        self.calls.append(("setStatus", text))
+
+
+class _Writer:
+    """记忆写入器的替身：记下每一次调用。"""
+
+    def __init__(self) -> None:
+        self.written: list[dict[str, Any]] = []
+
+    def record_text(self, text: str, **kwargs: Any) -> list[Any]:
+        self.written.append({"text": text, **kwargs})
+        return []
+
+
+def _memory_stub() -> Any:
+    """``_remember`` 碰得到的那几样。缺了哪个会当场 ``AttributeError``。"""
+    stub = type("_Stub", (), {})()
+    stub._pending_text = "桌上那份表格是什么"
+    stub._session = SimpleNamespace(session_id="S1", messages=[])
+    stub._writer = _Writer()
+    stub.chat_view = _Recorder()
+    return stub
+
+
+def test_a_turn_that_looked_at_the_screen_is_not_remembered() -> None:
+    """**看过屏幕的那一轮跳过写库，而且说一句。**
+
+    "图不落盘"只挡住了像素：模型对屏幕的描述会以答复正文的身份进库，而它正是最有信息量
+    的那一段（表格里有什么、屏幕上开着什么窗口）。不关这道闸的话，"图里有密码所以不存图"
+    那条理由就被同一轮的描述原样绕过去了。
+
+    **跳过必须可见**：不说的话，这一轮与"记忆写失败"在界面上长得一模一样，而用户会以为
+    它记住了。
+    """
+    stub = _memory_stub()
+
+    MainWindow._remember(
+        stub,  # type: ignore[arg-type]
+        "屏幕上是一份表格，三列两行。",
+        interrupted=False,
+        tool_trace=({"name": "look_at_screen", "ok": True},),
+    )
+
+    assert stub._writer.written == [], "看过屏幕的那一轮写进库了"
+    told = [call for call in stub.chat_view.calls if call[0] == "appendMessage"]
+    assert told and "没有写进记忆" in told[0][2]
+
+
+def test_an_ordinary_tool_turn_is_still_remembered() -> None:
+    """反空转：**别的**工具轮照旧写库（搜记忆、读文件…）。
+
+    只钉前一半的话，"把每一轮都跳过"也能过——而那等于把任务记忆整个关掉，症状是
+    "它好像什么都不记了"，没有任何一处会报错。
+    """
+    stub = _memory_stub()
+
+    MainWindow._remember(
+        stub,  # type: ignore[arg-type]
+        "查到了三条。",
+        interrupted=False,
+        tool_trace=({"name": "search_memory", "ok": True},),
+    )
+
+    assert len(stub._writer.written) == 1
+    assert stub._writer.written[0]["reply_text"] == "查到了三条。"
