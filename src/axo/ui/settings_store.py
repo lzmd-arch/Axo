@@ -40,6 +40,8 @@ from .theme import (
 __all__ = [
     "BackendSettings",
     "MemorySettings",
+    "SETTINGS_APP",
+    "SETTINGS_ORG",
     "SettingsBackend",
     "SettingsStore",
     "ToolSettings",
@@ -51,7 +53,8 @@ _DEFAULT_PRESET = PRESETS[0]
 #: 键前缀。与 ``main_window`` 直接用的 ``backend/host`` 同一套命名——
 #: 两类设置共用一个 ``QSettings``，只是**键的空间分开**：``appearance/*`` 归这里，
 #: ``backend/*`` 归 :class:`BackendSettings` 与 ``main_window`` 的 ``last_model``，
-#: ``tools/*`` 归 :class:`ToolSettings`，``memory/*`` 归 :class:`MemorySettings`。
+#: ``tools/*`` 归 :class:`ToolSettings`，``memory/*`` 归 :class:`MemorySettings`，
+#: ``app/*`` 归"这台机器"（见 :data:`_K_DATA_ROOT`）。
 #: 不加前缀混着放的话，"哪些键属于外观"就只能靠 grep 回答。
 _NS = "appearance"
 _K_PRESET = f"{_NS}/preset"
@@ -74,6 +77,24 @@ _K_TASK_MEMORY = "memory/task_memory"
 _K_GRAPH_CHANNEL = "memory/graph_channel"
 _K_CONSOLIDATION_ENABLED = "memory/consolidation_enabled"
 _K_CONSOLIDATION_INTERVAL_S = "memory/consolidation_interval_s"
+
+#: **这台机器**级别的两个键。与上面四族分开，因为它们不是"某一块功能怎么跑"，
+#: 而是"程序自己住哪、用户看过说明没有"。
+#:
+#: ``app/data_root`` 是**记忆与数据放在哪个目录**（绝对路径字符串；空串 = 没设过，
+#: 用默认）。它是"删掉程序重新解压一份新的，记忆还在"的全部机制——注册表在
+#: ``HKCU`` 下，与程序目录毫无关系。
+_K_DATA_ROOT = "app/data_root"
+_K_ONBOARDING_DONE = "app/onboarding_done"
+
+#: ``QSettings`` 的组织名与应用名。
+#:
+#: **从这里公开出去**（原来是 ``ui/main_window.py`` 里的私有常量）：现在有两个
+#: 地方要建 ``QSettings``——``ui/app.py`` 在**建主窗口之前**读一次位置指针，而
+#: ``MainWindow`` 建那个真正长期使用的。两处各写一份字符串的话，改了其中一处就会
+#: 变成"启动时读的是 A，运行时读写的是 B"，症状是"设置改了不生效"。
+SETTINGS_ORG = "Axo"
+SETTINGS_APP = "axo"
 
 #: 与 :data:`~axo.llm.ollama.DEFAULT_OLLAMA_HOST` 同值。
 #: **刻意在这里再写一遍而不是 import 过来**：本模块是纯数据层，不该把
@@ -343,6 +364,40 @@ class SettingsStore:
         self._backend.setValue(_K_GRAPH_CHANNEL, bool(settings.graph_channel))
         self._backend.setValue(_K_CONSOLIDATION_ENABLED, bool(settings.consolidation_enabled))
         self._backend.setValue(_K_CONSOLIDATION_INTERVAL_S, int(settings.consolidation_interval_s))
+
+    # ── 这台机器（app/*）────────────────────────────────────────────────────
+
+    def stored_data_root(self) -> str:
+        """用户在界面里选的记忆/数据目录；没设过或值不可用就是空串。
+
+        **只收绝对路径**，与 :meth:`load_tools` 同一条理由、同一套判据
+        （:func:`_is_absolute_anywhere`）：这个值决定的是"程序去哪儿读写用户的
+        全部记忆"，而相对路径的含义取决于进程的工作目录——双击图标启动时它是
+        快捷方式的"起始位置"。一次静默的位置变更比"没设"危险得多。
+
+        **坏值当没设过，不抛。** 注册表可以被手改，而这里抛一次程序就打不开了，
+        用户连改回来的界面都进不去（同 :meth:`load_backend` 对解密失败的处置）。
+        """
+        raw = self._text(_K_DATA_ROOT).strip()
+        if not raw:
+            return ""
+        # ``expanduser`` 在判绝对**之前**，且用返回字符串的那个版本——理由与
+        # :func:`_as_path_list` 里那段一字不差（``~/Axo` 是用户能写、且有意义的一种）。
+        expanded = os.path.expanduser(raw)
+        return expanded if _is_absolute_anywhere(expanded) else ""
+
+    def save_data_root(self, root: str | Path | None) -> None:
+        """写下位置。``None`` 与空串都存成空串——"恢复默认位置"就是把这一格清掉，
+        而不是把默认路径抄一份进来：抄进来的话，将来默认值变了，那一格会继续指着
+        旧地方。"""
+        self._backend.setValue(_K_DATA_ROOT, "" if root is None else str(root).strip())
+
+    def onboarding_done(self) -> bool:
+        """新手引导走完过没有（**「完成」与「跳过」都算**，叉掉窗口不算）。"""
+        return _as_bool(self._backend.value(_K_ONBOARDING_DONE, False))
+
+    def mark_onboarding_done(self, done: bool = True) -> None:
+        self._backend.setValue(_K_ONBOARDING_DONE, bool(done))
 
     def _text(self, key: str) -> str:
         """取一个字符串键。非字符串一律当空——注册表里可能存着别的东西。"""

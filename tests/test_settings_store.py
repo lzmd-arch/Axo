@@ -631,3 +631,128 @@ def test_local_and_cloud_addresses_do_not_share_a_key() -> None:
 
     assert loaded.host == "http://127.0.0.1:11434"
     assert loaded.cloud_base_url == "https://api.deepseek.com/v1"
+
+
+# ── 这台机器：位置指针与引导标记（app/*）────────────────────────────────────
+
+
+def test_the_data_root_is_unset_by_default() -> None:
+    """**空串 = 没设过**，而不是"设成了默认位置"。
+
+    两者必须分得开：默认位置是"跟着平台走的那个表达式"（``%LOCALAPPDATA%\\axo``），
+    把它抄进设置里就等于把那一刻的默认值钉死了——将来默认值一改，老用户的机器上
+    会继续指着旧地方，而界面上、代码里都看不出来为什么。
+    """
+    assert SettingsStore(FakeBackend()).stored_data_root() == ""
+
+
+def test_the_data_root_round_trips(tmp_path: Path) -> None:
+    store = SettingsStore(FakeBackend())
+    store.save_data_root(tmp_path)
+
+    assert store.stored_data_root() == str(tmp_path)
+
+
+def test_restoring_the_default_clears_the_key(tmp_path: Path) -> None:
+    """「恢复默认位置」是把这一格**清掉**，不是把默认路径抄进来（理由见上一条）。"""
+    fake = FakeBackend()
+    store = SettingsStore(fake)
+    store.save_data_root(tmp_path)
+
+    store.save_data_root(None)
+
+    assert fake.data["app/data_root"] == ""
+    assert store.stored_data_root() == ""
+
+
+@pytest.mark.parametrize("stored", ["notes", "./notes", "../notes", "   ", "", 7, None, ["C:/x"]])
+def test_a_broken_data_root_is_treated_as_unset(stored: object) -> None:
+    """**只收绝对路径**，其余一律当没设过。
+
+    这一格决定的是"程序去哪儿读写用户的**全部**记忆"，而相对路径的含义取决于进程的
+    工作目录——双击图标启动时它是快捷方式的"起始位置"。一次静默的位置变更比"没设"
+    危险得多，所以宁可当没设、用默认位置，也不要照着一个会漂的字符串去读写。
+
+    非字符串（``QSettings`` 里被手改成数字、列表）同理：这不是可以商量的输入，是
+    设置窗口唯一写入口之外的东西。**不抛**——``load_backend`` 那条纪律在这里一样
+    成立：启动路径上抛一次程序就打不开了。
+    """
+    assert SettingsStore(FakeBackend({"app/data_root": stored})).stored_data_root() == ""
+
+
+@pytest.mark.parametrize("stored", ["C:/AxoData", "D:/工作/记忆", "/home/me/axo"])
+def test_a_data_root_written_on_another_platform_is_not_dropped(stored: str) -> None:
+    """两个平台的形状都收下——判据**不是**当前这台机器的口味（同 ``tools/read_roots``）。
+
+    ``C:/AxoData`` 在 POSIX 口味下只是一个叫 ``C:`` 的普通目录，``/home/me/axo`` 在
+    Windows 口味下没有盘符。用 ``Path.is_absolute()`` 的话这两种形状各自在**另一半**
+    平台上被丢掉，于是位置指针静默失效、退回默认位置——而默认位置上没有用户的记忆。
+    """
+    assert SettingsStore(FakeBackend({"app/data_root": stored})).stored_data_root() == stored
+
+
+def test_a_home_relative_data_root_is_expanded_not_dropped() -> None:
+    """``~/Axo`` 收下并展开——它相对的是家目录（稳定），不是工作目录（会漂）。
+
+    断言比的是 :class:`Path` 而不是字符串：实现里用的是 :func:`os.path.expanduser`
+    （**只换掉那个 ``~``**，后面的分隔符原样留着，Windows 上会得到
+    ``C:\\Users\\…/Axo`` 这种混着的形状），而 ``Path`` 的比较会把分隔符归一化。
+    要验的本来就是"它指到了家目录下那个文件夹"，不是"字符串长什么样"。
+    """
+    expanded = SettingsStore(FakeBackend({"app/data_root": "~/Axo"})).stored_data_root()
+
+    assert Path(expanded).is_absolute()
+    assert Path(expanded) == Path.home() / "Axo"
+
+
+def test_the_onboarding_flag_is_off_by_default() -> None:
+    """没这个键 = 没走过引导。**方向要紧**：默认若是 ``True``，新装的人永远看不到引导，
+    而"看不到"与"看到了但没读"在日志里长得一模一样。"""
+    assert SettingsStore(FakeBackend()).onboarding_done() is False
+
+
+def test_the_onboarding_flag_round_trips() -> None:
+    store = SettingsStore(FakeBackend())
+    store.mark_onboarding_done()
+
+    assert store.onboarding_done() is True
+
+
+@pytest.mark.parametrize(
+    "stored,expected",
+    [
+        (True, True),
+        ("true", True),
+        ("True", True),
+        ("1", True),
+        ("yes", True),
+        (False, False),
+        ("false", False),
+        ("0", False),
+        ("", False),
+        (None, False),
+    ],
+)
+def test_the_onboarding_flag_survives_the_type_trap(stored: object, expected: bool) -> None:
+    """注册表读回来的 bool 常常是字符串 ``"true"``（见模块注释第 3 条）。
+
+    这里的方向与别处相反、后果也不同：读错成 ``True`` 会让引导**再也不出现**，
+    而用户没有任何界面能把那个标记改回去（它只在走完引导时写）。所以宁可读错成
+    ``False`` 多问一次。
+    """
+    assert SettingsStore(FakeBackend({"app/onboarding_done": stored})).onboarding_done() is expected
+
+
+def test_the_machine_keys_live_in_their_own_namespace() -> None:
+    """两个键落 ``app/*``，不混进 ``appearance/*`` 或 ``memory/*``。
+
+    它们不是"某一块功能怎么跑"：一个说程序去哪儿读写全部数据，一个说用户看过说明
+    没有。混进 ``memory/*`` 尤其误导——位置管的不只是记忆库，还有逐字稿、壁纸、
+    提醒与快照。
+    """
+    backend = FakeBackend()
+    store = SettingsStore(backend)
+    store.save_data_root("C:/AxoData")
+    store.mark_onboarding_done()
+
+    assert [key for key, _ in backend.writes] == ["app/data_root", "app/onboarding_done"]

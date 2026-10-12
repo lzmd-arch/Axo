@@ -127,6 +127,8 @@ from .reminder_scheduler import ReminderScheduler
 from .settings_dialog import SettingsDialog
 from .settings_store import (
     PROVIDER_OLLAMA,
+    SETTINGS_APP,
+    SETTINGS_ORG,
     BackendSettings,
     MemorySettings,
     SettingsStore,
@@ -142,8 +144,9 @@ from .window_place import place_window
 
 __all__ = ["MainWindow"]
 
-_SETTINGS_ORG = "Axo"
-_SETTINGS_APP = "axo"
+#: ``QSettings`` 的组织名/应用名**不在这里**：``ui/app.py`` 也要在建主窗口之前
+#: 读一次位置指针，而两个入口各写一份字符串就会变成"启动时读的是 A、运行时读写的
+#: 是 B"，症状是"设置改了不生效"。真源是 :data:`~axo.ui.settings_store.SETTINGS_ORG`。
 
 #: 账本面板展开时的名义宽度**不在这里**：它在
 #: :data:`axo.ui.layout.LEDGER_WIDTH`，与夹紧逻辑住在一起。这里再留
@@ -303,7 +306,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Axo")
         self._place_window()
 
-        self._settings = QSettings(_SETTINGS_ORG, _SETTINGS_APP)
+        self._settings = QSettings(SETTINGS_ORG, SETTINGS_APP)
         self._settings_store = SettingsStore(QSettingsBackend(self._settings))
 
         # **外观必须在建控件之前定好。** 应用级样式表与调色板一旦设置，之后建的
