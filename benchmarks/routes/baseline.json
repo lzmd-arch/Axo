@@ -3,27 +3,27 @@
   "corpus": {
     "schema_version": 1,
     "utterances": {
-      "count": 125,
-      "sha256": "c4753c36de13398c22dcd32ce98327488842b99d2a3dbd5b2a9479bce2e89a09"
+      "count": 129,
+      "sha256": "2ed711c2911f2d0eaf7750fd33f576937d1aef38596e3b4f5da8110eb5ad0c59"
     }
   },
   "model": "",
   "model_layer": {},
   "metrics": {
-    "n": 125.0,
-    "coverage": 0.848,
-    "accuracy": 0.9811320754716981,
-    "accuracy_all": 0.976,
+    "n": 129.0,
+    "coverage": 0.8449612403100775,
+    "accuracy": 0.981651376146789,
+    "accuracy_all": 0.9767441860465116,
     "task_recall": 1.0,
-    "task_precision": 0.9615384615384616,
+    "task_precision": 0.9636363636363636,
     "chat_recall": 0.9642857142857143,
     "chat_precision": 1.0,
-    "ambiguous_rate": 0.152,
-    "majority_baseline": 0.592
+    "ambiguous_rate": 0.15503875968992248,
+    "majority_baseline": 0.5813953488372093
   },
   "per_category": {
     "ambiguous": {
-      "n": 12.0,
+      "n": 13.0,
       "coverage": 0.0,
       "accuracy": null,
       "ambiguous_rate": 1.0
@@ -76,6 +76,12 @@
       "accuracy": 1.0,
       "ambiguous_rate": 0.0
     },
+    "screen": {
+      "n": 3.0,
+      "coverage": 1.0,
+      "accuracy": 1.0,
+      "ambiguous_rate": 0.0
+    },
     "slash": {
       "n": 7.0,
       "coverage": 1.0,
@@ -123,6 +129,6 @@
     "task_recall": 0.02,
     "chat_recall": 0.02
   },
-  "frozen_at": "2026-10-12T06:18:10Z",
+  "frozen_at": "2026-10-12T13:17:32Z",
   "note": "这是**实测值，不是目标值**（先跑后填）。门槛 = 本文件的值 ± tolerance，方向见 axo.bench.routeeval.GATED（四项都是越大越好），容差的含义见那里的 DEFAULT_TOLERANCE（这份测量是确定性的，容差不是噪声，是「允许几条翻转而不惊动人」）。改语料要同时改 freeze.json 并重跑 --freeze。**门槛只绑规则层**：模型层要 Ollama，把门槛绑上去等于让装没装模型决定提交能不能过。"
 }
