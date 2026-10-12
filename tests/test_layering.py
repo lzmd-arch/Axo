@@ -129,6 +129,10 @@ _PURE_LAYERS = (
     "axo/ui/theme.py",
     "axo/ui/settings_store.py",
     "axo/ui/layout.py",
+    # 搬迁算法。列进来是因为它**是这一族里唯一会动用户盘的东西**：复制整棵数据根、
+    # 按哈希逐条校验、失败时回滚。这种代码必须能在无 Qt 的测试里把每一种拒绝与每
+    # 一种失败都摆出来，而"它自己不 import Qt"是可断言的前提。
+    "axo/ui/data_move.py",
 )
 
 _PURE_FORBIDDEN = ("PySide6", "PyQt5", "PyQt6", "httpx", "requests")
