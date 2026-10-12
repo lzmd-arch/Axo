@@ -34,6 +34,7 @@ from axo.agent.reminders import Alert, Occurrence, Reminder
 from axo.llm.base import ChatMessage, ToolCall
 from axo.session.store import Message
 from axo.ui.main_window import SPEECH_TIMEOUT_MS, MainWindow, display_rows
+from axo.ui.settings_store import ReminderSettings
 from memcore.store import MemoryStore
 
 pytestmark = pytest.mark.gui
@@ -123,6 +124,16 @@ class FakeTimer:
         self.stops += 1
 
 
+class FakeSettingsStore:
+    """``SettingsStore`` 那一半：只记"存过哪几份"。"""
+
+    def __init__(self) -> None:
+        self.saved: list[Any] = []
+
+    def save_reminders(self, settings: Any) -> None:
+        self.saved.append(settings)
+
+
 class FakeSpeechWorker:
     """``ChatWorker`` 那一半：只记"被叫停过"。"""
 
@@ -158,6 +169,7 @@ class Stub(QObject):
     _on_speech_failed = MainWindow._on_speech_failed
     _time_out_speech = MainWindow._time_out_speech
     _stop_speech = MainWindow._stop_speech
+    _on_reminders_changed = MainWindow._on_reminders_changed
     _track = MainWindow._track
 
     def __init__(
@@ -190,6 +202,9 @@ class Stub(QObject):
         self._speak_alert: Alert | None = None
         self._speak_timeout = FakeTimer()
         self._live_threads: list[Any] = []
+        #: 提醒那两个开关（设置 → 提醒）。默认那一份 = 两个都开，与真程序一致。
+        self._reminder_settings = ReminderSettings()
+        self._settings_store = FakeSettingsStore()
         # 窗口状态：默认"正开着"。三档叫醒各由一条测试改这两个值。
         self.visible = True
         self.minimized = False
@@ -939,3 +954,62 @@ def test_an_ordinary_reply_is_still_an_ordinary_row(qapp: Any) -> None:
     (row,) = display_rows([Message(role="assistant", content="好，我查一下。")])
 
     assert row == {"role": "assistant", "text": "好，我查一下。", "meta": {}}
+
+
+# ── 设置页那两个开关 ───────────────────────────────────────────────────────
+#
+# 两条通道各自一个开关：叫不叫醒窗口、让不让模型开口。**关掉任意一个，提醒本身照响**
+# ——这正是它们可以默认开着的理由，而这三条测试量的就是这件事没有被"顺手连坐"。
+
+
+def test_the_speak_switch_off_means_the_program_tells_it(qapp: Any) -> None:
+    """关掉「由她说一句」：一条请求都不发，走的还是那条降级。
+
+    它是模型慢或吵时的逃生口（本机 4B 模型实测 3–15 秒），所以关掉之后**一个字都不
+    该少**：提醒照旧进对话区。而不带原因——那是常规状态，不是失败。
+    """
+    stub, backend = _speaking_stub(qapp, script=[[text_chunk("不该出现", done=True)]])
+    stub._reminder_settings = ReminderSettings(speak_on_alert=False)
+
+    stub._on_reminder_fired(reminder_alert("该睡了"))
+
+    assert backend.calls == 0, "关掉了还去问了模型"
+    assert stub._live_threads == []
+    _kind, role, text, _meta = stub.chat_view.calls[-1]
+    assert role == "system" and "该睡了" in text
+    assert "本该由她开口" not in text
+
+
+def test_the_wake_switch_off_means_the_window_stays_put(qapp: Any) -> None:
+    """关掉「把窗口叫出来」：窗口一动不动，而提醒照旧。
+
+    这条钉的是"两个开关管的是两件不相干的事"——气泡、叫醒、开口是三条独立通道，
+    关掉一条不该顺手关掉别的。**托盘气泡没有开关，也不该有**：它是"现在就要知道"
+    唯一一条不经过模型的通道。
+    """
+    stub = Stub()  # 默认 ``_streaming=True``，于是走降级那一路
+    stub._reminder_settings = ReminderSettings(wake_on_alert=False)
+
+    stub._on_reminder_fired(reminder_alert("该睡了"))
+
+    assert stub.window_calls == [] and stub.flashes == 0, "叫醒开关关了还把窗口弄动了"
+    assert stub._tray.messages, "托盘气泡跟着一起没了"
+    assert stub.chat_view.calls[-1][1] == "system"
+
+
+def test_the_switch_takes_effect_on_the_next_alert_and_is_saved(qapp: Any) -> None:
+    """改完开关：**当场落盘，下一个到点就用新的**。
+
+    生效机理是"到点那一枪现读 ``_reminder_settings``"，所以这里只要证"记下来了"
+    与"下一次读的是新的"。**不通知调度器**：它管的是"什么时候该看一眼"，与"用户想不想
+    被打扰"是两件事——把它搅进来只会让那一层多认识一个它不该认识的设置项。
+    """
+    stub, backend = _speaking_stub(qapp, script=[[text_chunk("该睡了，早点休息。", done=True)]])
+    changed = ReminderSettings(speak_on_alert=False)
+
+    stub._on_reminders_changed(changed)
+
+    assert stub._settings_store.saved == [changed]
+    assert stub._reminder_settings == changed
+    stub._on_reminder_fired(reminder_alert("该睡了"))
+    assert backend.calls == 0, "换了设置，下一个到点还是问了模型"

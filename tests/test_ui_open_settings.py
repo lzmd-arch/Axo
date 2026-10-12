@@ -26,7 +26,7 @@ from PySide6.QtWidgets import QApplication
 
 from axo.ui import main_window as main_window_module
 from axo.ui.main_window import MainWindow
-from axo.ui.settings_store import BackendSettings
+from axo.ui.settings_store import BackendSettings, ReminderSettings
 from axo.ui.theme import Theme, resolve
 
 pytestmark = pytest.mark.gui
@@ -69,6 +69,8 @@ def _window() -> SimpleNamespace:
         # 它是"主窗口手里那份状态"，而设置窗口只是把它显示出来。
         _consolidation_enabled=True,
         _consolidation_interval_s=86_400,
+        # 提醒页那一份（C5）：**两个开关都开**，与一个刚装好的终端一模一样。
+        _reminder_settings=ReminderSettings(),
         # 重开设置窗口时要把上一次建图的结果补回去——图状态住在主窗口上，
         # 对话框每次都是新的。
         _graph_note="",
@@ -80,6 +82,7 @@ def _window() -> SimpleNamespace:
         _on_backend_changed=lambda *_args: None,
         _on_tools_changed=lambda *_args: None,
         _on_memory_changed=lambda *_args: None,
+        _on_reminders_changed=lambda *_args: None,
         _on_rebuild_graph=lambda *_args: None,
         _on_manual_consolidation=lambda *_args: None,
         _on_persona_save_requested=lambda *_args: None,
@@ -114,6 +117,7 @@ def _consolidate_signals() -> SimpleNamespace:
         "backend_changed",
         "tools_changed",
         "memory_changed",
+        "reminders_changed",
         "graph_rebuild_requested",
         "consolidation_requested",
         "persona_save_requested",

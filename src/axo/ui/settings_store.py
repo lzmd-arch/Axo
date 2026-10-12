@@ -40,6 +40,7 @@ from .theme import (
 __all__ = [
     "BackendSettings",
     "MemorySettings",
+    "ReminderSettings",
     "SETTINGS_APP",
     "SETTINGS_ORG",
     "SettingsBackend",
@@ -54,6 +55,7 @@ _DEFAULT_PRESET = PRESETS[0]
 #: 两类设置共用一个 ``QSettings``，只是**键的空间分开**：``appearance/*`` 归这里，
 #: ``backend/*`` 归 :class:`BackendSettings` 与 ``main_window`` 的 ``last_model``，
 #: ``tools/*`` 归 :class:`ToolSettings`，``memory/*`` 归 :class:`MemorySettings`，
+#: ``reminders/*`` 归 :class:`ReminderSettings`，
 #: ``app/*`` 归"这台机器"（见 :data:`_K_DATA_ROOT`）。
 #: 不加前缀混着放的话，"哪些键属于外观"就只能靠 grep 回答。
 _NS = "appearance"
@@ -77,6 +79,11 @@ _K_TASK_MEMORY = "memory/task_memory"
 _K_GRAPH_CHANNEL = "memory/graph_channel"
 _K_CONSOLIDATION_ENABLED = "memory/consolidation_enabled"
 _K_CONSOLIDATION_INTERVAL_S = "memory/consolidation_interval_s"
+
+#: 键名与字段名**逐字对应**（``memory/task_memory`` 那一套）：读的人不必在脑子里做一次
+#: 映射，而测试那边的"两个键各跑一遍同一张表"也能靠 ``key.split("/")[-1]`` 拿到字段。
+_K_WAKE_ON_ALERT = "reminders/wake_on_alert"
+_K_SPEAK_ON_ALERT = "reminders/speak_on_alert"
 
 #: **这台机器**级别的两个键。与上面四族分开，因为它们不是"某一块功能怎么跑"，
 #: 而是"程序自己住哪、用户看过说明没有"。
@@ -229,10 +236,37 @@ class MemorySettings:
     consolidation_interval_s: int = 86_400
 
 
+@dataclass(frozen=True)
+class ReminderSettings:
+    """提醒设置：**到点那一刻要不要打扰他**。两个开关，默认都开。
+
+    它俩管的是"提醒响的时候发生什么"，**不改变提醒本身**：关掉任意一个，那条提醒照旧
+    被标成响过、托盘照旧弹气泡、对话区照旧留一条——变的只是"是谁说的、有没有把他叫过来"。
+
+    Attributes:
+        wake_on_alert: 到点时把窗口叫出来。分寸在 ``main_window._wake_up`` 里：**窗口
+            正开着时只闪任务栏、绝不抢焦点**；最小化时恢复；藏在托盘里才真的叫出来。
+
+            **默认开**，与记忆那两组"先不替用户做主"的姿态不同：到点了不出声，这个
+            功能就等于不存在。而"叫出来"最坏的结果是把窗口从别的窗口底下翻上来一次，
+            用户一眼就能看出是程序干的（它带着那条提醒）。
+        speak_on_alert: 到点时由模型生成一句话说出来。
+
+            **默认开，但这是三个"会自己动"的开关里唯一一个该有逃生口的**：它要一次
+            本机模型推理——实测 3–15 秒（见 ``main_window.SPEECH_MAX_TOKENS``），模型
+            慢、或者说话声吵的时候，用户会想关掉它。**关掉之后提醒照响**：托盘气泡与
+            对话区那条系统消息一个字都不变（见 ``main_window._on_reminder_fired`` 里
+            那条降级路径）——那正是这个功能可以放心默认开着的理由。
+    """
+
+    wake_on_alert: bool = True
+    speak_on_alert: bool = True
+
+
 class SettingsStore:
-    """把 :class:`~axo.ui.theme.Theme` 与三组设置
-    （:class:`BackendSettings` / :class:`ToolSettings` / :class:`MemorySettings`）
-    在 ``SettingsBackend`` 上读写成扁平键。
+    """把 :class:`~axo.ui.theme.Theme` 与四组设置
+    （:class:`BackendSettings` / :class:`ToolSettings` / :class:`MemorySettings` /
+    :class:`ReminderSettings`）在 ``SettingsBackend`` 上读写成扁平键。
 
     每一组一对 ``load_*`` / ``save_*``，键前缀见上面那段。**不合成一个大
     ``load()``**：设置窗口按页保存，而"改外观时把工具设置也重写一遍"会让一次失败
@@ -364,6 +398,26 @@ class SettingsStore:
         self._backend.setValue(_K_GRAPH_CHANNEL, bool(settings.graph_channel))
         self._backend.setValue(_K_CONSOLIDATION_ENABLED, bool(settings.consolidation_enabled))
         self._backend.setValue(_K_CONSOLIDATION_INTERVAL_S, int(settings.consolidation_interval_s))
+
+    # ── 提醒 ────────────────────────────────────────────────────────────────
+
+    def load_reminders(self) -> ReminderSettings:
+        """读出提醒设置。
+
+        **两个默认值都是 ``True``，而这里必须写成 ``, True``。** 三处默认值（dataclass
+        的字段默认、这里、设置页那两个勾选框的初值）少写一处，症状是"新装好的程序里
+        那个框没勾上"——而"到点由她开口"从此一次都不跑，界面上一点异常都看不出来
+        （同 :meth:`load_memory` 里那句，那一条是被真实踩过才写下来的）。
+        """
+        return ReminderSettings(
+            wake_on_alert=_as_bool(self._backend.value(_K_WAKE_ON_ALERT, True), True),
+            speak_on_alert=_as_bool(self._backend.value(_K_SPEAK_ON_ALERT, True), True),
+        )
+
+    def save_reminders(self, settings: ReminderSettings) -> None:
+        """写回。存真 bool，读取侧仍然按 :func:`_as_bool` 收一遍（同记忆那一节）。"""
+        self._backend.setValue(_K_WAKE_ON_ALERT, bool(settings.wake_on_alert))
+        self._backend.setValue(_K_SPEAK_ON_ALERT, bool(settings.speak_on_alert))
 
     # ── 这台机器（app/*）────────────────────────────────────────────────────
 

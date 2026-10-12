@@ -73,6 +73,7 @@ from .settings_store import (
     PROVIDER_OLLAMA,
     BackendSettings,
     MemorySettings,
+    ReminderSettings,
     ToolSettings,
     wallpaper_file,
 )
@@ -1282,6 +1283,115 @@ class MemoryPage(QWidget):
         self.consolidate_requested.emit()
 
 
+class ReminderPage(QWidget):
+    """提醒页：**到点那一刻要不要打扰他**。
+
+    两件事：把窗口叫出来、由她说一句。它们管的都是"提醒响的时候额外发生什么"——
+    关掉任意一个，那条提醒照旧响（托盘气泡 + 对话区那条系统消息），变的只是"是谁说的、
+    有没有把他叫过来"。
+
+    **为什么不塞进「工具」页**：那一页的自我声明是"最小权限的唯一入口"（可读目录是一条
+    授权），而这两个勾选框与权限无关。**也不塞进「记忆」页**：那一页几项管的是"库里的
+    东西长什么样"，而提醒压根不落库——见 ``agent/reminders.py`` 模块文档那句"提醒是
+    **还没发生的事**，记忆是发生过的事"。
+
+    形状与记忆页同一套：**边改边生效**（一个勾选框，没有"应用"可等），底部「撤销修改」
+    兜着（:meth:`revert`）。
+    """
+
+    changed = Signal(object)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(16, 16, 16, 16)
+        outer.setSpacing(10)
+
+        #: 「撤销修改」回到的那一份。:meth:`set_state` 会覆盖它。
+        self._snapshot = ReminderSettings()
+        self._syncing = False
+
+        outer.addWidget(_section("到点的时候"))
+        # **初值必须显式写出来，而且是三个默认值里的第三个。** ``QCheckBox`` 默认是
+        # 没勾的，而这两项的默认值是"开"——少写这一处的症状是"新装好的程序里打开设置，
+        # 那两个框都没勾"，而程序的行为一直当它们是开的（``load_reminders`` 那侧也是
+        # 真）。值从 dataclass 那一份来，不在这里再抄一遍 ``True``：抄的话，"默认是开"
+        # 就有了两个真源，而它们迟早会在某一版里分叉。
+        #
+        # 写在 ``connect`` **之前**：``setChecked`` 会发 ``toggled``，而这时这个页面
+        # 还没"打开"过——那一下会变成一次"用户把它设成了默认值"。
+        self.wake_box = QCheckBox("把窗口叫出来", self)
+        self.wake_box.setObjectName("wakeOnAlertBox")
+        self.wake_box.setChecked(self._snapshot.wake_on_alert)
+        self.wake_box.toggled.connect(self._on_toggled)
+        outer.addWidget(self.wake_box)
+        outer.addWidget(
+            _hint(
+                "窗口正开着时**只在任务栏闪一下，不抢焦点**——你可能正在别的窗口里打字；"
+                "最小化时把它恢复出来；收在托盘里时才真的叫到最前面。"
+            )
+        )
+
+        outer.addSpacing(6)
+        self.speak_box = QCheckBox("由她说一句", self)
+        self.speak_box.setObjectName("speakOnAlertBox")
+        self.speak_box.setChecked(self._snapshot.speak_on_alert)
+        self.speak_box.toggled.connect(self._on_toggled)
+        outer.addWidget(self.speak_box)
+        outer.addWidget(
+            _hint(
+                "到点那一刻由模型说一句自己的话，而不是把提醒原文念一遍。"
+                "那一轮不写记忆库、也不动正在进行的对话——她说话期间你照样能打字。"
+            )
+        )
+        outer.addWidget(
+            _hint(
+                "这一项要等一次模型推理（本机 4B 模型实测 3–15 秒），"
+                "所以模型慢、或者不想让它出声时可以关掉。**关掉之后提醒照响**："
+                "托盘气泡与对话区那一条一个字都不变。"
+            )
+        )
+        outer.addStretch(1)
+
+    def set_state(self, settings: ReminderSettings) -> None:
+        """**打开窗口时调，陈述现状。** 顺带重置快照（同记忆页的道理：撤销回到的是
+        **这一次**打开时的样子）。
+
+        ``_syncing`` 是必需的（同外观页那段注释）：``setChecked`` 会经由子控件发出
+        ``toggled``，而 ``blockSignals`` 只挡这个对象自己的信号。没有这个闸门，打开
+        窗口这一下就会往外发一轮信号，"陈述现状"与"用户改了"在接收侧再也分不开——
+        症状是每次打开设置都往设置里重写一遍同样的值。
+        """
+        self._snapshot = settings
+        self._syncing = True
+        try:
+            self.wake_box.setChecked(settings.wake_on_alert)
+            self.speak_box.setChecked(settings.speak_on_alert)
+        finally:
+            self._syncing = False
+
+    def current(self) -> ReminderSettings:
+        """**每个控件都要读。** 少读一个的症状不是报错，是"勾了它、关掉设置、再打开
+        又变回没勾"——因为写回去的那一份里没有这个字段，而写盘是照这一份写的。
+        """
+        return ReminderSettings(
+            wake_on_alert=self.wake_box.isChecked(),
+            speak_on_alert=self.speak_box.isChecked(),
+        )
+
+    def revert(self) -> None:
+        """「撤销修改」的提醒那一半。**变了才发信号**（同工具页与记忆页）。"""
+        if self.current() == self._snapshot:
+            return
+        self.set_state(self._snapshot)
+        self.changed.emit(self.current())
+
+    def _on_toggled(self, _checked: bool) -> None:
+        if self._syncing:
+            return
+        self.changed.emit(self.current())
+
+
 class DataPage(QWidget):
     """数据页：**记忆与数据放在哪个文件夹**，以及重新看一遍新手引导。
 
@@ -1398,6 +1508,7 @@ class SettingsDialog(QDialog):
     backend_changed = Signal(object)
     tools_changed = Signal(object)
     memory_changed = Signal(object)
+    reminders_changed = Signal(object)
     #: 「重建联想」被按下。转出去给主窗口——只有它知道图存哪儿、库有多大。
     graph_rebuild_requested = Signal()
     #: 「立即巩固」被按下。同上：主窗口知道库在哪儿、要不要先等图。
@@ -1422,6 +1533,7 @@ class SettingsDialog(QDialog):
         backend: BackendSettings,
         tools: ToolSettings | None = None,
         memory: MemorySettings | None = None,
+        reminders: ReminderSettings | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("设置")
@@ -1456,7 +1568,7 @@ class SettingsDialog(QDialog):
         # 行距却只有 16 像素"的画面（一条蓝条压住左右邻居的字），而那种错看起来像字体坏了。
         # QSS 那份只留横向内边距（文字离左边框多远），纵向高度由这里的 sizeHint 说了算。
         item_height = self.categories.fontMetrics().height() + 2 * _CATEGORY_PAD_Y
-        for label in ("外观", "人设", "后端 / API", "工具", "记忆", "数据"):
+        for label in ("外观", "人设", "后端 / API", "工具", "记忆", "提醒", "数据"):
             item = QListWidgetItem(label)
             item.setSizeHint(QSize(0, item_height))
             self.categories.addItem(item)
@@ -1468,12 +1580,14 @@ class SettingsDialog(QDialog):
         self.backend = BackendPage(self)
         self.tools = ToolPage(self)
         self.memory = MemoryPage(self)
+        self.reminders = ReminderPage(self)
         self.data = DataPage(self)
         self.pages.addWidget(self.appearance)
         self.pages.addWidget(self.persona)
         self.pages.addWidget(self.backend)
         self.pages.addWidget(self.tools)
         self.pages.addWidget(self.memory)
+        self.pages.addWidget(self.reminders)
         self.pages.addWidget(self.data)
         body.addWidget(self.pages, 1)
         outer.addLayout(body, 1)
@@ -1503,6 +1617,8 @@ class SettingsDialog(QDialog):
         self.tools.roots_changed.connect(self.tools_changed)
         # 记忆页也是"边改边生效"：一个勾选框，勾上就是下一次写入生效。
         self.memory.changed.connect(self.memory_changed)
+        # 提醒页同形（也是一个勾选框，勾上就是下一次到点生效）。
+        self.reminders.changed.connect(self.reminders_changed)
         # 「重建联想」是**动作**不是设置，所以它自己一路信号出去，不混进
         # ``memory_changed``：那一路的接收方做的是"把 MemorySettings 存起来"，
         # 而这件事要起一个后台线程。混在一起的代价是每次勾选都建一遍图。
@@ -1526,6 +1642,7 @@ class SettingsDialog(QDialog):
             backend,
             tools=ToolSettings() if tools is None else tools,
             memory=MemorySettings() if memory is None else memory,
+            reminders=ReminderSettings() if reminders is None else reminders,
         )
 
     # ── 状态进出 ────────────────────────────────────────────────────────────
@@ -1539,6 +1656,7 @@ class SettingsDialog(QDialog):
         *,
         tools: ToolSettings,
         memory: MemorySettings,
+        reminders: ReminderSettings,
     ) -> None:
         """**打开窗口时调。** 顺带把快照换成这一份——「撤销修改」回到的是**这一次**
         打开时的样子，而不是上一次的。
@@ -1552,6 +1670,7 @@ class SettingsDialog(QDialog):
         self.backend.set_state(backend, note)
         self.tools.set_state(tools)
         self.memory.set_state(memory)
+        self.reminders.set_state(reminders)
 
     def set_resolved(self, resolved: Resolved) -> None:
         self.appearance.set_resolved(resolved)
@@ -1618,6 +1737,7 @@ class SettingsDialog(QDialog):
         self.theme_changed.emit(self._snapshot)
         self.tools.revert()
         self.memory.revert()
+        self.reminders.revert()
 
     # ── 连接测试 ────────────────────────────────────────────────────────────
 

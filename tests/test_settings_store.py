@@ -25,6 +25,7 @@ from axo.ui.settings_store import (
     PROVIDER_OLLAMA,
     BackendSettings,
     MemorySettings,
+    ReminderSettings,
     SettingsStore,
     ToolSettings,
     wallpaper_file,
@@ -524,6 +525,96 @@ def test_the_memory_keys_live_in_their_own_namespace() -> None:
         "memory/graph_channel",
         "memory/consolidation_enabled",
         "memory/consolidation_interval_s",
+    ]
+
+
+# ── 提醒设置：两个开关，默认都开 ────────────────────────────────────────────
+#
+# 与上面那一组**相反**：那两个默认关（新的入库语义先不替用户做主），这两个默认开。
+# 差别不是口味：到点了不出声，这个功能就等于不存在；而这两个开关关掉任意一个，
+# 提醒照旧响（托盘气泡 + 对话区那条），变的只是"是谁说的、有没有把他叫过来"。
+
+
+def test_both_reminder_switches_are_on_by_default() -> None:
+    """**默认都开。** 三处默认值里的第二处（另外两处在 dataclass 字段与设置页控件）。
+
+    少写这一处（比如写成 ``False``）的症状：新装好的程序里那两个框没勾上，于是
+    "到点由她开口"一次都不跑，而**界面上一点异常都看不出来**——提醒照旧弹气泡、
+    照旧留一条记录，只是再也不开口。
+    """
+    assert SettingsStore(FakeBackend()).load_reminders() == ReminderSettings(
+        wake_on_alert=True, speak_on_alert=True
+    )
+
+
+@pytest.mark.parametrize("wake,speak", [(True, True), (True, False), (False, True), (False, False)])
+def test_the_two_reminder_switches_do_not_share_a_key(wake: bool, speak: bool) -> None:
+    """两个开关读写**各自的键**，四种组合都不许串（同记忆那一组，理由一字不差：
+
+    "各自往返"四条在**两个默认值相同时**全绿，而真实症状是两个勾选框永远同进同出。
+    这里两个默认值都是真，所以更必须让两格取值不同才构成判别。
+    """
+    store = SettingsStore(FakeBackend())
+    store.save_reminders(ReminderSettings(wake_on_alert=wake, speak_on_alert=speak))
+    loaded = store.load_reminders()
+    assert (loaded.wake_on_alert, loaded.speak_on_alert) == (wake, speak)
+
+
+@pytest.mark.parametrize("key", ["reminders/wake_on_alert", "reminders/speak_on_alert"])
+@pytest.mark.parametrize(
+    "stored,expected",
+    [
+        (True, True),
+        (False, False),
+        ("true", True),
+        ("True", True),
+        ("1", True),
+        ("yes", True),
+        ("on", True),
+        ("false", False),
+        ("False", False),
+        ("0", False),
+        ("no", False),
+        # **空串归"关"**，不是"回落默认（开）"。这一格是 ``_as_bool`` 的既有行为，
+        # 而这里刻意**不为提醒另立一套**：同一个函数管着四个开关，为其中一个加一条
+        # "空串算没设过"的分支，代价是下一个人读这张表时要想一次"为什么这个键不一样"。
+        # 而空串只会来自手改注册表——那时界面上那个框就是没勾的样子，看得见、也改得回来。
+        ("", False),
+        ("随便什么", False),
+        (1, True),
+        (0, False),
+        # 读不出形状的**才**回落默认（开）：``_as_bool`` 只对"非 bool/str/数"走这一支。
+        (None, True),
+    ],
+)
+def test_the_reminder_switches_survive_the_type_trap(
+    key: str, stored: object, expected: bool
+) -> None:
+    """两个键各跑一遍同一张表（同记忆那一组：分写成两个测试的话，将来谁把其中一个换成
+    "自己写的收口"只会红一半）。
+
+    ``"false"`` 这一行在这一组里**比在记忆那一组更值钱**：那边的默认是假，读错成假
+    看不出来；这边默认是真，**读错成 ``bool("false")`` 就等于用户关掉的开关自己又开了**
+    ——而它开的是"让模型在没人看着的时候开口"这件事。
+    """
+    store = SettingsStore(FakeBackend({key: stored}))
+    loaded = store.load_reminders()
+    assert getattr(loaded, key.split("/")[-1]) is expected
+
+
+def test_the_reminder_keys_live_in_their_own_namespace() -> None:
+    """**键的空间分开**（同前面几组）。
+
+    塞进 ``memory/*`` 的话，"哪些键属于记忆"就只能靠 grep 回答——而这两项一个管
+    叫不叫醒窗口、一个管让不让模型开口，**一个字节的记忆都不碰**。
+
+    写出去的键**逐个列出来**（不是"含哪些"）：多写一格就是多占一格命名空间。
+    """
+    backend = FakeBackend()
+    SettingsStore(backend).save_reminders(ReminderSettings())
+    assert [key for key, _ in backend.writes] == [
+        "reminders/wake_on_alert",
+        "reminders/speak_on_alert",
     ]
 
 

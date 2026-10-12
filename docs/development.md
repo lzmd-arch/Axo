@@ -323,7 +323,7 @@ src/
       theme_qt.py       唯一的 Qt 绑定层：QSettings 适配、系统明暗、调色板
       settings_store.py 设置读写：逐字段兜底、绝不抛（纯）；**密钥的加解密只在这两处**
       layout.py         窗口与分栏的尺寸算术（纯）
-      settings_dialog.py 设置窗口：外观页 + 人设页 + 后端/API 页 + 工具页 + 记忆页 + 数据页
+      settings_dialog.py 设置窗口：外观页 + 人设页 + 后端/API 页 + 工具页 + 记忆页 + 提醒页 + 数据页
       data_move.py      「搬迁」的算法：复制整棵数据根、逐文件哈希校验、失败回滚（纯）
       data_root.py      启动时定位置、办完跨重启的搬迁、收尾那一问（纯）
       relaunch.py       重新起一份自己（冻结态走 exe，源码态走 `-m axo.ui.app`）

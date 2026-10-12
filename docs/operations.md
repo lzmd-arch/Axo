@@ -110,7 +110,7 @@ job 排除 `tests/test_ui_*`，而那两百多条里有两条守卫守的是本�
 > 三个地方都带着它：`.github/workflows/ci.yml`、`tools/ci_local.py`、pre-commit 的
 > `memcore-layering`。gui 腿那一条不要加——加了是 `fixture 'qtbot' not found`。
 >
-> 代价是核心腿末尾挂一行 `1891 passed, 1 warning`，那条警告是
+> 代价是核心腿末尾挂一行 `1929 passed, 1 warning`，那条警告是
 > `Unknown config option: qt_api`（插件没加载，所以它注册的 ini 键没人认领）。无害，
 > **别顺手加 `--strict-config` 把它变成错误**——那会让几条腿一起红，理由写在
 > `pyproject.toml` 那段注释里。
@@ -127,7 +127,7 @@ job 排除 `tests/test_ui_*`，而那两百多条里有两条守卫守的是本�
 > 的 LF 与库里的 LF 相符），而那个文件仍然是坏的。修法是让 git 重写一遍：
 > `rm run.bat && git checkout -- run.bat`。
 
-核心腿 **1891** 条、gui 腿 **453** 条，合计 2344。新增测试会让这三个数字变化；数条数用
+核心腿 **1929** 条、gui 腿 **460** 条，合计 2389。新增测试会让这三个数字变化；数条数用
 `--collect-only -q` 加一段求和（摘要行被 `addopts="-q"` 压掉了）：
 
 ```bash
@@ -139,7 +139,7 @@ uv run pytest --collect-only -q | awk -F': ' '/^tests\/.*: [0-9]+$/ {s+=$2} END 
 | 腿 | 测什么 | 为什么在这儿 |
 |---|---|---|
 | **核心腿** | 记忆与召回、装配与预算、逐字稿 schema、**工具注册表与沙箱**、**agent 循环与闸门**、**路由的每一条判定**、三份基准 | 这些模块**一行 Qt 都没有**，所以能跑得快、跑得稳、在没有图形栈的机器上也能跑 |
-| **gui 腿** | 确认卡片出现在对话流里、点了允许/拒绝的去向、**等待确认期间点停止**、**收尾落在卡着等确认的 worker 上时进程退出码是 0**、`tools=()` 时 `AgentWorker` 与 `ChatWorker` 产出同一段文本、**语域路由真的接进了对话回合**（`test_ui_router_wire.py`）、**顶栏状态文字真的拿得到宽度**（`test_ui_elided_label.py`，见下）、**被拒绝的工具行回看时不把写给模型的文案渲染给用户**（`test_ui_tool_rows_display.py`）、**关窗的两支与托盘的菜单**（`test_ui_close_to_tray.py` / `test_ui_tray.py`）、**提醒到点真的会响**（`test_ui_reminder_scheduler.py`）、**联想开关与图真的从设置页走到了召回配置**（`test_ui_graph_chain.py`） | 只验**接线**。gui 测试一律不构造真的 `MainWindow`。**CI 排除了它**（无头 Linux 上不装 Qt），但 `tools/ci_local.py` 会跑它——本地跑一次就带上，不必手敲，`--fast` 也跳不过 |
+| **gui 腿** | 确认卡片出现在对话流里、点了允许/拒绝的去向、**等待确认期间点停止**、**收尾落在卡着等确认的 worker 上时进程退出码是 0**、`tools=()` 时 `AgentWorker` 与 `ChatWorker` 产出同一段文本、**语域路由真的接进了对话回合**（`test_ui_router_wire.py`）、**顶栏状态文字真的拿得到宽度**（`test_ui_elided_label.py`，见下）、**被拒绝的工具行回看时不把写给模型的文案渲染给用户**（`test_ui_tool_rows_display.py`）、**关窗的两支与托盘的菜单**（`test_ui_close_to_tray.py` / `test_ui_tray.py`）、**提醒到点真的会响**（`test_ui_reminder_scheduler.py`）、**到点由她开口那一族的接线与两条降级**（`test_ui_agent_slots.py`：让路、超时、空回复、报错、两个开关、叫醒窗口的三档、live 与 reload 画得一样）、**联想开关与图真的从设置页走到了召回配置**（`test_ui_graph_chain.py`） | 只验**接线**。gui 测试一律不构造真的 `MainWindow`。**CI 排除了它**（无头 Linux 上不装 Qt），但 `tools/ci_local.py` 会跑它——本地跑一次就带上，不必手敲，`--fast` 也跳不过 |
 
 **`tools` 非空才走 `AgentWorker`，为空仍走 `ChatWorker`**，所以两条消费路径短期并存。
 缓解是一条平价测试（上面表里最后一行），而**移除准则写在那条测试自己的 docstring 里**：
@@ -337,8 +337,8 @@ worker 却是被 `started` 以 `Qt.DirectConnection` 直连进 `run()` 的——
 > **`--ignore` 不认通配符。** 它收的是**路径**。写成 `--ignore=tests/test_ui_*` 或
 > `--ignore=tests/test_ui_` 时它一条都排不掉，而且**不报错**——命令照常跑、照常
 > 全绿，只是"核心腿"里混进了 gui 测试。要通配就用 `--ignore-glob`（它要引号，
-> 否则由 shell 先展开）；按标记排则是 `-m "not gui"`。两条现在都给出 1891 条，
-> gui 腿是 453 条（数条数的办法见上面「跑测试与 CI」）。
+> 否则由 shell 先展开）；按标记排则是 `-m "not gui"`。两条现在都给出 1929 条，
+> gui 腿是 460 条（数条数的办法见上面「跑测试与 CI」）。
 
 **还有一个长得一样但性质不同的退出码**，只在冒烟脚本里出现：脚本自己在收尾前
 **没把事件队列排空**。窗口的 `show()`/`close()` 会投递事件，`deleteLater` 要等事件

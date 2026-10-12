@@ -145,6 +145,7 @@ from .settings_store import (
     PROVIDER_OLLAMA,
     BackendSettings,
     MemorySettings,
+    ReminderSettings,
     SettingsStore,
     ToolSettings,
     wallpaper_file,
@@ -399,6 +400,13 @@ class MainWindow(QMainWindow):
         #: 用不用**任务记忆**（:class:`~axo.memory.policy.TaskPolicy`）。
         #: 默认关，存在 ``QSettings`` 的 ``memory/*`` 里，由设置窗口的「记忆」页改。
         self._task_memory: bool = self._settings_store.load_memory().task_memory
+        #: 提醒设置：**到点那一刻要不要打扰他**（叫醒窗口、由她说一句），两项默认都开。
+        #: 它只影响"提醒响的时候额外发生什么"，不改变提醒本身——关掉任意一个，那条提醒
+        #: 照旧被标成响过、托盘照旧弹气泡、对话区照旧留一条。
+        #:
+        #: **每次到点现读这一个成员，不把它塞进调度器**：勾选框改完要在下一次到点就生效，
+        #: 而调度器（与它的那三本账）压根不该知道"用户想不想被打扰"。
+        self._reminder_settings: ReminderSettings = self._settings_store.load_reminders()
         #: 用不用**联想通道**（第三通道）。默认关，与任务记忆同住在
         #: ``QSettings`` 的 ``memory/*`` 里，由设置窗口的「记忆」页改。
         #:
@@ -1808,7 +1816,7 @@ class MainWindow(QMainWindow):
         ② **把窗口叫出来**（:meth:`_wake_up`）——按窗口现在是什么样子决定怎么叫。
         ③ **由她说一句**——可以失败、可以不做，而上面两步不许。
 
-        **不许由她开口的四种情形**，每一种都有它自己的理由：
+        **不许由她开口的五种情形**，每一种都有它自己的理由：
 
         * ``alert.late``：启动时收掉的那一批。``start()`` 排在 ``__init__`` 最后，而
           ``_refresh_models()`` 是异步的——那一刻 ``self._backend`` 几乎必然是
@@ -1819,12 +1827,24 @@ class MainWindow(QMainWindow):
           而用户等的是自己那个问题的答案。
         * **她已经在说另一件**：两条提醒前后脚到点。第二句降级成程序说的那条，而不是
           排队——排队会让"她说了什么"与"现在是几点"对不上。
+        * **用户把「由她说一句」关了**（设置 → 提醒）。它是模型慢或吵时的逃生口，而关掉
+          之后走的正是上面那条降级——提醒照响，一个字都不少。
+
+        ② 与 ③ 各自有一个开关（设置 → 提醒），**① 没有，也不该有**：气泡是"现在就要
+        知道"唯一一条不经过模型的通道，它要是也能关，这个功能就只剩一句空话。
 
         措辞不在这里定：:class:`~axo.agent.reminders.Alert` 在纯层。
         """
         self._tray.show_message(alert.heading(), alert.body())
-        self._wake_up()
-        if alert.late or self._backend is None or self._streaming or self._speak_live:
+        if self._reminder_settings.wake_on_alert:
+            self._wake_up()
+        if (
+            alert.late
+            or self._backend is None
+            or self._streaming
+            or self._speak_live
+            or not self._reminder_settings.speak_on_alert
+        ):
             self._tell_reminder(alert)
             return
         self._start_reminder_speech(alert)
@@ -2379,11 +2399,13 @@ class MainWindow(QMainWindow):
                         consolidation_enabled=self._consolidation_enabled,
                         consolidation_interval_s=self._consolidation_interval_s,
                     ),
+                    reminders=self._reminder_settings,
                 )
                 dialog.theme_changed.connect(self._on_theme_changed)
                 dialog.backend_changed.connect(self._on_backend_changed)
                 dialog.tools_changed.connect(self._on_tools_changed)
                 dialog.memory_changed.connect(self._on_memory_changed)
+                dialog.reminders_changed.connect(self._on_reminders_changed)
                 dialog.graph_rebuild_requested.connect(self._on_rebuild_graph)
                 # 「立即巩固」直接走**与定时那条路同一个入口**：区分自动/手动的地方
                 # 只有一处（`force`），而托盘那一项连的是同一个槽。
@@ -2410,6 +2432,7 @@ class MainWindow(QMainWindow):
                         consolidation_enabled=self._consolidation_enabled,
                         consolidation_interval_s=self._consolidation_interval_s,
                     ),
+                    reminders=self._reminder_settings,
                 )
             # 图状态那一行**每次打开都重新对齐**（同人设页的道理，也是同一种真源：
             # 图是在这个窗口存在的时候才建的）。不回填的话，用户在设置页看着"还没建"
@@ -2515,6 +2538,20 @@ class MainWindow(QMainWindow):
         """
         self._read_roots = tuple(roots)
         self._settings_store.save_tools(ToolSettings(read_roots=self._read_roots))
+
+    @Slot(object)
+    def _on_reminders_changed(self, settings: ReminderSettings) -> None:
+        """提醒那两个开关变了：存一份，下一个到点就用新的。
+
+        **生效是"下一次到点"，而且是自动的**——到点那一枪现读 :attr:`_reminder_settings`
+        这两个布尔，所以这里除了记下来什么都不用做。不去通知调度器：它管的是"什么时候
+        该看一眼"，与"用户想不想被打扰"是两件事，把它搅进来只会让那一层多一个它不该
+        认识的设置项。
+
+        **也不回看已经响过的那一条**：它已经响完了，改开关不该追着补一句或撤一句。
+        """
+        self._reminder_settings = settings
+        self._settings_store.save_reminders(settings)
 
     @Slot(object)
     def _on_memory_changed(self, settings: MemorySettings) -> None:

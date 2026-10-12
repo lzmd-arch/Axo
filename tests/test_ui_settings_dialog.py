@@ -46,6 +46,7 @@ from axo.ui import settings_dialog
 from axo.ui.settings_dialog import (
     AppearancePage,
     BackendPage,
+    ReminderPage,
     SettingsDialog,
     ToolPage,
 )
@@ -56,6 +57,7 @@ from axo.ui.settings_store import (
     PROVIDER_OLLAMA,
     BackendSettings,
     MemorySettings,
+    ReminderSettings,
     ToolSettings,
 )
 from axo.ui.theme import (
@@ -431,6 +433,7 @@ def test_reopening_moves_the_snapshot(qapp, data_root) -> None:
         BackendSettings(),
         tools=ToolSettings(),
         memory=MemorySettings(),
+        reminders=ReminderSettings(),
     )
     assert seen == [], "set_state 是在陈述现状，不该发信号"
 
@@ -557,6 +560,7 @@ def test_the_memory_box_opens_on_the_stored_value(qapp, data_root) -> None:
         BackendSettings(),
         tools=ToolSettings(),
         memory=MemorySettings(task_memory=True),
+        reminders=ReminderSettings(),
     )
     assert dialog.memory.task_box.isChecked()
 
@@ -577,6 +581,7 @@ def test_the_memory_box_emits_only_when_the_user_moves_it(qapp, data_root) -> No
         BackendSettings(),
         tools=ToolSettings(),
         memory=MemorySettings(task_memory=True),
+        reminders=ReminderSettings(),
     )
     assert seen == [], "摆上当前值不是一次改动"
 
@@ -613,6 +618,7 @@ def _memory_dialog(**memory: Any) -> SettingsDialog:
         BackendSettings(),
         tools=ToolSettings(),
         memory=MemorySettings(**memory),
+        reminders=ReminderSettings(),
     )
     return dialog
 
@@ -939,7 +945,7 @@ def test_the_categories_line_up_with_the_pages(qapp, data_root) -> None:
     dialog = _dialog()
     labels = [dialog.categories.item(i).text() for i in range(dialog.categories.count())]
 
-    assert labels == ["外观", "人设", "后端 / API", "工具", "记忆", "数据"]
+    assert labels == ["外观", "人设", "后端 / API", "工具", "记忆", "提醒", "数据"]
     assert dialog.pages.count() == len(labels)
     for row, page in enumerate(
         (
@@ -948,6 +954,7 @@ def test_the_categories_line_up_with_the_pages(qapp, data_root) -> None:
             dialog.backend,
             dialog.tools,
             dialog.memory,
+            dialog.reminders,
             dialog.data,
         )
     ):
@@ -1285,6 +1292,7 @@ def test_reopening_moves_the_directory_snapshot(qapp, data_root, monkeypatch, tm
         BackendSettings(),
         tools=ToolSettings(read_roots=(new,)),
         memory=MemorySettings(),
+        reminders=ReminderSettings(),
     )
     monkeypatch.setattr(dialog.tools, "_ask_for_directory", lambda _start: str(tmp_path / "临时"))
     dialog.tools.add_button.click()
@@ -1605,3 +1613,77 @@ def test_the_data_page_note_is_writable_from_outside(qapp, data_root) -> None:
     page.set_note("已经安排好了")
 
     assert "已经安排好了" in page.note_label.text()
+
+
+# ── 提醒页：两个开关 ────────────────────────────────────────────────────────
+#
+# 这一页只有两个勾选框，而它们各自对着一条"关掉之后提醒照响"的通道。这里量三件
+# 别处量不到的事：**开窗时的初值**（三个默认值里的第三个）、**陈述现状不发信号**、
+# 以及**撤销回得去**。
+
+
+def _reminder_page(settings: ReminderSettings | None = None) -> tuple[ReminderPage, list]:
+    page = ReminderPage()
+    seen: list[ReminderSettings] = []
+    page.changed.connect(seen.append)
+    if settings is not None:
+        page.set_state(settings)
+    return page, seen
+
+
+def test_the_reminder_boxes_start_ticked(qapp: Any) -> None:
+    """**默认都开**，而且是"这个控件自己"的初值。
+
+    这一条是三个默认值里的第三个（另两个在 ``ReminderSettings`` 的字段与
+    ``load_reminders`` 的 ``, True``）。少写它——比如照抄记忆页写成
+    ``QCheckBox("…")`` 之后忘了 ``setChecked``——的症状只有一条路径会露出来：
+    新装好的程序里打开设置，那个框是**没勾**的，于是用户以为默认是关的；
+    而库里、注册表里、程序的行为里，它一直是开的。
+    """
+    page, _seen = _reminder_page()
+
+    assert page.current() == ReminderSettings(wake_on_alert=True, speak_on_alert=True)
+
+
+def test_opening_the_reminder_page_says_nothing(qapp: Any) -> None:
+    """``set_state`` 是**陈述现状**，不是做修改（同外观页那条，理由一字不差：
+    不挡的话，打开设置这一下就会往设置里重写一遍同样的值）。
+
+    这里比外观页多一层必要：这两个值是**主窗口每次到点现读**的，`set_state` 要是
+    漏了 `_syncing`，一次开窗就等于"用户又把开关设了一遍"——平时无害，但它会让
+    "改过开关"与"只是打开看了一眼"在日志与行为上再也分不开。
+    """
+    page, seen = _reminder_page()
+
+    page.set_state(ReminderSettings(wake_on_alert=False, speak_on_alert=True))
+
+    assert seen == []
+
+
+def test_unticking_one_box_emits_the_whole_setting(qapp: Any) -> None:
+    """勾掉一个，发出来的仍然是**完整的一份**（同外观页：发增量的实现会让接收方
+    把没提到的那个字段重置回默认值）。"""
+    page, seen = _reminder_page(ReminderSettings())
+
+    page.speak_box.setChecked(False)
+
+    assert seen == [ReminderSettings(wake_on_alert=True, speak_on_alert=False)]
+
+
+def test_revert_puts_the_reminder_boxes_back(qapp: Any) -> None:
+    """「撤销修改」回到**打开窗口时**那一份，而且变了才发信号。
+
+    "变了才发"不是为了省事：主窗口收到一次就是一次落盘，而"我什么都没改、只是点了
+    撤销"不该在设置文件里留下一次写入。
+    """
+    page, seen = _reminder_page(ReminderSettings())
+
+    page.wake_box.setChecked(False)
+    page.revert()
+
+    assert page.current() == ReminderSettings()
+    assert seen[-1] == ReminderSettings()
+    # 再按一次：什么都没变，于是什么都不发。
+    before = len(seen)
+    page.revert()
+    assert len(seen) == before
