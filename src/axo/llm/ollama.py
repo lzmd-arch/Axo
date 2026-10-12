@@ -361,6 +361,11 @@ def pick_chat_model(models: list[dict[str, Any]]) -> str:
 
 @dataclass
 class OllamaChatBackend:
+    #: 图挂在**工具结果那一行**上（实测收 ``user`` 与 ``tool`` 两处，见
+    #: :attr:`~axo.llm.base.ChatMessage.images`）。这是那个约定属性的一半：
+    #: OpenAI 兼容那个后端声明的是 ``"user"``。
+    images_ride_on = "tool"
+
     """Ollama 上的一个对话模型。
 
     Attributes:

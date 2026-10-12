@@ -140,9 +140,21 @@ class ChatMessage:
     而"给一条路径让后端自己去读"会把**后端的文件系统可见性**变成一条隐含契约——
     本机后端看得见、云端后端看不见，那种差别不该藏在一条消息里。
 
-    **哪些角色能带**：实测 Ollama 在 ``user`` 与 ``tool`` 行上都收；OpenAI 兼容协议
-    只认 ``user`` 的 content 分片，所以那边的后端见到图会**抛**（见
-    ``llm/openai_compat.py``），而不是悄悄丢掉。
+    **哪些角色能带图，由后端说了算**（两个后端的线格式不一样，这一条是协议的差别，
+    不是实现的偏好）：
+
+    * **Ollama**：实测 ``user`` 与 ``tool`` 行都收，所以屏幕截图就挂在工具结果那一行
+      上——模型看到的配对最自然（"这次调用返回了一张图"）。
+    * **OpenAI 兼容**（含 DeepSeek）：只认 **``user`` 行的 content 分片数组**
+      （``{"type": "image_url", "image_url": {"url": "data:image/png;base64,…"}}``）；
+      ``system`` / ``assistant`` 带图会被 400 拒掉，``tool`` 行的 content 是字符串、
+      装不了。所以那边必须把截图单独包一条 ``user`` 消息。
+
+    后端用一个**约定属性**声明自己收哪一种：``images_ride_on``，取值 ``"tool"`` 或
+    ``"user"``，**读的那一侧用 ``getattr(backend, "images_ride_on", "tool")``**（见
+    ``agent/loop.py`` 里那一段）。不进 :class:`ChatBackend` 协议——那是
+    ``@runtime_checkable`` 的，往里加成员等于要求每个后端都长这个属性，而假后端
+    （测试里那一堆）根本不需要。
     """
 
     def __post_init__(self) -> None:

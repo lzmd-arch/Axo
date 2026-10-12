@@ -220,3 +220,78 @@ def test_count_tokens_is_honestly_unknown() -> None:
     随模型变化。
     """
     assert _bare().count_tokens("随便一段话") is None
+
+
+# ── 图：只认 user 行的分片数组 ──────────────────────────────────────────────
+#
+# 2026-10-12：用户拿 `deepseek-flash`（官方那个唯一支持图片输入的模型）问"你能不能看
+# 我的屏幕"，得到的回答是"我没有屏幕接口"。当时的实现在这里**一律抛**——而协议其实
+# 允许图，只是**只允许挂在 user 行**上（`system`/`assistant` 会 400，`tool` 行的
+# content 是字符串）。所以这里改成：user 行写成分片数组，别的角色照旧抛。
+
+
+def test_a_user_message_carries_images_as_content_blocks() -> None:
+    """``user`` 行带图 → ``content`` 从字符串变成**分片数组**。
+
+    形状照 DeepSeek 官方文档（``user`` 消息里 ``{"type":"image_url","image_url":
+    {"url":"data:image/png;base64,…"}}``）。**base64 内联**这条路是文档里明说支持的，
+    所以我们不需要先把图传上去拿一个 file_id。
+    """
+    message = ChatMessage(role="user", content="（这是刚截到的屏幕）", images=("QQ==", "Zg=="))
+
+    payload = _build_message(message)
+
+    assert payload["role"] == "user"
+    blocks = payload["content"]
+    assert isinstance(blocks, list), "带图的 user 行必须写成分片数组，不能还是字符串"
+    assert blocks[0] == {"type": "text", "text": "（这是刚截到的屏幕）"}
+    assert [block["type"] for block in blocks[1:]] == ["image_url", "image_url"]
+    assert blocks[1]["image_url"]["url"] == "data:image/png;base64,QQ=="
+
+
+def test_an_empty_text_still_produces_a_valid_block_array() -> None:
+    """正文为空时**不补一个空的 text 分片**——有些端点会把它当成参数错。
+
+    这条路真的会到：捎图那条消息的正文由我们自己拼，而"只发图不写字"是一种合理的
+    未来形状（比如只回一张图当证据）。
+    """
+    payload = _build_message(ChatMessage(role="user", images=("QQ==",)))
+
+    assert payload["content"] == [
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,QQ=="}}
+    ]
+
+
+def test_a_message_without_images_keeps_the_plain_string() -> None:
+    """反空转：没图的 user 行**照旧是字符串**。
+
+    少了这一条，一个"所有 user 行都写成分片数组"的实现也能全绿——而那会让每一句
+    普通对话都多一层没人要的结构，还可能踩到端点对空文本分片的各种脾气。
+    """
+    payload = _build_message(ChatMessage(role="user", content="在吗"))
+
+    assert payload["content"] == "在吗"
+
+
+@pytest.mark.parametrize("role", ["system", "assistant", "tool"])
+def test_images_on_any_other_role_are_refused(role: str) -> None:
+    """别的角色带图 → **抛**，而且那句话要指得出正确的那条路。
+
+    静默丢掉的表现是模型收到一条"你看过屏幕"却看不见图的记录，然后开始编。
+    """
+    message = ChatMessage(role=role, content="x", images=("QQ==",), tool_call_id="c1")
+
+    with pytest.raises(ChatBackendError) as caught:
+        _build_message(message)
+
+    assert role in str(caught.value)
+    assert "user" in str(caught.value)
+
+
+def test_the_backend_declares_where_its_images_ride() -> None:
+    """那个约定属性的另一半在这里：云端是 ``"user"``（Ollama 那边是 ``"tool"``）。
+
+    它决定 ``agent/loop.py`` 把截图贴着工具结果那一行、还是另起一条 user 消息。
+    两边写反的症状是**400**（图挂在 tool 行上）或者一句"没有屏幕接口"（图根本没寄）。
+    """
+    assert OpenAICompatChatBackend.images_ride_on == "user"

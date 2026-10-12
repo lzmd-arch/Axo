@@ -400,6 +400,11 @@ def probe(base_url: str = DEFAULT_OPENAI_BASE_URL, *, api_key: str = "") -> tupl
 
 @dataclass
 class OpenAICompatChatBackend:
+    #: 图挂在**一条单独的 user 消息**上：这个协议只认 ``user`` 行的 content 分片数组
+    #: （见 :attr:`~axo.llm.base.ChatMessage.images`）。``agent/loop.py`` 按这个属性
+    #: 决定截图是贴着工具结果那一行，还是另起一条。
+    images_ride_on = "user"
+
     """云端 OpenAI 兼容端点上的一个对话模型。
 
     Attributes:
@@ -516,6 +521,18 @@ def _build_tool(spec: ToolSpec) -> dict[str, Any]:
     }
 
 
+_IMAGE_MIME = "image/png"
+"""带图那条消息里 ``data:`` 前缀上写的类型。
+
+**只有一个生产者**：``ui/screen.py`` 截屏之后编的就是 PNG。写死一个常量而不是每条
+消息各带一个类型字段，是因为那个字段的另一半（谁去读它）目前不存在——真出现第二种
+图（JPEG、截取某个窗口的位图）时再加，而不是现在先摆一个没人填的字段。
+
+（DeepSeek 的文档里说明它**按内容认格式**、不看这个声明，所以就算哪天这里写错，
+症状也不会是"图发不出去"，而是别的地方说不清的东西——这正是要把它写死在一处的原因。）
+"""
+
+
 def _build_message(message: ChatMessage) -> dict[str, Any]:
     """一条消息。工具调用在这里序列化成 OpenAI 认的形状。
 
@@ -532,19 +549,36 @@ def _build_message(message: ChatMessage) -> dict[str, Any]:
 
     这两处不对称是**协议本身的**，所以它只能活在后端层。
     """
-    if message.images:
+    if message.images and message.role != "user":
         # **明说，不静默丢。** 这个协议里只有 ``user`` 消息能带图（``content`` 要写成
-        # 分片数组），而屏幕识别的图挂在 ``tool`` 行上——丢掉它的话，模型会收到一条
-        # "你看过屏幕"却看不见图的记录，然后开始编。
+        # 分片数组）；``system`` / ``assistant`` 带图会被 400 拒掉，``tool`` 行的
+        # content 是字符串、装不了。丢掉它的话，模型会收到一条"你看过屏幕"却看不见图
+        # 的记录，然后开始编。
         #
-        # 走到这里说明上游的登记漏了（云端的模型能力恒为"问不到"，所以那个工具在
-        # 云端本来就不该被登记）。抛而不是降级：这条路径上没有任何一方能从"少一张图"
-        # 里恢复出正确的行为。
+        # 走到这里说明上游把它挂错了行：屏幕截图该由 ``agent/loop.py`` 包成一条单独的
+        # ``user`` 消息（那边按 ``images_ride_on`` 分派）。抛而不是降级——这条路径上
+        # 没有任何一方能从"少一张图"里恢复出正确的行为。
         raise ChatBackendError(
-            "这一条消息带着图，而 OpenAI 兼容协议只允许 user 消息带图（content 分片），"
-            "tool 行装不了。屏幕识别只支持本机 Ollama 后端。"
+            f"这一条 {message.role} 消息带着图，而 OpenAI 兼容协议只允许 user 消息带图"
+            "（content 分片数组）。屏幕截图应当包成一条单独的 user 消息，"
+            "见 agent/loop.py 里按 images_ride_on 分派的那一段。"
         )
-    payload: dict[str, Any] = {"role": message.role, "content": message.content}
+
+    if message.images:
+        # ``user`` 行：正文与图写成**分片数组**（DeepSeek 的文档里就是这个形状）。
+        # 正文为空时不补一个空的 text 分片——一个空 text 块有些端点会当成参数错。
+        content: list[dict[str, Any]] = []
+        if message.content:
+            content.append({"type": "text", "text": message.content})
+        content += [
+            {"type": "image_url", "image_url": {"url": f"data:{_IMAGE_MIME};base64,{data}"}}
+            for data in message.images
+        ]
+        payload: dict[str, Any] = {"role": message.role, "content": content}
+        # 图只挂在 user 行上，而 user 行不会有 tool_calls / tool_call_id——那两段
+        # 仍按下面走一次，是为了"哪天有人给别的角色也开了图"时不至于少字段。
+    else:
+        payload = {"role": message.role, "content": message.content}
     if message.name:
         payload["name"] = message.name
     if message.tool_calls:

@@ -805,3 +805,89 @@ def test_approval_request_is_a_plain_dataclass() -> None:
     request = ApprovalRequest(call_id="c", tool_name="t", summary="s")
     assert request.arguments == {}
     assert repr(request).startswith("ApprovalRequest(")
+
+
+# ── 图挂在哪一行：两个协议的差别 ────────────────────────────────────────────
+#
+# 2026-10-12：用户拿 `deepseek-flash` 问"你能不能看我的屏幕"，得到的是"我没有屏幕
+# 接口"。原因不是那个模型看不见，而是**图没有位置可挂**：OpenAI 兼容协议只认 user
+# 行的 content 分片数组，而 `tool` 行的 content 是字符串。所以循环按后端声明的
+# `images_ride_on` 分派：`"tool"` 贴着工具结果（Ollama），`"user"` 另起一条。
+
+
+class _UserRowBackend(ScriptedBackend):
+    """一个"图只能挂 user 行"的假后端（OpenAI 兼容那一族的形状）。"""
+
+    images_ride_on = "user"
+
+
+def test_a_user_row_backend_gets_the_screenshot_as_a_separate_user_message(
+    store: MemoryStore,
+) -> None:
+    """``images_ride_on == "user"`` 时：工具行不带图，图**另起一条 user 消息**。
+
+    判据看请求体（同上面那条"图要真的进下一次请求"）：一条 tool 行 + 紧跟其后的
+    user 行，图在那条 user 行上——那是这个协议里唯一装得下图的角色。
+    """
+    spy = SpyTool(name="look_at_screen", images=("QUJD",), replayable=False)
+    backend = _UserRowBackend(script=[[tool_chunk(call("look_at_screen"))], [text_chunk("看到了")]])
+
+    drive(backend, ToolRegistry([spy]), store)
+
+    messages = backend.requests[-1].messages
+    tool_row = next(m for m in messages if m.role == "tool")
+    assert tool_row.images == (), "图还挂在 tool 行上——那个协议会 400"
+
+    carrier = [m for m in messages if m.role == "user" and m.images]
+    assert len(carrier) == 1, "捎图的那条 user 消息不在（或者多了几条）"
+    assert carrier[0].images == ("QUJD",)
+    assert messages.index(carrier[0]) > messages.index(tool_row), "捎图的那条要跟在那条结果后面"
+
+
+def test_the_carrier_message_never_reaches_the_transcript(store: MemoryStore) -> None:
+    """捎图那条消息**不进逐字稿**。
+
+    它不是用户说的、也不是模型说的。落进去的话，回看时它会以"用户说的一句话"的身份
+    出现——而它后面还跟着一整张屏幕。这条与 ``_WRAP_UP_NOTE`` 是同一条纪律。
+    """
+    spy = SpyTool(name="look_at_screen", images=("QUJD",), replayable=False)
+    backend = _UserRowBackend(script=[[tool_chunk(call("look_at_screen"))], [text_chunk("看到了")]])
+
+    events, _ = drive(backend, ToolRegistry([spy]), store)
+
+    roles = [row.role for row in appended_rows(events)]
+    assert roles == ["assistant", "tool"], f"逐字稿里多了东西：{roles}"
+
+
+def test_an_ollama_backend_still_gets_the_image_on_the_tool_row(store: MemoryStore) -> None:
+    """反空转：不声明那个属性的后端（= Ollama 与所有假后端）**行为一个字都不变**。
+
+    少了这一条，一个"图一律另起一条 user 消息"的实现也能全绿——而那会让 Ollama 那条
+    路上多出一条没人要的 user 消息（它本来收 tool 行的图，配对还更自然）。
+    """
+    spy = SpyTool(name="look_at_screen", images=("QUJD",), replayable=False)
+    backend = ScriptedBackend(script=[[tool_chunk(call("look_at_screen"))], [text_chunk("看到了")]])
+
+    events, _ = drive(backend, ToolRegistry([spy]), store)
+
+    tool_row = next(m for m in backend.requests[-1].messages if m.role == "tool")
+    assert tool_row.images == ("QUJD",)
+    carry = [m for m in backend.requests[-1].messages if m.role == "user"]
+    assert len(carry) == 1, "多出来一条 user 消息——那条是给别的协议准备的"
+    assert [row.role for row in appended_rows(events)] == ["assistant", "tool"]
+
+
+def test_a_tool_without_images_gets_no_carrier_message(store: MemoryStore) -> None:
+    """没有图的工具**不捎**：这条防的是"每条工具结果后面都跟一句程序拼的话"。
+
+    那种实现看起来无害，实际会让模型每一轮都读到一条"这不是用户说的话"——
+    而它偏偏写在 user 的位置上。
+    """
+    spy = SpyTool(name="spy", images=(), replayable=True)
+    backend = _UserRowBackend(script=[[tool_chunk(call("spy"))], [text_chunk("好")]])
+
+    drive(backend, ToolRegistry([spy]), store)
+
+    users = [m for m in backend.requests[-1].messages if m.role == "user"]
+    assert len(users) == 1, "没有图却还是捎了一条"
+    assert users[0].images == ()

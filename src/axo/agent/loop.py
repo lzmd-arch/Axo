@@ -229,6 +229,26 @@ _IMAGE_DROPPED_NOTE = (
     "请如实告诉用户你看不到屏幕，不要凭猜描述。）"
 )
 
+_IMAGE_CARRIER_NOTE = (
+    "（这是上一步 look_at_screen 截到的屏幕，见上面那一条工具结果。"
+    "这一行不是用户说的话，是程序把那张图捎过来的。）"
+)
+"""图不能挂在工具结果那一行时，用来捎它的那条 ``user`` 消息的正文。
+
+**为什么需要一条单独的消息**：OpenAI 兼容协议（含 DeepSeek）只认 ``user`` 行的
+content 分片数组，``tool`` 行的 content 是字符串——图在那儿没有位置。Ollama 那边
+不需要它（图直接挂在工具结果行上，实测收）。
+
+**它不是用户说的，也不是模型说的**，所以它只进这一轮的工作尾巴、**不进**
+:class:`MessagesAppended`（同下面 ``_WRAP_UP_NOTE`` 的道理）：逐字稿是"这次对话真的
+发生过什么"的记录，把一条程序拼的话写进去，回看时它会看起来像一次真实发言——而这
+一条还带着一整张屏幕。
+
+正文写全"这一行不是用户说的话"，是因为模型的读者只有它：让它把这张图当成用户新发的
+一条消息的话，它会开始回答一条没人提过的请求。
+"""
+
+
 _WRAP_UP_NOTE = ChatMessage(
     role="system",
     content=(
@@ -403,6 +423,10 @@ def run_agent_loop(
         assistant = ChatMessage(role="assistant", content=text, tool_calls=calls)
         tail.append(assistant)
         pair_start = len(tail) - 1
+        #: 这一对里**要进逐字稿**的那几行。捎图那条消息不进（见 ``_IMAGE_CARRIER_NOTE``），
+        #: 所以这份名单是显式攒的，不再拿 ``tail[pair_start:]`` 切片——切片会把捎图的
+        #: 那条一起带出去，而它会以"用户说的一句话"的身份落进对话记录。
+        storable: list[ChatMessage] = [assistant]
 
         pair_no_replay: list[tuple[str, str]] = []
         for index, tool_call in enumerate(calls):
@@ -455,13 +479,26 @@ def run_agent_loop(
             # 重建行时也不带 ``images``（``session/assemble.py`` 的 ``_tool_pair``），
             # 所以带图的工具**必须**标 ``replayable=False``——那一条由工具自己保证，
             # 这里只是把图交出去。
-            row = ChatMessage(role="tool", content=fed, tool_call_id=tool_call.id, images=images)
-            tail.append(row)
+            # **图挂哪一行由后端说了算**（``chat_message.images`` 那条注释里写了
+            # 两个协议的差别）。``getattr`` 而不是进协议：``ChatBackend`` 是
+            # ``@runtime_checkable`` 的，往里加成员等于要求每个后端都长这个属性，
+            # 而测试里那一堆假后端根本不需要它。
+            if images and getattr(backend, "images_ride_on", "tool") == "user":
+                row = ChatMessage(role="tool", content=fed, tool_call_id=tool_call.id)
+                tail.append(row)
+                storable.append(row)
+                tail.append(ChatMessage(role="user", content=_IMAGE_CARRIER_NOTE, images=images))
+            else:
+                row = ChatMessage(
+                    role="tool", content=fed, tool_call_id=tool_call.id, images=images
+                )
+                tail.append(row)
+                storable.append(row)
 
         # **整对发出去，发在驱逐之前。** 顺序是刻意的：先发再驱逐，所以"记录里有
         # 这一对"不取决于这一对有没有被挤出工作尾巴。反过来的话，被挤掉的那一对
         # 会连同它的记录一起消失，而调用方无从知道少了什么。
-        yield MessagesAppended(rows=tuple(tail[pair_start:]), no_replay=tuple(pair_no_replay))
+        yield MessagesAppended(rows=tuple(storable), no_replay=tuple(pair_no_replay))
 
         pairs.append((pair_start, len(tail) - pair_start))
         _fit_tool_tail(tail, pairs, ceiling=tools_ceiling, meter=meter)
