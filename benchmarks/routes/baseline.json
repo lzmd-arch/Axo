@@ -168,5 +168,5 @@
     "chat_recall": 0.02
   },
   "frozen_at": "2026-10-10T06:56:01Z",
-  "note": "这是**实测值，不是目标值**（先跑后填）。门槛 = 本文件的值 ± tolerance，方向见 biosnn_memterm.bench.routeeval.GATED（三项都是越大越好）。改语料要同时改 freeze.json 并重跑 --freeze。**门槛只绑规则层**：模型层要 Ollama，把门槛绑上去等于让装没装模型决定提交能不能过。"
+  "note": "这是**实测值，不是目标值**（先跑后填）。门槛 = 本文件的值 ± tolerance，方向见 axo.bench.routeeval.GATED（三项都是越大越好）。改语料要同时改 freeze.json 并重跑 --freeze。**门槛只绑规则层**：模型层要 Ollama，把门槛绑上去等于让装没装模型决定提交能不能过。"
 }

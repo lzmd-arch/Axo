@@ -2,7 +2,7 @@
 
 分两半，边界很清楚：
 
-* :mod:`~biosnn_memterm.memory.forget` 的三个纯函数——写 COLD、写回程票、读回程票。
+* :mod:`~axo.memory.forget` 的三个纯函数——写 COLD、写回程票、读回程票。
 * 端到端那几条：软遗忘之后 ``recall`` 真的不再注入它（且账本里**说得出原因**），
   恢复之后又回来了。
 
@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from biosnn_memterm.memory.forget import (
+from axo.memory.forget import (
     FORGET_KEY,
     ForgetRecord,
     can_soft_forget,

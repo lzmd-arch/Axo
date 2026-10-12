@@ -112,7 +112,7 @@ def test_the_mirror_lands_inside_the_package() -> None:
 
     这一条守的是那个让应用代码一个字都不用改的假设：PyInstaller 给包内模块设的
     ``__file__`` 指向 mirror 里的路径，于是 ``Path(__file__).with_name("theme.qss")``
-    只有在 qss 落在 ``biosnn_memterm/ui/`` 下时才读得到。目标写歪了 PyInstaller
+    只有在 qss 落在 ``axo/ui/`` 下时才读得到。目标写歪了 PyInstaller
     **不报错**——它照放，而那边读到一个不存在的路径，症状是白屏或少一套样式。
     """
     for source, target in _declared("DATAS"):

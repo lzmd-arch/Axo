@@ -20,8 +20,8 @@ from typing import Any
 
 import pytest
 
-from biosnn_memterm.llm.base import ChatBackendError
-from biosnn_memterm.llm.openai_compat import _as_arguments, _iter_sse_chunks
+from axo.llm.base import ChatBackendError
+from axo.llm.openai_compat import _as_arguments, _iter_sse_chunks
 
 
 class _FakeResponse:

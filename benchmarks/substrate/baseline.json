@@ -68,5 +68,5 @@
     "completion_top1": 0.05
   },
   "frozen_at": "2026-10-10T19:58:01Z",
-  "note": "这是**实测值，不是目标值**（先跑后填）。门槛 = 本文件的值 ± tolerance，方向见 biosnn_memterm.bench.substrate.GATED（两项都是越大越好）。**门槛只绑默认档**（assoc=hash、k=ASSOC_K、scale=语料条数）：扫描出来的那几行是用来裁决参数该取多少的，冻住其中一个等于把待决问题伪装成已决问题。改语料要同时改 freeze.json 并重跑 --freeze。graph_hit@* 刻意不进门槛——它回答的是「第三通道该不该上」，而那还没有裁决。"
+  "note": "这是**实测值，不是目标值**（先跑后填）。门槛 = 本文件的值 ± tolerance，方向见 axo.bench.substrate.GATED（两项都是越大越好）。**门槛只绑默认档**（assoc=hash、k=ASSOC_K、scale=语料条数）：扫描出来的那几行是用来裁决参数该取多少的，冻住其中一个等于把待决问题伪装成已决问题。改语料要同时改 freeze.json 并重跑 --freeze。graph_hit@* 刻意不进门槛——它回答的是「第三通道该不该上」，而那还没有裁决。"
 }

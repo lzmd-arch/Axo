@@ -185,9 +185,9 @@ jobs:
           uv venv /tmp/clean --python 3.12
           uv pip install --python /tmp/clean/bin/python dist/*.whl
           /tmp/clean/bin/python -c "
-          import memcore, biosnn_memterm
-          from biosnn_memterm.bench import load_goldset, summarize
-          print('biosnn-memterm', biosnn_memterm.__version__, 'OK')
+          import memcore, axo
+          from axo.bench import load_goldset, summarize
+          print('axo', axo.__version__, 'OK')
           "
       - name: 确认 wheel 没有把 Qt 拖成依赖
         run: |
@@ -198,5 +198,5 @@ jobs:
           "
       - uses: actions/upload-artifact@v4
         with:
-          name: biosnn-memterm-wheel
+          name: axo-wheel
           path: dist/*.whl

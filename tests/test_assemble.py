@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import pytest
 
-from biosnn_memterm.llm.base import ChatMessage, ToolCall
-from biosnn_memterm.session.assemble import (
+from axo.llm.base import ChatMessage, ToolCall
+from axo.session.assemble import (
     Assembly,
     Layer,
     MemoryInjection,
@@ -26,8 +26,8 @@ from biosnn_memterm.session.assemble import (
     layer_ceiling,
     stored_rows,
 )
-from biosnn_memterm.session.budget import TokenBudget, TokenMeter
-from biosnn_memterm.session.store import Message
+from axo.session.budget import TokenBudget, TokenMeter
+from axo.session.store import Message
 
 METER = TokenMeter()
 #: 一个固定的窗口，够大以至于默认情况下什么都不用丢。具体的数不重要，
@@ -124,7 +124,7 @@ def test_the_ledger_total_is_measured_from_what_is_actually_sent() -> None:
         history(),
         current="问一句。",
         budget=ROOMY,
-        persona=["你是 BioSNN 记忆终端。"],
+        persona=["你是 Axo。"],
         environment="模型：qwen3-4b",
         recalled=[memory("m1"), memory("m2")],
     )
@@ -142,7 +142,7 @@ def test_the_budget_is_paid_once_not_per_layer() -> None:
         history(),
         current="问一句。",
         budget=ROOMY,
-        persona=["你是 BioSNN 记忆终端。"],
+        persona=["你是 Axo。"],
         environment="模型：qwen3-4b",
         recalled=[memory("m1")],
     )
@@ -157,7 +157,7 @@ def test_every_layer_lands_in_the_system_message() -> None:
         history(),
         current="路由器放哪了？",
         budget=ROOMY,
-        persona=["你是 BioSNN 记忆终端，记忆独立于模型。"],
+        persona=["你是 Axo，记忆独立于模型。"],
         environment="模型：qwen3-4b",
         recalled=[memory("m1", "路由器放在书房书架顶层。")],
     )
@@ -209,9 +209,9 @@ def test_the_persona_survives_eviction() -> None:
             history(20),
             current="你记得我是谁吗？",
             budget=TokenBudget(window=window, reserve_output=100),
-            persona=["你是 BioSNN 记忆终端。"],
+            persona=["你是 Axo。"],
         )
-        assert "你是 BioSNN 记忆终端。" in system_of(result), f"window={window} 下人格锚被挤掉了"
+        assert "你是 Axo。" in system_of(result), f"window={window} 下人格锚被挤掉了"
 
 
 def test_the_current_input_survives_eviction() -> None:
@@ -302,7 +302,7 @@ def test_it_never_exceeds_the_usable_budget_when_it_can_help_it() -> None:
             history(30),
             current="问一句。",
             budget=budget,
-            persona=["你是 BioSNN 记忆终端。"],
+            persona=["你是 Axo。"],
             environment="模型：qwen3-4b",
             recalled=[memory(f"m{i}") for i in range(10)],
         )
@@ -408,7 +408,7 @@ def test_the_same_input_always_gives_the_same_assembly() -> None:
     kwargs = {
         "current": "继续。",
         "budget": TokenBudget(window=700, reserve_output=100),
-        "persona": ["你是 BioSNN 记忆终端。"],
+        "persona": ["你是 Axo。"],
         "recalled": [memory("m1"), memory("m2")],
     }
     first = assemble(rows, **kwargs)
@@ -426,7 +426,7 @@ def test_the_rendered_ledger_names_every_layer() -> None:
         history(),
         current="问一句。",
         budget=ROOMY,
-        persona=["你是 BioSNN 记忆终端。"],
+        persona=["你是 Axo。"],
         environment="模型：qwen3-4b",
         recalled=[memory("m1")],
     )

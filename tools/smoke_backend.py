@@ -1,7 +1,7 @@
 """不经过界面，直接验一遍对话后端的真实链路。
 
 界面出问题时，第一个要回答的问题永远是"是后端的事还是渲染的事"。这个脚本把
-后半段完全排除在外：它只调 :mod:`biosnn_memterm.llm`，把流式增量打到 stdout。
+后半段完全排除在外：它只调 :mod:`axo.llm`，把流式增量打到 stdout。
 
 用法::
 
@@ -15,8 +15,8 @@ from __future__ import annotations
 import sys
 import time
 
-from biosnn_memterm.llm.base import ChatBackendError, ChatMessage, ChatRequest
-from biosnn_memterm.llm.ollama import (
+from axo.llm.base import ChatBackendError, ChatMessage, ChatRequest
+from axo.llm.ollama import (
     OllamaChatBackend,
     list_local_models,
     pick_chat_model,

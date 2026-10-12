@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from biosnn_memterm.ui.memory_worker import render_recall_detail
+from axo.ui.memory_worker import render_recall_detail
 from memcore.audit import (
     ChannelScores,
     RecallLedger,
@@ -197,7 +197,7 @@ def make_item(text: str, **overrides: object) -> MemoryItem:
 
 
 def _probe(store: MemoryStore, content: str, embedding: Any = None) -> RecallLedger:
-    from biosnn_memterm.ui.memory_worker import MemoryProbeWorker
+    from axo.ui.memory_worker import MemoryProbeWorker
 
     worker = MemoryProbeWorker(store=store, content=content, embedding=embedding)
     captured: list[RecallLedger] = []
@@ -258,7 +258,7 @@ def test_probe_does_not_settle(qapp: Any, store: MemoryStore) -> None:
 def test_probe_uses_the_exploratory_config(qapp: Any, store: MemoryStore) -> None:
     """阈值降到 0.02、条数放宽到 20——只把当初那 8 条再列一遍的话，
     这个按钮什么也没回答。"""
-    from biosnn_memterm.memory.browse import PROBE_CONFIG
+    from axo.memory.browse import PROBE_CONFIG
 
     assert PROBE_CONFIG.max_items == 20
     assert PROBE_CONFIG.min_score < 0.10  # 生产是 0.10
@@ -280,7 +280,7 @@ def test_probe_uses_the_exploratory_config(qapp: Any, store: MemoryStore) -> Non
 @pytest.fixture
 def graph_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """把 ``graph_path()`` 指到 ``tmp_path`` 上，返回那个路径。"""
-    import biosnn_memterm.ui.memory_worker as module
+    import axo.ui.memory_worker as module
 
     path = tmp_path / "graph.npz"
     monkeypatch.setattr(module, "graph_path", lambda: path)
@@ -288,7 +288,7 @@ def graph_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _build(store: MemoryStore, *, force: bool = False):  # noqa: ANN202 — (图, 三态, note)
-    from biosnn_memterm.ui.memory_worker import GraphWorker
+    from axo.ui.memory_worker import GraphWorker
 
     worker = GraphWorker(store=store, force=force)
     ready: list[Any] = []
@@ -322,7 +322,7 @@ def test_a_large_library_reuses_the_stored_graph_without_rebuilding(
     做法是把阈值压到 2，再预先放一份"只有 1 个节点"的图。若那条捷径失效，worker 会
     照当前 3 条重建，回来的图就有 3 个节点——断言于是红。
     """
-    import biosnn_memterm.ui.memory_worker as module
+    import axo.ui.memory_worker as module
 
     store.add(make_item("第一条。"))
     store.add(make_item("第二条。"))
@@ -350,7 +350,7 @@ def test_force_rebuilds_even_a_large_library(
     少了这一条，大库上点「重建联想」会把旧图原样还回来——而那个按钮存在的全部理由
     就是大库（自动那条路根本不比对）。按钮看起来坏了，还没有任何报错。
     """
-    import biosnn_memterm.ui.memory_worker as module
+    import axo.ui.memory_worker as module
 
     store.add(make_item("第一条。"))
     store.add(make_item("第二条。"))

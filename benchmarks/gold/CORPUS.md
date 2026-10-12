@@ -9,7 +9,7 @@
 度**（一句话对一条记忆的 Jaccard 能不能分开），**没有候选池**——所以真正决定召回行为
 的 K、阈值、MMR 去冗、token 预算驱逐，一条都没被量到。这里补上那个缺口：每条查询都
 跑真正的 `recall()`，落一份逐条账本，四项指标（hit@K / MRR / 误注入率 / AUC）的口径写
-在 `src/biosnn_memterm/bench/metrics.py` 里——**那里是定义，报告只是报告**。
+在 `src/axo/bench/metrics.py` 里——**那里是定义，报告只是报告**。
 
 语料**全部虚构**。它不许含任何关于作者本人、本人机器、或本项目其它仓库的痕迹，这条
 由 `tests/test_goldset_integrity.py::test_corpus_has_no_personal_identifiers` 用一份

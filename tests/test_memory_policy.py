@@ -13,9 +13,9 @@ from collections.abc import Sequence
 
 import pytest
 
-from biosnn_memterm.agent.loop import ToolFinished
-from biosnn_memterm.agent.trace import build_trace
-from biosnn_memterm.memory import (
+from axo.agent.loop import ToolFinished
+from axo.agent.trace import build_trace
+from axo.memory import (
     MAX_TASK_TEXT_CHARS,
     MemoryDraft,
     MemoryWriter,
@@ -389,7 +389,7 @@ def test_the_two_policies_are_mutually_exclusive_by_construction(store: MemorySt
 def test_the_policy_is_a_runtime_checkable_protocol() -> None:
     """`isinstance` 能用，是为了让"这个对象到底能不能当策略"在装配处就能问出来，
     而不是等第一轮写入时炸在一条 AttributeError 上。"""
-    from biosnn_memterm.memory import MemoryPolicy
+    from axo.memory import MemoryPolicy
 
     assert isinstance(PerItemPolicy(), MemoryPolicy)
 

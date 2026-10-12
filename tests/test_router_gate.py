@@ -6,7 +6,7 @@
 得出来的事：
 
 1. **结构不变量**：斜杠类的每条都必须被显式认出来，`ambiguous` 类的歧义标志必须照亮
-   （见 :func:`~biosnn_memterm.bench.routeeval.route_structural_violations`）。
+   （见 :func:`~axo.bench.routeeval.route_structural_violations`）。
 2. **可复现**：连跑两遍逐位相同。路由是纯函数，所以这一条比召回那边更容易成立——
    **正因为它容易成立，它才是一道便宜的哨兵**：任何一天有人往 `decide` 里塞一个时间、
    一个随机、一段跨轮状态，它立刻红。
@@ -21,14 +21,14 @@ import json
 
 import pytest
 
-from biosnn_memterm.bench import (
+from axo.bench import (
     RouteCorpus,
     default_routes_dir,
     evaluate,
     load_corpus,
     routes_digests,
 )
-from biosnn_memterm.bench.routeeval import (
+from axo.bench.routeeval import (
     gate_rows,
     route_structural_violations,
     route_summary,
@@ -80,7 +80,7 @@ def test_every_utterance_produced_an_outcome(corpus: RouteCorpus, outcomes) -> N
 def test_router_benchmark_is_idempotent(corpus: RouteCorpus) -> None:
     """连跑两遍，指标与逐条判定都逐位相同。
 
-    这条是 :data:`~biosnn_memterm.bench.routeeval.DEFAULT_TOLERANCE` 取 0.02 的**前提**：
+    这条是 :data:`~axo.bench.routeeval.DEFAULT_TOLERANCE` 取 0.02 的**前提**：
     容差之所以不是"采样噪声"，正是因为这里没有任何随机来源。所以它不只是可复现性
     检查，它是那个容差取值的证据。
 
@@ -116,8 +116,8 @@ def baseline() -> dict:
 def test_rule_layer_gate(baseline: dict, outcomes) -> None:
     """四项指标不跌破基线的容差。**门槛只绑规则层。**
 
-    走 :func:`~biosnn_memterm.bench.routeeval.gate_rows` 而不是直接调
-    :func:`~biosnn_memterm.bench.gates.gate_rows`：前者带着路由这一套名单与方向。
+    走 :func:`~axo.bench.routeeval.gate_rows` 而不是直接调
+    :func:`~axo.bench.gates.gate_rows`：前者带着路由这一套名单与方向。
     测试与 ``tools/bench_router.py`` 必须**经过同一个转发函数**，否则两边哪天各传一份
     名单，工具里的那份写反了这边仍然绿——那正是 ``bench/gates.py`` 存在的理由。
     """

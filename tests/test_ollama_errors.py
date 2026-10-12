@@ -16,8 +16,8 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from biosnn_memterm.llm.base import ChatBackendError
-from biosnn_memterm.llm.ollama import _raise_for_status
+from axo.llm.base import ChatBackendError
+from axo.llm.ollama import _raise_for_status
 
 _REQUEST = httpx.Request("POST", "http://127.0.0.1:11434/api/chat")
 

@@ -31,22 +31,8 @@ wheels = [
 ]
 
 [[package]]
-name = "biosnn-bus"
-version = "0.1.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
-    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/f1/2d/ec86990c3309e3ad178188f972727605f070e7f2f28805cc6ae156387248/biosnn_bus-0.1.0.tar.gz", hash = "sha256:8e9e8ce855a195fb1ce06767bde1cdfd237c0e26e7be539c92153e8b03c7b04e", size = 34473, upload-time = "2026-09-23T06:13:17.88Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c0/5d/a80b966e54e26b9e651cff90832b667ca74a52318c53c44457aa7e5d70ce/biosnn_bus-0.1.0-py3-none-any.whl", hash = "sha256:0edb283ba383bd5e9a5e4da17b2ace7e52621d5b4e7c935b91115af879ebf7d3", size = 25298, upload-time = "2026-09-23T06:13:16.533Z" },
-]
-
-[[package]]
-name = "biosnn-memterm"
-version = "0.1.0"
+name = "axo"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "biosnn-bus" },
@@ -96,6 +82,20 @@ dev = [
     { name = "pytest-cov", specifier = ">=6.0" },
     { name = "pytest-qt", specifier = ">=4.4" },
     { name = "ruff", specifier = ">=0.9" },
+]
+
+[[package]]
+name = "biosnn-bus"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f1/2d/ec86990c3309e3ad178188f972727605f070e7f2f28805cc6ae156387248/biosnn_bus-0.1.0.tar.gz", hash = "sha256:8e9e8ce855a195fb1ce06767bde1cdfd237c0e26e7be539c92153e8b03c7b04e", size = 34473, upload-time = "2026-09-23T06:13:17.88Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c0/5d/a80b966e54e26b9e651cff90832b667ca74a52318c53c44457aa7e5d70ce/biosnn_bus-0.1.0-py3-none-any.whl", hash = "sha256:0edb283ba383bd5e9a5e4da17b2ace7e52621d5b4e7c935b91115af879ebf7d3", size = 25298, upload-time = "2026-09-23T06:13:16.533Z" },
 ]
 
 [[package]]

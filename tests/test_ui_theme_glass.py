@@ -11,7 +11,7 @@ Qt 实现细节上：
 两件都没有文档保证，而且**两件都错了也不报错**：整块按钮要么变成父层的颜色
 （等于没画），要么变成别的什么。所以这里不测"好不好看"（那要靠眼睛，入口是
 ``tools/_smoke_window.py``），测的是"**它到底画没画上去**"：把窗口抓成位图，
-在按钮的顶、底各取一个像素，与按 :func:`~biosnn_memterm.ui.color.rgba` 手算的
+在按钮的顶、底各取一个像素，与按 :func:`~axo.ui.color.rgba` 手算的
 成品色逐通道比。
 
 它单独一个文件，是因为它要 ``QApplication``；``test_ui_`` 这个前缀让它同时被核心
@@ -29,8 +29,8 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QPushButton, QWidget
 
-from biosnn_memterm.ui.color import RGB, parse_hex, relative_luminance
-from biosnn_memterm.ui.theme import (
+from axo.ui.color import RGB, parse_hex, relative_luminance
+from axo.ui.theme import (
     DARK_TOKENS,
     LIGHT_TOKENS,
     MODE_DARK,

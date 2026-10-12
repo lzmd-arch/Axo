@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from biosnn_memterm.memory import sync_embeddings
+from axo.memory import sync_embeddings
 from memcore.ids import new_ulid
 from memcore.sdr import encode_lexical
 from memcore.spaces import make_space_id

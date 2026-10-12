@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import pytest
 
-from biosnn_memterm.session.budget import TokenMeter
-from biosnn_memterm.session.store import Message
-from biosnn_memterm.session.summarize import MAX_LINE_CHARS, first_sentence, summarize
+from axo.session.budget import TokenMeter
+from axo.session.store import Message
+from axo.session.summarize import MAX_LINE_CHARS, first_sentence, summarize
 
 METER = TokenMeter()
 
@@ -31,7 +31,7 @@ def history() -> list[Message]:
         ("明天记得提醒我买牛奶。", "好的。"),
         ("另外把 num_ctx 改成 16384。", "已经改好了。"),
     ]
-    messages = [msg("user", "我在做 BioSNN 记忆终端，记忆要独立于所调用的模型。")]
+    messages = [msg("user", "我在做 Axo，记忆要独立于所调用的模型。")]
     for user_text, assistant_text in pairs:
         messages.append(msg("user", user_text))
         messages.append(msg("assistant", assistant_text))
@@ -88,10 +88,10 @@ def test_the_summary_always_fits_the_budget() -> None:
 
 def test_the_premise_survives_a_tight_budget() -> None:
     """第一条被挤出上下文，后面全都在答一个没人问过的问题。"""
-    premise = "我在做 BioSNN 记忆终端，记忆要独立于所调用的模型。"
+    premise = "我在做 Axo，记忆要独立于所调用的模型。"
     result = summarize(history(), budget_tokens=60)
     assert result, "60 token 不至于连表头加一句都放不下"
-    assert "BioSNN 记忆终端" in result
+    assert "Axo" in result
     assert result.splitlines()[1].startswith("用户：")
     assert premise[:10] in result
 

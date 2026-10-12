@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from biosnn_memterm.memory.edit import can_encode, edited_content
+from axo.memory.edit import can_encode, edited_content
 from memcore.errors import SDRCapacityError
 from memcore.ids import new_ulid
 from memcore.recall import recall

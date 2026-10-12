@@ -39,9 +39,9 @@ from PySide6.QtCore import QTimer, QUrl
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import QApplication
 
-from biosnn_memterm.memory.persona import DEFAULT_PERSONA
-from biosnn_memterm.ui.chat_view import ChatView
-from biosnn_memterm.ui.theme import PRESETS, Theme, resolve
+from axo.memory.persona import DEFAULT_PERSONA
+from axo.ui.chat_view import ChatView
+from axo.ui.theme import PRESETS, Theme, resolve
 
 STREAMED = [
     "这是一段",

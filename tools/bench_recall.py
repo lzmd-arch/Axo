@@ -7,7 +7,7 @@
 
 这个脚本量的是那个缺口：200 条语料、76 条查询，每条都带着 ground truth，跑的是
 真正的 ``recall()``。四项指标（hit@K / MRR / 误注入率 / AUC）的精确口径写在
-:mod:`biosnn_memterm.bench.metrics` 里，**那里是定义，这里只是报告**。
+:mod:`axo.bench.metrics` 里，**那里是定义，这里只是报告**。
 
 **门槛只绑词法通道。** 词法 SDR 是 blake2b 哈希编码，不需要模型、不需要网络、
 不需要 GPU，所以它在 CI 与 pre-commit 里每次都跑得动，而语义通道需要 Ollama——
@@ -48,7 +48,7 @@ import numpy as np
 _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT / "src"))
 
-from biosnn_memterm.bench import (  # noqa: E402
+from axo.bench import (  # noqa: E402
     QueryOutcome,
     build_store,
     corpus_digests,
@@ -59,13 +59,13 @@ from biosnn_memterm.bench import (  # noqa: E402
     structural_violations,
     summarize,
 )
-from biosnn_memterm.bench.gates import (  # noqa: E402
+from axo.bench.gates import (  # noqa: E402
     DEFAULT_TOLERANCE,
     GATED,
     gate_rows,
     sanity_problems,
 )
-from biosnn_memterm.bench.metrics import K_VALUES, mrr  # noqa: E402
+from axo.bench.metrics import K_VALUES, mrr  # noqa: E402
 from memcore.graph import GraphIndex  # noqa: E402
 from memcore.recall import RecallConfig  # noqa: E402
 
@@ -100,8 +100,8 @@ def _resolve_embedder(args: argparse.Namespace):
     if args.no_semantic:
         return None
 
-    from biosnn_memterm.llm.base import EmbeddingBackendError
-    from biosnn_memterm.llm.ollama import (
+    from axo.llm.base import EmbeddingBackendError
+    from axo.llm.ollama import (
         OllamaEmbeddingBackend,
         probe,
         probe_embedding_dim,
@@ -203,7 +203,7 @@ def _report(
 
 
 def _gate_rows(baseline: dict, metrics: dict[str, float]) -> list:
-    """把基线文件与实测指标交给 :func:`biosnn_memterm.bench.gates.gate_rows`。
+    """把基线文件与实测指标交给 :func:`axo.bench.gates.gate_rows`。
 
     判定逻辑**不在这个文件里**——它有两个调用者（这里与
     ``tests/test_recall_gate.py``），两处各写一遍的话，这里把方向写反了测试仍然
@@ -271,7 +271,7 @@ def _report_sweep(rows: list[tuple[float, dict[str, float]]], *, graph: GraphInd
 
 
 def _check_sanity(metrics: dict[str, float], *, where: str) -> None:
-    """基线（或候选基线）自己必须像一份基线。见 :mod:`biosnn_memterm.bench.gates`。"""
+    """基线（或候选基线）自己必须像一份基线。见 :mod:`axo.bench.gates`。"""
     problems = sanity_problems(metrics)
     if problems:
         _die(
@@ -509,7 +509,7 @@ def _run_sweep(
     """按几档 ``graph_weight`` 各跑一遍，打一张并排表。
 
     **图只建一次。** 图与权重无关——它只取决于库里的关联码——所以四档建四张一模一样
-    的图是纯浪费，而 :func:`~biosnn_memterm.bench.harness.run` 的兜底建图是按调用
+    的图是纯浪费，而 :func:`~axo.bench.harness.run` 的兜底建图是按调用
     次数触发的。这里先把库建好、把图建好，逐档复用同一份。
 
     库也复用：``run`` 的每一轮都是 ``settle=False``，跑完一个字节都不变，所以两次
@@ -563,12 +563,12 @@ def _jsonable(value: object) -> object:
     两件事，都不是洁癖：
 
     * **``nan`` → ``null``。** 分母为零的指标是 ``nan``（见
-      :func:`~biosnn_memterm.bench.metrics.auc`），而 ``nan`` 不是合法 JSON。
+      :func:`~axo.bench.metrics.auc`），而 ``nan`` 不是合法 JSON。
       ``allow_nan=False`` 会直接抛，不写的话会吐出一个 ``NaN`` 字面量——那个
       字面量只有 Python 的解析器认，CI 上产出的 artifact 会在任何别的工具里坏掉。
       写成 ``null`` 也正好是它的意思："这一项没有可比的"，与"得了 0 分"分得开。
     * **numpy 标量 → Python 标量。** 它们不进 ``json`` 的类型表。
-    * **frozen dataclass（:class:`~biosnn_memterm.bench.gates.GateRow`）→ 字典。**
+    * **frozen dataclass（:class:`~axo.bench.gates.GateRow`）→ 字典。**
       判定结果要进 artifact，而 artifact 是 JSON。
     """
     if is_dataclass(value) and not isinstance(value, type):

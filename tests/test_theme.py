@@ -17,8 +17,8 @@ from pathlib import Path
 
 import pytest
 
-from biosnn_memterm.ui.color import contrast_ratio, parse_hex
-from biosnn_memterm.ui.theme import (
+from axo.ui.color import contrast_ratio, parse_hex
+from axo.ui.theme import (
     CUSTOM_PRESET,
     DARK_TOKENS,
     DEFAULT_THEME,
@@ -38,7 +38,7 @@ from biosnn_memterm.ui.theme import (
     resolve,
 )
 
-_CSS = Path(__file__).resolve().parent.parent / "src/biosnn_memterm/ui/web/css/app.css"
+_CSS = Path(__file__).resolve().parent.parent / "src/axo/ui/web/css/app.css"
 
 
 def _css() -> str:
@@ -400,9 +400,9 @@ def test_qss_has_no_leftover_placeholders() -> None:
 
 def test_qss_grows_with_every_placeholder_replaced() -> None:
     """模板里没有任何占位符的话上面那条断言会空转通过。"""
-    template = (
-        Path(__file__).resolve().parent.parent / "src/biosnn_memterm/ui/theme.qss"
-    ).read_text(encoding="utf-8")
+    template = (Path(__file__).resolve().parent.parent / "src/axo/ui/theme.qss").read_text(
+        encoding="utf-8"
+    )
     assert "$" in template
     assert len(_dark_qss()) > 1000
 

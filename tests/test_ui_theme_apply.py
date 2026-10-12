@@ -16,7 +16,7 @@ import pytest
 from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import QApplication
 
-from biosnn_memterm.ui.theme import (
+from axo.ui.theme import (
     CUSTOM_PRESET,
     DARK_TOKENS,
     LIGHT_TOKENS,
@@ -24,7 +24,7 @@ from biosnn_memterm.ui.theme import (
     Theme,
     resolve,
 )
-from biosnn_memterm.ui.theme_qt import (
+from axo.ui.theme_qt import (
     QSettingsBackend,
     apply_theme,
     build_palette,
@@ -164,7 +164,7 @@ class _FakeSettings:
 
 
 def test_qsettings_backend_round_trips() -> None:
-    from biosnn_memterm.ui.settings_store import SettingsStore
+    from axo.ui.settings_store import SettingsStore
 
     backend = QSettingsBackend(_FakeSettings())
     store = SettingsStore(backend)
@@ -180,9 +180,9 @@ def test_qsettings_backend_is_a_real_qsettings_shape(qapp) -> None:
     """
     from PySide6.QtCore import QSettings
 
-    from biosnn_memterm.ui.settings_store import SettingsStore
+    from axo.ui.settings_store import SettingsStore
 
-    settings = QSettings(QSettings.Format.IniFormat, QSettings.Scope.UserScope, "BioSNN-test", "x")
+    settings = QSettings(QSettings.Format.IniFormat, QSettings.Scope.UserScope, "Axo-test", "x")
     store = SettingsStore(QSettingsBackend(settings))
     store.save(Theme(preset="jade", wallpaper_visible=33))
     theme = store.load()

@@ -74,8 +74,8 @@ GROUPS: dict[str, list[str]] = {
         # 换成了仓库相对路径：样本要的是"一串带反斜杠的路径"这个形状，盘符与检出目录不在
         # 测量的范围里。2026-10-12 复测：这一档上沿仍是 0.329（本条 0.328，旧样本 0.327），
         # 所以 memcore/tokens.py 里那个 0.35 依然盖得住，系数不动。
-        "src\\memcore\\recall.py src\\biosnn_memterm\\ui\\main_window.py",
-        "src/memcore/recall.py src/biosnn_memterm/llm/base.py tests/test_sdr.py",
+        "src\\memcore\\recall.py src\\axo\\ui\\main_window.py",
+        "src/memcore/recall.py src/axo/llm/base.py tests/test_sdr.py",
     ],
     "标点": [
         "。，。，。，。，。，。，。，。，。，。，",
@@ -103,7 +103,7 @@ SAMPLES: list[str] = [
     "今天午饭吃的是番茄炒蛋和米饭。",
     "每周三晚上八点要开组会，会议纪要在共享盘上。",
     "记忆终端用 SQLite 存记忆库，WAL 模式，每条写入都是一个事务。",
-    "BioSNN 记忆终端是一个把长期记忆放在终端侧的桌面助手，独立于所调用的大模型。",
+    "Axo 是一个把长期记忆放在终端侧的桌面助手，独立于所调用的大模型。",
     "配置项 num_ctx 的值是 16384，不是 32768。",
     "版本 0.40.2 的 Ollama 在 /api/chat 上返回 NDJSON 流。",
     "读取 README.md 并总结前三段。",

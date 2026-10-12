@@ -23,8 +23,8 @@ from typing import Any
 
 import pytest
 
-from biosnn_memterm.ui import consolidation_scheduler as module
-from biosnn_memterm.ui.consolidation_scheduler import (
+from axo.ui import consolidation_scheduler as module
+from axo.ui.consolidation_scheduler import (
     INTERVAL_CEIL_S,
     INTERVAL_FLOOR_S,
     MIN_DELAY_MS,
@@ -176,7 +176,7 @@ def test_the_ceiling_matches_the_settings_page(qapp: Any) -> None:
     守的是"下次改上限只改了一处"——那时界面允许 30 天而这里夹到 7 天，用户填 30 天
     保存后看到 168 小时，而没有任何一处说得清为什么。
     """
-    from biosnn_memterm.ui.settings_dialog import _MAX_INTERVAL_HOURS
+    from axo.ui.settings_dialog import _MAX_INTERVAL_HOURS
 
     assert INTERVAL_CEIL_S == _MAX_INTERVAL_HOURS * 3600
 

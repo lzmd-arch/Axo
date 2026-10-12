@@ -2,7 +2,7 @@
 
 这种算术住在 ``_build_ui`` 里就只能靠换分辨率去试，而**换分辨率试不出来的正是
 边界**：屏比窗口的最小尺寸还小、账本展开之后对话区只剩 120 像素、用户拖完分隔条
-再展开账本。搬到 :mod:`biosnn_memterm.ui.layout` 之后这些都能逐条断言。
+再展开账本。搬到 :mod:`axo.ui.layout` 之后这些都能逐条断言。
 
 **这里钉得最死的一条是"三项之和恒等于 total"。** 那是 splitter 的硬要求：
 不给够的话 Qt 会按自己的逻辑重分，于是"我明明设了 340 宽"和屏幕上的东西对不上，
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from biosnn_memterm.ui.layout import (
+from axo.ui.layout import (
     CHAT_MIN,
     LEDGER_MIN,
     LEDGER_WIDTH,
@@ -83,7 +83,7 @@ def test_growth_is_monotone_in_screen_size() -> None:
 # ``availableGeometry()`` 返回的就是 ``resize()`` 要的逻辑像素，**不要再乘
 # ``devicePixelRatio()``**——乘了之后窗口会按缩放比例超出屏幕，而"最大化按钮被顶出
 # 屏幕"这种毛病很难联想到是缩放。125% 缩放下 DPR 是 1.25、可用区是 2048×1104（**不是**
-# 除以 1.25 之后的数），这一条写在 :mod:`biosnn_memterm.ui.layout` 的模块注释里；
+# 除以 1.25 之后的数），这一条写在 :mod:`axo.ui.layout` 的模块注释里；
 # 它是取屏幕信息那一行代码的约束，不是这个纯函数能断言的——纯函数收到的已经是
 # 像素数，它无从知道那个数是怎么来的。
 

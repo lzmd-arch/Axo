@@ -1,6 +1,6 @@
 """token 数的估算。
 
-**为什么要估而不是算**：:class:`biosnn_memterm.llm.base.ChatBackend` 的
+**为什么要估而不是算**：:class:`axo.llm.base.ChatBackend` 的
 ``count_tokens`` 对本机后端返回 ``None``——Ollama 在发请求前没有廉价的分词端点。
 而装配预算必须在**发请求之前**就把每一条候选算清楚，所以只能估。
 
@@ -50,7 +50,7 @@
 这个坑一次（见计划书 §一的"上下文窗口算大一倍"那一行）。
 
 估出来的值仍然不是上界（最差样本还差 9%），所以装配层另有一道显式的安全余量，
-见 :class:`biosnn_memterm.session.budget.TokenBudget`。
+见 :class:`axo.session.budget.TokenBudget`。
 """
 
 from __future__ import annotations
@@ -77,7 +77,7 @@ UNDER_COUNT_TOLERANCE = 0.10
 实测最差是 9%（见模块 docstring 的样本表），多留一个百分点是滑量。
 
 **这个常数是有消费者的，不是注释**：装配预算按 ``1/(1−tolerance)`` 反推安全
-余量（:class:`biosnn_memterm.session.budget.TokenBudget`），回归测试按它断言。
+余量（:class:`axo.session.budget.TokenBudget`），回归测试按它断言。
 放在这里而不是各写一份，是因为一旦两处漂开，就会出现"测试说合格、预算却算大了"
 这种没人能判对的分歧——而预算算大的后果是服务端静默截断人格锚。
 
@@ -94,7 +94,7 @@ _OTHER_PER_CHAR = 1.00
 def estimate_tokens(text: str) -> int:
     """估算一段文本占多少 token。**不含**消息模板的固定开销。
 
-    模板开销由 :class:`biosnn_memterm.session.budget.TokenBudget` 按消息条数另算
+    模板开销由 :class:`axo.session.budget.TokenBudget` 按消息条数另算
     （实测**每条消息** 5 token，整个对话另有 12 的固定底价）——它属于协议层，
     不属于文本本身。把两者混在一个函数里，会让「这段记忆值多少 token」这个
     可核对的问题变成一个不可分解的黑盒。

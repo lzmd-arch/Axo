@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from biosnn_memterm.session.indicator import (
+from axo.session.indicator import (
     WARN_RATIO,
     ContextState,
     context_state,

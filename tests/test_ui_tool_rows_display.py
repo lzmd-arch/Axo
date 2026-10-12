@@ -23,10 +23,10 @@ from typing import Any
 
 import pytest
 
-from biosnn_memterm.agent.tools import ToolContext, ToolOutcome, ToolRegistry
-from biosnn_memterm.llm.base import ToolCall, ToolSpec
-from biosnn_memterm.session.store import Message
-from biosnn_memterm.ui.main_window import display_rows
+from axo.agent.tools import ToolContext, ToolOutcome, ToolRegistry
+from axo.llm.base import ToolCall, ToolSpec
+from axo.session.store import Message
+from axo.ui.main_window import display_rows
 from memcore.store import MemoryStore
 
 pytestmark = pytest.mark.gui

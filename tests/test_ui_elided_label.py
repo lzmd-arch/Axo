@@ -27,7 +27,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import QApplication, QSizePolicy, QWidget
 
-from biosnn_memterm.ui.widgets import ElidedLabel
+from axo.ui.widgets import ElidedLabel
 
 pytestmark = pytest.mark.gui
 
@@ -104,7 +104,7 @@ def test_the_status_label_actually_gets_room_in_the_real_header(qapp) -> None:
     只建控件、不接信号，所以拿一个普通 ``QWidget`` 当 ``self`` 就能调它——哪天它长出
     新依赖，这里会以 ``AttributeError`` 说出来，而不是悄悄测了个别的东西。
     """
-    from biosnn_memterm.ui.main_window import MainWindow
+    from axo.ui.main_window import MainWindow
 
     text = "● Ollama 就绪 · 4 个对话模型"
     host = QWidget()

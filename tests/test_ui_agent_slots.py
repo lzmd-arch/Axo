@@ -24,9 +24,9 @@ from typing import Any
 
 import pytest
 
-from biosnn_memterm.agent.gate import APPROVAL_TIMEOUT_S
-from biosnn_memterm.llm.base import ChatMessage, ToolCall
-from biosnn_memterm.ui.main_window import MainWindow
+from axo.agent.gate import APPROVAL_TIMEOUT_S
+from axo.llm.base import ChatMessage, ToolCall
+from axo.ui.main_window import MainWindow
 
 pytestmark = pytest.mark.gui
 
@@ -302,7 +302,7 @@ def test_a_clipped_result_says_so_in_the_footer(qapp: Any) -> None:
 def test_setting_a_reminder_re_arms_the_timer(qapp: Any) -> None:
     """``set_reminder`` 跑完 → 表立刻改排。
 
-    **这条测的是接线。** :class:`~biosnn_memterm.ui.reminder_scheduler.ReminderScheduler`
+    **这条测的是接线。** :class:`~axo.ui.reminder_scheduler.ReminderScheduler`
     自己有十几条测试，但它们全在验那个对象**自身**的行为——"没有任何东西调
     ``reschedule()``"这件事它们一条都盖不住，而症状与"调度器坏了"看起来一模一样
     （提醒不按时响）。区分开它们的唯一办法就是在这里点一次名。
@@ -345,7 +345,7 @@ def test_a_reminder_is_told_in_both_places(qapp: Any) -> None:
 def test_a_backlog_of_reminders_is_one_message_not_many(qapp: Any) -> None:
     """一批错过的**只占一条**。
 
-    调度器已经把它们聚合成一句了（见 :mod:`biosnn_memterm.ui.reminder_scheduler`）；
+    调度器已经把它们聚合成一句了（见 :mod:`axo.ui.reminder_scheduler`）；
     这条钉的是"这里没有自作主张拆开"——逐个弹的话，关了一周再打开会变成一场通知
     风暴，而风暴的结局是用户把通知关掉。
     """

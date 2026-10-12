@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from biosnn_memterm.ui.tray import ICON_SIZE, TrayController, build_icon
+from axo.ui.tray import ICON_SIZE, TrayController, build_icon
 
 pytestmark = pytest.mark.gui
 

@@ -47,8 +47,8 @@ POLL_INTERVAL_MS = 1000
 
 
 def _prepare_env(data_dir: str) -> None:
-    """数据目录必须在 import biosnn_memterm 之前设好——paths 首次调用时缓存它。"""
-    os.environ["BIOSNN_MEMTERM_DATA"] = data_dir
+    """数据目录必须在 import axo 之前设好——paths 首次调用时缓存它。"""
+    os.environ["AXO_DATA"] = data_dir
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
@@ -66,7 +66,7 @@ def _run_turn(*, wait_for_embedding: bool):
     from PySide6.QtWidgets import QApplication
     from tools_support import RecordingChatView
 
-    import biosnn_memterm.ui.main_window as main_window_module
+    import axo.ui.main_window as main_window_module
 
     app = QApplication.instance() or QApplication(sys.argv)
     main_window_module.ChatView = RecordingChatView  # type: ignore[misc]
@@ -149,7 +149,7 @@ def phase_recall() -> int:
     print("[2] 这一轮注入了什么（装配账本）：", flush=True)
     print(window._assembly.ledger.render() if window._assembly else "（没有装配结果）", flush=True)
     if window._recall_ledger is not None:
-        from biosnn_memterm.ui.memory_worker import render_recall_detail
+        from axo.ui.memory_worker import render_recall_detail
 
         print("[3] 召回过程（谁被淘汰、为什么）：", flush=True)
         print(render_recall_detail(window._recall_ledger), flush=True)

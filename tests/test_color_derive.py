@@ -2,7 +2,7 @@
 
 这一份测的东西，在界面里**只能靠眼睛看**，而眼睛看不出来的恰恰是最要紧的那类
 错误：悬停态与常态差 2%（等于没有反馈，用户只觉得"点了没反应"）、或者某个色在
-浅色底上根本没有对比度（看起来只是"有点淡"）。搬到 :mod:`biosnn_memterm.ui.color`
+浅色底上根本没有对比度（看起来只是"有点淡"）。搬到 :mod:`axo.ui.color`
 之后这些都能逐条断言。
 
 **最值得测的是"明暗两态的派生方向相反"这条。** 暗色底上"更突出"是把颜色变亮，
@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from biosnn_memterm.ui.color import (
+from axo.ui.color import (
     MODE_DARK,
     MODE_LIGHT,
     contrast_ratio,

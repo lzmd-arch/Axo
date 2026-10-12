@@ -1,6 +1,6 @@
 """窗口图标：**装没装上，以及是谁装的**。
 
-这一份的来源是一次真事：``ui/tray.py`` 的 :func:`~biosnn_memterm.ui.tray.build_icon`
+这一份的来源是一次真事：``ui/tray.py`` 的 :func:`~axo.ui.tray.build_icon`
 把图标画好了、托盘也一直在用，但**没人把它装到窗口上**——于是标题栏左上角空着一格。
 打包后的产物更容易露出来：``--icon`` 嵌进 exe 的那一份只影响资源管理器里那个文件的
 外观，窗口自己不设就是空的。
@@ -26,14 +26,12 @@ import pytest
 from PySide6.QtGui import QGuiApplication, QIcon
 from PySide6.QtWidgets import QWidget
 
-from biosnn_memterm.ui.main_window import _install_window_icon
-from biosnn_memterm.ui.tray import ICON_SIZE
+from axo.ui.main_window import _install_window_icon
+from axo.ui.tray import ICON_SIZE
 
 pytestmark = pytest.mark.gui
 
-_MAIN_WINDOW = (
-    Path(__file__).resolve().parent.parent / "src" / "biosnn_memterm" / "ui" / "main_window.py"
-)
+_MAIN_WINDOW = Path(__file__).resolve().parent.parent / "src" / "axo" / "ui" / "main_window.py"
 
 #: 一个不是任何预设的主色。用它是为了能断言"**这一支**颜色真的画上去了"，而不是
 #: 只要不是 null 就算过。
@@ -85,7 +83,7 @@ def test_a_broken_accent_still_gives_a_window_icon(qapp: Any) -> None:
     """主题坏了（手改的注册表、降级回旧版本）也得有个图标——**绝不抛**。
 
     这条路的抛点在 ``MainWindow.__init__`` 里，那是启动路径：一个图标颜色不该让程序
-    打不开。兜底颜色由 :func:`~biosnn_memterm.ui.tray.build_icon` 决定。"""
+    打不开。兜底颜色由 :func:`~axo.ui.tray.build_icon` 决定。"""
     window = QWidget()
     _install_window_icon(window, "不是颜色")
 

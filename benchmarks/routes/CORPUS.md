@@ -8,7 +8,7 @@
 在它之前，`agent/router.py` 的那两张词表是一堆**只能靠读代码判断**的初值——"`别`"
 该放在 task 触发之前还是之后、"谢谢你"算不算 task 信号，改任何一个都无从比较。这里
 补上那个缺口：每条输入都走真正的 `decide_turn()`，口径写在
-`src/biosnn_memterm/bench/routeeval.py` 里——**那里是定义，报告只是报告**。
+`src/axo/bench/routeeval.py` 里——**那里是定义，报告只是报告**。
 
 它与金标准语料（`benchmarks/gold/`）是同位体：那一个把记忆灌进 `:memory:` 库再逐条
 召回，这一个把输入逐条喂给路由。区别只在被测对象，不在纪律。
@@ -187,7 +187,7 @@ uv run python tools/bench_router.py                       # 探测到 Ollama 就
 结尾。句子没问题、词表也没坏，就是这一族**永远被问号吃掉**。
 
 那一族补进去了（`上次` / `我的记忆` / `记忆里` / `记忆库` / `回想` / `记录一下` / `念一遍` /
-`别忘`，理由逐条写在 `src/biosnn_memterm/agent/router.py` 的 `_TASK_MARKERS` 上）：
+`别忘`，理由逐条写在 `src/axo/agent/router.py` 的 `_TASK_MARKERS` 上）：
 
 ```
 输入 120 条

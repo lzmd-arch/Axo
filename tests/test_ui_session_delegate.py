@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem,
 )
 
-from biosnn_memterm.ui.widgets import (
+from axo.ui.widgets import (
     SESSION_TIME_ROLE,
     SESSION_TITLE_ROLE,
     SessionItemDelegate,

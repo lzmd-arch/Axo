@@ -42,14 +42,14 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import QApplication, QLabel
 
-from biosnn_memterm.ui import settings_dialog
-from biosnn_memterm.ui.settings_dialog import (
+from axo.ui import settings_dialog
+from axo.ui.settings_dialog import (
     AppearancePage,
     BackendPage,
     SettingsDialog,
     ToolPage,
 )
-from biosnn_memterm.ui.settings_store import (
+from axo.ui.settings_store import (
     DEFAULT_CLOUD_BASE_URL,
     DEFAULT_HOST,
     PROVIDER_CLOUD,
@@ -58,7 +58,7 @@ from biosnn_memterm.ui.settings_store import (
     MemorySettings,
     ToolSettings,
 )
-from biosnn_memterm.ui.theme import (
+from axo.ui.theme import (
     CUSTOM_PRESET,
     PRESETS,
     WALLPAPER_VISIBLE_MAX,
@@ -85,7 +85,7 @@ def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     与"清理时扫的位置"是同一个——把函数替换掉的话，两边会各自指向不同目录，
     而这个文件里最要紧的两条断言恰好就是关于这两个位置的。
     """
-    monkeypatch.setenv("BIOSNN_MEMTERM_DATA", str(tmp_path))
+    monkeypatch.setenv("AXO_DATA", str(tmp_path))
     return tmp_path
 
 
@@ -798,7 +798,7 @@ def test_everything_this_page_can_produce_is_a_period_the_scheduler_accepts(
     毫秒数超过 ``2**31 - 1`` 会让 PySide6 抛 ``OverflowError``——那会从一个设置项
     一路穿出 Qt 信号，也就是"改一下这个数字，主窗口当场崩掉"。
     """
-    from biosnn_memterm.ui.consolidation_scheduler import INTERVAL_CEIL_S, INTERVAL_FLOOR_S
+    from axo.ui.consolidation_scheduler import INTERVAL_CEIL_S, INTERVAL_FLOOR_S
 
     # **先把窗口接住再取控件**：``_memory_dialog().memory.consolidation_hours`` 这种
     # 一行写法里，那个临时 ``SettingsDialog`` 在取完属性之后就被回收了，PySide6 会

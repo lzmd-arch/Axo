@@ -3,9 +3,9 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "biosnn-memterm"
-version = "0.1.0"
-description = "BioSNN 记忆终端：把长期记忆与性格放在终端侧，独立于所调用的大模型"
+name = "axo"
+version = "0.2.0"
+description = "Axo：把长期记忆与性格放在终端侧，独立于所调用的大模型"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
@@ -62,10 +62,10 @@ dev = [
 ]
 
 [project.urls]
-Repository = "https://github.com/lzmd-arch/BioSNN-MemoryTerminal"
+Repository = "https://github.com/lzmd-arch/Axo"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/memcore", "src/biosnn_memterm"]
+packages = ["src/memcore", "src/axo"]
 
 [tool.hatch.build.targets.sdist]
 # benchmarks/ 进 sdist 而不进 wheel：语料是"从源码检出跑"的资产，CLI 与测试都按仓库
@@ -104,7 +104,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["memcore", "biosnn_memterm"]
+source = ["memcore", "axo"]
 
 [tool.ruff]
 line-length = 100
@@ -129,11 +129,11 @@ ignore = [
 # 按位置传参。``get_time`` 用不上 ``arguments`` 是它的定义决定的，不是漏写；而把参数
 # 改名成 ``_arguments`` 会让七个工具的实现看上去来自两套约定——那个不一致本身
 # 比 ARG002 更难读。上一段的 ``tools/*`` 里有同一条推理。
-"src/biosnn_memterm/agent/catalog.py" = ["ARG002"]
+"src/axo/agent/catalog.py" = ["ARG002"]
 # PTH111（"``os.path.expanduser`` 换成 ``Path.expanduser``"）在这一处**是错的建议**：
 # ``_as_path_list`` 要判的是"用户写下时可读目录是不是绝对路径"，而那必须判**原文**——
 # ``Path.expanduser()`` 会连分隔符一起归一化（Windows 上 ``Path("/home/notes")`` 变成
 # ``\home\notes``），于是"写下时的形状"没了，POSIX 形状的条目在本机照样被丢掉。这条
 # 建议在其它文件里仍然管用，所以只在这一处豁免。理由的展开写在
 # ``settings_store.py::_is_absolute_anywhere`` 的 docstring 里。
-"src/biosnn_memterm/ui/settings_store.py" = ["PTH111"]
+"src/axo/ui/settings_store.py" = ["PTH111"]

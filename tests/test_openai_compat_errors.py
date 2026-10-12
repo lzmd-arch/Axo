@@ -18,8 +18,8 @@ from typing import Any
 import httpx
 import pytest
 
-from biosnn_memterm.llm.base import ChatBackendError
-from biosnn_memterm.llm.openai_compat import (
+from axo.llm.base import ChatBackendError
+from axo.llm.openai_compat import (
     _error_detail,
     _raise_for_status,
     _wrap_transport_error,

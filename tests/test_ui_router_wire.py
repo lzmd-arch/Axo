@@ -32,12 +32,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from biosnn_memterm.agent.router import Register, RegisterState, RouteSource
-from biosnn_memterm.ui.main_window import MainWindow
+from axo.agent.router import Register, RegisterState, RouteSource
+from axo.ui.main_window import MainWindow
 
 pytestmark = pytest.mark.gui
 
-_SOURCE = Path(__file__).resolve().parent.parent / "src/biosnn_memterm/ui/main_window.py"
+_SOURCE = Path(__file__).resolve().parent.parent / "src/axo/ui/main_window.py"
 
 
 def _router() -> SimpleNamespace:

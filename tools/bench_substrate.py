@@ -12,7 +12,7 @@ P4a 交付的**是一个数**，不是一次行为变更：这一版没有任何
 3. 关联码取多少位合适（``--k`` 曲线）——``memcore/sdr.py`` 里 ``ASSOC_K = 64``
    的出处是一处翻不到的计划书引用，**这条曲线是它的替代品**。
 
-指标的口径写在 :mod:`biosnn_memterm.bench.substrate` 里，**那里是定义，这里只是
+指标的口径写在 :mod:`axo.bench.substrate` 里，**那里是定义，这里只是
 报告**。门槛的政策（哪几项、什么方向、防空转的上下界）也在那里。
 
 用法::
@@ -28,7 +28,7 @@ P4a 交付的**是一个数**，不是一次行为变更：这一版没有任何
 
 退出码：0 = 达标（或只是报告），1 = 跌破基线容差，2 = 用法或环境不对，3 = 结构
 不变量被违反。**1 不等于程序出错**——它表达的是"基质比登记在案的基线差了"；
-3 是 bug（见 :func:`~biosnn_memterm.bench.substrate.substrate_structural_violations`）。
+3 是 bug（见 :func:`~axo.bench.substrate.substrate_structural_violations`）。
 
 **门槛只绑默认档**（``--assoc hash``、``k=ASSOC_K``、``scale`` = 语料条数）。
 扫描出来的那些行只报告：它们是**用来裁决参数该取多少**的，冻住其中一个就等于
@@ -49,8 +49,8 @@ from typing import Any, NoReturn
 _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT / "src"))
 
-from biosnn_memterm.bench.gates import gate_rows, sanity_problems  # noqa: E402
-from biosnn_memterm.bench.substrate import (  # noqa: E402
+from axo.bench.gates import gate_rows, sanity_problems  # noqa: E402
+from axo.bench.substrate import (  # noqa: E402
     DEFAULT_TOLERANCE,
     GATED,
     LOWER_IS_BETTER,
@@ -268,7 +268,7 @@ def _freeze(payload: dict, path: Path, metrics: dict[str, float]) -> int:
     payload["frozen_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     payload["note"] = (
         "这是**实测值，不是目标值**（先跑后填）。门槛 = 本文件的值 ± tolerance，"
-        "方向见 biosnn_memterm.bench.substrate.GATED（两项都是越大越好）。"
+        "方向见 axo.bench.substrate.GATED（两项都是越大越好）。"
         "**门槛只绑默认档**（assoc=hash、k=ASSOC_K、scale=语料条数）：扫描出来的"
         "那几行是用来裁决参数该取多少的，冻住其中一个等于把待决问题伪装成已决问题。"
         "改语料要同时改 freeze.json 并重跑 --freeze。"
@@ -486,7 +486,7 @@ def _jsonable(value: object) -> object:
 
     两件事，都不是洁癖：``nan`` → ``null``（分母为零的指标是 ``nan``，而它进的是
     版本控制的 artifact，别的工具读不回来）、frozen dataclass → 字典（
-    :class:`~biosnn_memterm.bench.gates.GateRow` 要进 artifact）。
+    :class:`~axo.bench.gates.GateRow` 要进 artifact）。
     """
     if is_dataclass(value) and not isinstance(value, type):
         return {key: _jsonable(item) for key, item in asdict(value).items()}

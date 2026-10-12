@@ -117,18 +117,18 @@ _FORBIDDEN = (
 #: 测试里逐条断言。列成单个文件而不是整包，正是为了让"哪些文件必须干净"是一个
 #: 可以逐行读的事实，而不是一句口号。
 _PURE_LAYERS = (
-    "biosnn_memterm/agent",
-    "biosnn_memterm/bench",
-    "biosnn_memterm/llm/base.py",
-    "biosnn_memterm/memory",
+    "axo/agent",
+    "axo/bench",
+    "axo/llm/base.py",
+    "axo/memory",
     # 密钥加解密（Windows DPAPI）。放进来是为了让「平台相关的代码集中在一个模块」
     # 是一条**可断言**的事实：它只 import ctypes/base64，不碰 Qt、也不碰 httpx。
-    "biosnn_memterm/secrets.py",
-    "biosnn_memterm/session",
-    "biosnn_memterm/ui/color.py",
-    "biosnn_memterm/ui/theme.py",
-    "biosnn_memterm/ui/settings_store.py",
-    "biosnn_memterm/ui/layout.py",
+    "axo/secrets.py",
+    "axo/session",
+    "axo/ui/color.py",
+    "axo/ui/theme.py",
+    "axo/ui/settings_store.py",
+    "axo/ui/layout.py",
 )
 
 _PURE_FORBIDDEN = ("PySide6", "PyQt5", "PyQt6", "httpx", "requests")
@@ -174,7 +174,7 @@ def test_imports_are_within_whitelist(path: Path) -> None:
         + "\n  ".join(offenders)
         + "\n\nmemcore 只能依赖 numpy、biosnn-bus 与标准库。若确实需要新依赖，"
         "先想清楚它会不会让记忆核心从此绑上某个具体实现——多数情况下，答案是"
-        "这行代码应该写在 biosnn_memterm 层，然后把结果作为参数传进来。"
+        "这行代码应该写在 axo 层，然后把结果作为参数传进来。"
     )
 
 

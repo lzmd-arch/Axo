@@ -38,12 +38,12 @@ import pytest
 # ``test_ui_chat_worker.py`` 的说明）。
 from fakes import ScriptedBackend, text_chunk, tool_chunk
 
-from biosnn_memterm.agent.tools import ToolContext, ToolOutcome, ToolRegistry
-from biosnn_memterm.llm.base import ChatMessage, ChatRequest, ToolCall, ToolSpec
-from biosnn_memterm.session.budget import TokenBudget, TokenMeter
-from biosnn_memterm.ui.agent_worker import AgentWorker
-from biosnn_memterm.ui.chat_worker import ChatWorker
-from biosnn_memterm.ui.thread_tracking import THREAD_WAIT_MS
+from axo.agent.tools import ToolContext, ToolOutcome, ToolRegistry
+from axo.llm.base import ChatMessage, ChatRequest, ToolCall, ToolSpec
+from axo.session.budget import TokenBudget, TokenMeter
+from axo.ui.agent_worker import AgentWorker
+from axo.ui.chat_worker import ChatWorker
+from axo.ui.thread_tracking import THREAD_WAIT_MS
 from memcore.store import MemoryStore
 
 pytestmark = pytest.mark.gui
@@ -576,11 +576,11 @@ sys.path.insert(0, sys.argv[1])
 from PySide6.QtCore import QThread
 from PySide6.QtWidgets import QApplication
 
-from biosnn_memterm.agent.tools import ToolContext, ToolOutcome, ToolRegistry
-from biosnn_memterm.llm.base import ChatChunk, ChatMessage, ToolCall, ToolSpec
-from biosnn_memterm.session.budget import TokenBudget, TokenMeter
-from biosnn_memterm.ui.agent_worker import AgentWorker
-from biosnn_memterm.ui.thread_tracking import track, wait_for_all
+from axo.agent.tools import ToolContext, ToolOutcome, ToolRegistry
+from axo.llm.base import ChatChunk, ChatMessage, ToolCall, ToolSpec
+from axo.session.budget import TokenBudget, TokenMeter
+from axo.ui.agent_worker import AgentWorker
+from axo.ui.thread_tracking import track, wait_for_all
 from memcore.store import MemoryStore
 
 _RAN = []

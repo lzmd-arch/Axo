@@ -21,8 +21,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from biosnn_memterm.memory import consolidation as entry
-from biosnn_memterm.paths import (
+from axo.memory import consolidation as entry
+from axo.paths import (
     consolidation_last_path,
     memory_db_path,
     snapshot_dir,
@@ -45,10 +45,10 @@ _TEXTS = [
 def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """把数据目录指到 ``tmp_path``。**这个文件里每条用例都要它**，所以铺一个夹具。
 
-    ``paths`` 那几个函数只认 ``BIOSNN_MEMTERM_DATA``，而巩固写的每一处位置（库、
+    ``paths`` 那几个函数只认 ``AXO_DATA``，而巩固写的每一处位置（库、
     快照、事件、``last.json``）都从它派生——不铺这一层，用例会往真实数据目录里写。
     """
-    monkeypatch.setenv("BIOSNN_MEMTERM_DATA", str(tmp_path))
+    monkeypatch.setenv("AXO_DATA", str(tmp_path))
     return tmp_path
 
 

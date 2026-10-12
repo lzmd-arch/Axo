@@ -2,8 +2,8 @@
 
 这个文件量的是四件事，每一件对着一种"看不出来"的失效：
 
-1. **参数要来另一路**。:class:`~biosnn_memterm.agent.loop.ToolFinished` 里没有
-   参数，参数只在 :class:`~biosnn_memterm.agent.loop.MessagesAppended` 那一行
+1. **参数要来另一路**。:class:`~axo.agent.loop.ToolFinished` 里没有
+   参数，参数只在 :class:`~axo.agent.loop.MessagesAppended` 那一行
    assistant 的 ``tool_calls`` 里。配不上就写空——**配不上不等于这一步没发生**，
    所以那一步必须还在。
 2. **截断**。``meta`` 逐字进 SQLite，超了 ``_MAX_META_BYTES`` 会让整条记忆变成一句
@@ -18,14 +18,14 @@ from __future__ import annotations
 
 import json
 
-from biosnn_memterm.agent.loop import MessagesAppended, ToolFinished
-from biosnn_memterm.agent.trace import (
+from axo.agent.loop import MessagesAppended, ToolFinished
+from axo.agent.trace import (
     MAX_STEP_ARG_CHARS,
     MAX_STEP_RESULT_CHARS,
     MAX_TRACE_CHARS,
     build_trace,
 )
-from biosnn_memterm.llm.base import ChatMessage, ToolCall
+from axo.llm.base import ChatMessage, ToolCall
 
 # ── 造事件 ─────────────────────────────────────────────────────────────────
 #

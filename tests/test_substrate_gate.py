@@ -6,12 +6,12 @@
 用可控的小例子逐条断言。它测的是三件只有"整套量具一起跑"才暴露得出来的事：
 
 1. **结构不变量**：语料里的每一条都在图里、图里没有语料外的节点、每条查询的
-   ``expect`` 都与它同簇（见 :func:`~biosnn_memterm.bench.substrate.substrate_structural_violations`）。
+   ``expect`` 都与它同簇（见 :func:`~axo.bench.substrate.substrate_structural_violations`）。
 2. **可复现**：连跑两遍逐位相同。这套量具的全部输入是 blake2b 与 numpy，**没有
    随机数、没有模型、没有 GPU、没有网络**——所以这一条比召回那边容易成立，
    **正因为它容易成立，它才是一道便宜的哨兵**：任何一天有人往子采样或图里塞一个
    随机种子、一个时间戳，它立刻红。它同时是容差取值的证据（见
-   :data:`~biosnn_memterm.bench.substrate.DEFAULT_TOLERANCE`）。
+   :data:`~axo.bench.substrate.DEFAULT_TOLERANCE`）。
 3. **门槛**：``neighbor_auc`` 与 ``completion_top1`` 不跌破 ``baseline.json``
    的容差，且基线自己像一份真实测量（防空转）。
 
@@ -29,7 +29,7 @@ import json
 import numpy as np
 import pytest
 
-from biosnn_memterm.bench import (
+from axo.bench import (
     CodedMemory,
     NeighborPairs,
     SubstrateCorpus,
@@ -47,8 +47,8 @@ from biosnn_memterm.bench import (
     probe_sample,
     substrate_digests,
 )
-from biosnn_memterm.bench.gates import gate_rows, sanity_problems
-from biosnn_memterm.bench.substrate import (
+from axo.bench.gates import gate_rows, sanity_problems
+from axo.bench.substrate import (
     DEFAULT_TOLERANCE,
     GATED,
     LOWER_IS_BETTER,
@@ -192,7 +192,7 @@ def test_no_orphan_cluster_in_the_queries(corpus: SubstrateCorpus, measured: dic
 def test_substrate_benchmark_is_reproducible(corpus: SubstrateCorpus) -> None:
     """连跑两遍，图、逐条结果、聚合指标都逐位相同。
 
-    这条是 :data:`~biosnn_memterm.bench.substrate.DEFAULT_TOLERANCE` 取 0.02 / 0.05
+    这条是 :data:`~axo.bench.substrate.DEFAULT_TOLERANCE` 取 0.02 / 0.05
     的**前提**：容差之所以不是"采样噪声"，正是因为这里没有任何随机来源。所以它不
     只是可复现性检查，它是那个容差取值的证据。
 
@@ -218,7 +218,7 @@ def test_graph_outcomes_routes_through_the_shared_diffusion_operator(
     """量具的扩散**必须**走 :meth:`memcore.graph.GraphIndex.diffuse`，不许在量具里另写一份。
 
     这条守的不是数值，是**"同一个算子只有一处定义"**。P4b 把这段计算从
-    :func:`~biosnn_memterm.bench.substrate.graph_outcomes` 搬到了图上，理由写在
+    :func:`~axo.bench.substrate.graph_outcomes` 搬到了图上，理由写在
     ``diffuse`` 的 docstring 里：量具与生产要共用它，而两份实现漂移正是这个仓最忌讳
     的形状。搬迁本身不会有人反对，**搬回去**也不会——只要没人看着，复制一份出来
     改一个参数（``decay`` 的默认值、max 换成 sum）是最自然的"顺手优化"，而两份
@@ -284,7 +284,7 @@ def test_the_gate_tier_matches_the_reported_tier(measured: dict, baseline: dict)
 def test_gate_passes(baseline: dict, measured: dict) -> None:
     """两项指标不跌破基线的容差。
 
-    走 :func:`~biosnn_memterm.bench.gates.gate_rows` 并**显式传**
+    走 :func:`~axo.bench.gates.gate_rows` 并**显式传**
     ``gated=GATED`` 与 ``lower_is_better=LOWER_IS_BETTER``：前者的默认值是召回那
     一套名单，后者的默认值含误注入率。测试与 ``tools/bench_substrate.py`` 必须
     经过同一对参数，否则工具里哪天传错了名单这边仍然绿——那正是 ``bench/gates.py``
@@ -363,7 +363,7 @@ def test_sanity_floor_catches_a_blind_graph() -> None:
     还弱。那是边的口径写反了（正负例接反、Jaccard 写成了"不相似度"），不是标定问题。
     冻结这种基线等于把「测反了」冻成「合格」。
 
-    **边界是严格小于**（:func:`~biosnn_memterm.bench.gates.sanity_problems` 用的是
+    **边界是严格小于**（:func:`~axo.bench.gates.sanity_problems` 用的是
     ``value < low``）：恰好 0.5 放行。这条边界与召回那边 ``hit@8`` 的地板同形，
     而它是**有意**的——0.5 是"什么都没分开"，而那本来就该由门槛自己（基线 ± 容差）
     去管；这道守卫拦的是符号错，不是"效果差"。下面第二段把这条边界也钉住，

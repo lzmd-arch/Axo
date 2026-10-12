@@ -1,7 +1,7 @@
 """装配的 token 算术。
 
 两个常数（每条消息 5、整轮底价 12）是**量出来的**，量法记在
-:mod:`biosnn_memterm.session.budget` 的常量文档里。这个文件钉两件事：
+:mod:`axo.session.budget` 的常量文档里。这个文件钉两件事：
 
 1. **公式的形状**——边际代价：往一串消息后面再挂一条，多出来的正好是那一条的
    代价。装配器的贪心遍历、按层反向驱逐都建立在这个形状上（超预算时"去掉最后
@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import pytest
 
-from biosnn_memterm.llm.base import ChatMessage, ToolCall
-from biosnn_memterm.session.budget import (
+from axo.llm.base import ChatMessage, ToolCall
+from axo.session.budget import (
     CONVERSATION_BASE,
     GENERATION_PROMPT,
     PER_MESSAGE_OVERHEAD,

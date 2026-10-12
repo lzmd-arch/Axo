@@ -17,7 +17,7 @@ import json
 
 import pytest
 
-from biosnn_memterm.bench import (
+from axo.bench import (
     corpus_digests,
     default_gold_dir,
     file_sha256,
@@ -37,7 +37,7 @@ _FREEZE_HINT = (
     "并重跑 `python tools/bench_recall.py --no-semantic --freeze` 更新基线。"
 )
 
-#: 语料里**不许出现**的东西。表在 :data:`biosnn_memterm.bench.PERSONAL_DENYLIST`
+#: 语料里**不许出现**的东西。表在 :data:`axo.bench.PERSONAL_DENYLIST`
 #: ——**不在这里再写一份**：路由语料是同一份风险的第二个入口，两处各存一份的话，
 #: 某天补一个词只会补在其中一边，而另一边看起来仍然"有守卫"。
 #:
@@ -166,7 +166,7 @@ def test_no_answer_queries_have_no_ground_truth() -> None:
     """``expect`` 为空的查询是合法的，但它不能同时有 ``optional``。
 
     有 optional 就意味着"命中它算对"——那这条查询其实**有**答案，而它却被算进
-    "库里确实没有答案"的那一组（:func:`~biosnn_memterm.bench.metrics.
+    "库里确实没有答案"的那一组（:func:`~axo.bench.metrics.
     no_answer_injections` 的分母），于是那一组里混进了一个本该得分的查询。
     """
     for query in load_queries(GOLD / "queries.jsonl"):
@@ -183,7 +183,7 @@ def test_no_answer_queries_have_no_ground_truth() -> None:
 def test_corpus_has_no_personal_identifiers(name: str) -> None:
     """语料里不许出现关于作者本人/本人机器/本项目其它仓库的痕迹。
 
-    见 :data:`biosnn_memterm.bench.PERSONAL_DENYLIST`。这条是**建公开仓之前**唯一
+    见 :data:`axo.bench.PERSONAL_DENYLIST`。这条是**建公开仓之前**唯一
     一个不可逆问题的机械守卫：推上去就收不回来了。
     """
     text = (GOLD / name).read_text(encoding="utf-8")

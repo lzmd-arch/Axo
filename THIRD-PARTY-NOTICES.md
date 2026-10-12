@@ -4,7 +4,7 @@
 `THIRD-PARTY-NOTICES.txt`），以及**来审这个仓库的人**。两边要的是同一件事：产物里到底
 带了谁的东西、按什么许可、义务怎么履行。
 
-本项目自身（`biosnn_memterm`、`memcore`、`tools`、`tests`）按 **Apache-2.0** 发布，
+本项目自身（`axo`、`memcore`、`tools`、`tests`）按 **Apache-2.0** 发布，
 全文见仓根的 [`LICENSE`](LICENSE)。下面列的都是**别人写的东西**。
 
 ---

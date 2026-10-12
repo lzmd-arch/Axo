@@ -19,8 +19,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from biosnn_memterm.ui.main_window import MainWindow
-from biosnn_memterm.ui.settings_store import SettingsStore, ToolSettings
+from axo.ui.main_window import MainWindow
+from axo.ui.settings_store import SettingsStore, ToolSettings
 
 pytestmark = pytest.mark.gui
 

@@ -449,7 +449,7 @@ def test_edge_count_matches_the_neighbour_lists() -> None:
 
 def test_graph_path_lives_beside_the_database() -> None:
     """图必须在 ``memory/`` 里、和 ``mem.db`` 一起整体搬家，而不是散在数据根目录。"""
-    from biosnn_memterm.paths import graph_path, memory_db_path
+    from axo.paths import graph_path, memory_db_path
 
     assert graph_path().name == "graph.npz"
     assert graph_path().parent == memory_db_path().parent

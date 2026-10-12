@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from biosnn_memterm.bench import file_sha256
+from axo.bench import file_sha256
 
 _LICENSES = Path(__file__).resolve().parents[1] / "licenses"
 

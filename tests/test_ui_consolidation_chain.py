@@ -30,10 +30,10 @@ from typing import Any
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from biosnn_memterm.ui import main_window as main_window_module
-from biosnn_memterm.ui.consolidation_scheduler import MIN_DELAY_MS
-from biosnn_memterm.ui.main_window import MainWindow
-from biosnn_memterm.ui.settings_store import MemorySettings
+from axo.ui import main_window as main_window_module
+from axo.ui.consolidation_scheduler import MIN_DELAY_MS
+from axo.ui.main_window import MainWindow
+from axo.ui.settings_store import MemorySettings
 
 pytestmark = pytest.mark.gui
 

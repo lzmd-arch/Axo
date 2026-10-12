@@ -1,4 +1,4 @@
-# BioSNN 记忆终端
+# Axo
 
 一个桌面终端，把**长期记忆与性格放在终端侧，而不是放在模型里**。
 
@@ -196,16 +196,16 @@ P3b 的三项交付与各自的验收：**一轮任务合成一条记忆**（设
 托盘要有后台任务才值得常驻，而"到点了"要有常驻进程在听。
 
 **本版：打包（P6a）——交付形态多了一个免安装的 Windows 目录。** `tools/build_exe.py`
-把界面、QtWebEngine、对话区那几张网页资产与图标一起冻进 `dist/biosnn-memterm/`，**机器上
+把界面、QtWebEngine、对话区那几张网页资产与图标一起冻进 `dist/axo/`，**机器上
 不需要装 Python**（Ollama 与嵌入模型仍然要）。产物不好找——`dist/` 是构建输出、在
 `.gitignore` 里，编辑器里是灰的、远端上不存在——所以自检全过之后**在桌面放一个快捷方式**
 （名字就是界面上的显示名），双击即启动。三件事值得单说：
 
 * **冻结的入口是新的那一个，源码检出那条路没动。** PyInstaller 收的是**一份脚本**——它
   把入口文件当 `__main__` 跑，`__package__` 是空的，而 `ui/app.py` 里那几处相对 import
-  在那种情况下解析不了。所以新增 `src/biosnn_memterm/__main__.py` 专门做冻结入口，它只有
-  一句按名字找包的绝对 import（顺带让 `python -m biosnn_memterm` 也能用）。`run.bat` 走的
-  仍然是 `python -m biosnn_memterm.ui.app`。
+  在那种情况下解析不了。所以新增 `src/axo/__main__.py` 专门做冻结入口，它只有
+  一句按名字找包的绝对 import（顺带让 `python -m axo` 也能用）。`run.bat` 走的
+  仍然是 `python -m axo.ui.app`。
 * **应用代码一个字没改。** 网页资产按**与源码相同的相对位置**放进 `_internal/`，于是
   `Path(__file__).with_name("theme.qss")` 那两处读取自动对上——这条假设由构建脚本的自检
   钉住，不成立就当场红，不留到运行时。
@@ -217,8 +217,8 @@ P3b 的三项交付与各自的验收：**一轮任务合成一条记忆**（设
 
 ## 只想用，不想编译
 
-去 [Releases](https://github.com/lzmd-arch/BioSNN-MemoryTerminal/releases) 下
-`biosnn-memterm-<版本>-win64.zip`，解开，双击里面的 `biosnn-memterm.exe`。
+去 [Releases](https://github.com/lzmd-arch/Axo/releases) 下
+`axo-<版本>-win64.zip`，解开，双击里面的 `axo.exe`。
 
 **首次双击 Windows 会拦一下**——它没有代码签名，所有未签名的 exe 都会被这样拦：
 点「更多信息」→「仍要运行」。
@@ -315,10 +315,10 @@ PARAMETER num_predict 2048
 然后取代码、装依赖、起界面：
 
 ```bash
-git clone https://github.com/lzmd-arch/BioSNN-MemoryTerminal.git
-cd BioSNN-MemoryTerminal
+git clone https://github.com/lzmd-arch/Axo.git
+cd Axo
 uv sync --all-extras
-uv run python -m biosnn_memterm.ui.app
+uv run python -m axo.ui.app
 ```
 
 `uv` 会自己把 Python 3.12 拉下来，不需要你预装。`--all-extras` 把三组可选依赖
@@ -424,7 +424,7 @@ uv run python -m biosnn_memterm.ui.app
   判定**（Qt 读 `QStyleHints.colorScheme()`，再把结果写进网页的 `documentElement`），
   网页侧**不再自己检测** `prefers-color-scheme`。两侧各判一次迟早会在某台机器上分成
   两半，而那种样子很刺眼、却很难归因。
-* **壁纸**：选图后**复制进数据目录**（`%LOCALAPPDATA%\biosnn-memterm\wallpapers\`），
+* **壁纸**：选图后**复制进数据目录**（`%LOCALAPPDATA%\axo\wallpapers\`），
   设置里存的是受控文件名。原图被移动/删除/U 盘拔掉之后壁纸仍在；文件不在时按无壁纸
   显示并说一句，**不清掉设置里的名字**——文件回来了壁纸自己就恢复。只铺对话区。
   可见度 0–70，默认 18（正好等于网页侧此前写死的那个遮罩值，所以接上这个功能不改变
@@ -468,7 +468,7 @@ uv run python -m biosnn_memterm.ui.app
 短磁盘上攒得越快**，以及**默认的一天是占位值、没有实测依据**——代价写在好处前面，与「启用
 联想通道」那个勾选框同一姿态。
 
-设置存在 `QSettings("BioSNN", "biosnn-memterm")`（Windows 上是注册表），外观在
+设置存在 `QSettings("Axo", "axo")`（Windows 上是注册表），外观在
 `appearance/*`、后端在 `backend/*`、工具授权在 `tools/*`、记忆在 `memory/*`。**读到的值一律当不可信输入**：每个字段各自回落、
 绝不抛——"设置坏了导致程序打不开"是最糟的一种失败。一个已知的类型陷阱：注册表里读回来
 的 bool 常常是字符串 `"true"`/`"false"`，而 `bool("false")` 是 `True`，所以可见度存
@@ -1000,7 +1000,7 @@ uv run python tools/bench_router.py --no-model --freeze   # 重算并覆盖基�
 所以 P4a 只做一件事：把"这套基质到底值不值得用"量出来。
 
 量具在 `benchmarks/substrate/`（200 条虚构记忆，10 个**词场** × 20 条 + 40 条查询），
-四项指标的口径写在 `biosnn_memterm.bench.substrate` 里，`tools/bench_substrate.py` 只报告：
+四项指标的口径写在 `axo.bench.substrate` 里，`tools/bench_substrate.py` 只报告：
 
 ```bash
 uv run python tools/bench_substrate.py                        # 默认档，报四个数
@@ -1290,7 +1290,7 @@ J 中位 0.1480 是真串扰；但 n≥500 上它仍随规模掉，而掉的原�
    路径假设**，不是改 Python 侧。
 
 **GPU 那一条已经安排好了**（见 `ui/app.py`）：**默认不动 GPU 标志**，正是为了 Live2D 的
-硬件加速；`--disable-gpu` 只在设了 `BIOSNN_MEMTERM_SOFTWARE_RENDER` 时才加。所以接入时
+硬件加速；`--disable-gpu` 只在设了 `AXO_SOFTWARE_RENDER` 时才加。所以接入时
 **不要**为了"保险"给它补一个 `--disable-gpu`，那会把要用的东西先废掉。
 
 **没有"从 CDN 拉"这条退路**：`chat_view.py` 关掉了 `LocalContentCanAccessRemoteUrls`，
@@ -1464,7 +1464,7 @@ uv run python tools/sleep_once.py --dry-run                     # 巩固这条�
 结果。**别在离屏下跑真正的渲染路径**——本机实测，离屏模式下第一次 `runJavaScript` 会
 让整个进程被硬杀，连异常都没有、连退出码都没有，看起来就像"脚本什么都没干"。网页侧
 的承诺因此由 `_smoke_webview.py` 单独负责，而 Python 侧由那两个用替身的脚本负责。
-加 `BIOSNN_MEMTERM_SOFTWARE_RENDER=1` 可去掉离屏 GPU 的刷屏报错。
+加 `AXO_SOFTWARE_RENDER=1` 可去掉离屏 GPU 的刷屏报错。
 
 `_smoke_webview.py` 现在依次打四段：正文渲染（含 `<script>` 与 `javascript:` 链接是否
 被挡住）、外观（读回 `--accent`、`data-theme`、`has-wallpaper`、`#wallpaper` 的
@@ -1490,7 +1490,7 @@ uv run python tools/sleep_once.py --dry-run                     # 巩固这条�
 | 云端后端报 `429` | 对方在限流（免费档常见），或者余额用完了。与本地那份设置无关——key 与地址都对也会这样 |
 | 切到云端后模型下拉是空的 | `/models` 拉不到（key 不对是 401，地址写错是 404，网络不通是超时）。框里那两个 `deepseek-*` 是**兜底预设**、不是从服务端读来的，所以能先选一个用；按状态栏那句话修好之后点顶栏 ⟳ 换成真的清单 |
 | 云端下能聊天，但记忆说"只用语汇匹配" | **本机 Ollama 没在跑，或者里面没有嵌入模型。** 云端模式下嵌入仍然走本机（多数云端厂商没有嵌入端点）。`ollama serve` + `ollama pull nomic-embed-text`，重开一次或点 ⟳。注意这条**不影响对话**——两件事在云端模式下是分开的 |
-| 窗口空白、没有任何内容 | 显卡驱动让 QtWebEngine 的 GPU 进程崩了。设环境变量 `BIOSNN_MEMTERM_SOFTWARE_RENDER=1` 再启动 |
+| 窗口空白、没有任何内容 | 显卡驱动让 QtWebEngine 的 GPU 进程崩了。设环境变量 `AXO_SOFTWARE_RENDER=1` 再启动 |
 | 中文显示成方块 | 系统缺中文字体。本项目的 CSS 首选 Microsoft YaHei UI |
 | 首次提问等半分钟才出字 | 正常，模型正在从硬盘加载进显存（4B-Q4 冷启约 35 s）。加载完就常驻，第二次提问首字约 2 s |
 | 想不起来 | 看右侧账本，别猜。它分得清三种情况：**语义通道没接上**（去装嵌入模型）、**分数不够**（去调阈值）、**库里确实没有**——三者的处理完全不同 |
@@ -1522,21 +1522,21 @@ uv run python tools/sleep_once.py --dry-run                     # 巩固这条�
 | 基质门槛红了 | 同样三档分流。这一层特有的：**它守的东西最容易被间接触坏**——量具的输入是 `encode_assoc` 的 `ASSOC_K` 与 `person` 前缀、以及建图的 `top_m` / `min_weight`，动其中任何一个都会让 `neighbor_auc` 或 `completion_top1` 变，而动手的人往往以为自己在改别处（所以它也在 pre-commit 里）。另外别拿 `--scale` 那一列去比 `baseline.json`：前者是**合成语料**、用来把容量悬崖看出来，后者是 `benchmarks/substrate/` 实测档冻下来的基线——**两把尺子** |
 | 关掉窗口但任务管理器里进程还在 | **设计如此**：窗口收进了系统托盘（右键图标 →「退出」，或 Ctrl+Q）。第一次收起来时会弹一条气泡说明 |
 | 通知区域里找不到托盘图标 | Windows 默认把新图标折进「隐藏的图标」里（点任务栏那个 `^`）。托盘**真的不可用**时（极少数精简版系统）程序会退回"关窗即退出"，不会出现"关不掉也找不到"的状态 |
-| 设了提醒却没响 | 三个地方依次看：**程序当时开着吗**（关窗收进托盘仍然算开着，真退出就不算了，错过的会在下次启动聚合成一句）、**托盘气泡有没有被系统静音**（对话区里仍然有一条，那是唯一可靠的落点）、**`%LOCALAPPDATA%\biosnn-memterm\reminders.jsonl` 里有没有那条**。第三处排除掉之后剩下的都在前面两处 |
+| 设了提醒却没响 | 三个地方依次看：**程序当时开着吗**（关窗收进托盘仍然算开着，真退出就不算了，错过的会在下次启动聚合成一句）、**托盘气泡有没有被系统静音**（对话区里仍然有一条，那是唯一可靠的落点）、**`%LOCALAPPDATA%\axo\reminders.jsonl` 里有没有那条**。第三处排除掉之后剩下的都在前面两处 |
 | 重启之后同一条提醒又弹了一遍 | 理论上不会：响过的 id 记在 `reminders.fired.jsonl`（先落盘再弹）。真出现了先看那个文件里有没有那一行——**没有**说明当时落盘失败了，那是个 bug，把 `reminders.jsonl` 与 fired 那个文件一起留着 |
 | 核心腿在没图形栈的机器上报 `libEGL.so.1` 且退出码 3、测试一条都没跑 | pytest-qt 的 `pytest_configure` 在收集前就导入了 QtGui，而**排除 `test_ui_*` 拦不住它**。给命令加 `-p no:pytest-qt`（见上面「跑测试与 CI」）。别去装 `libEGL`——那是为了让用不到的插件能 import 而给机器装图形栈 |
 | `git status` 干净，可 `.bat` 里的行尾就是 LF | 改 `.gitattributes` **不会**回头重写工作区已有的文件，而工作区 LF 与库里 LF 相符，所以没有任何差异可报。`rm run.bat && git checkout -- run.bat` 让属性重新生效；确认办法是 `tests/test_entry_points.py` |
-| 巩固跑过了，「SNN 热度」还是一个数字都没有 | 两种可能，界面分得开：**根本没跑过**（说"巩固还没跑过"）与**跑过但一条都没被回放认出**（明说这句）。后者是正常的——新的记忆还没进关联图，或者都没通过探针。看不出来时去 `%LOCALAPPDATA%\biosnn-memterm\memory\consolidation\last.json` 看有没有那个文件 |
+| 巩固跑过了，「SNN 热度」还是一个数字都没有 | 两种可能，界面分得开：**根本没跑过**（说"巩固还没跑过"）与**跑过但一条都没被回放认出**（明说这句）。后者是正常的——新的记忆还没进关联图，或者都没通过探针。看不出来时去 `%LOCALAPPDATA%\axo\memory\consolidation\last.json` 看有没有那个文件 |
 | 到点了却没跑巩固 | 三处依次看：设置「记忆」里勾选框还在不在；**盘上有没有图**（`memory/graph.npz`，图是懒建的，从没打开过记忆窗口就没有，那时这一轮会先请一趟建图、建完再跑）；`last.json` 里的 `newest_id` 是不是等于库里最新那条——**库里没有新记忆时自动那条会让掉一轮**（巩固的对象是已有的记忆，重跑只是把同一批再认一遍）。这三道门**手动那条都不走**：托盘的「立即巩固」随时能强制跑一趟 |
 | 退出时打印「收尾超时：… 仍在运行」，而当时正在巩固 | 不是 bug：收尾只等 3 秒，巩固可能是几分钟。**有快照在**、每簇是一次「改库 + 追加事件」，所以最坏是这一轮只跑了一部分，而**库与事件是同一个前缀**、`seq` 连得上。下一次到点会重跑 |
 | 巩固跑到一半发现选错了参数，想停下 | 本版**没有取消**（与建图同一姿态，也没有排给哪个阶段）。要退就托盘退出——见上一行的收尾行为；库里的改动由快照兜底，`memory/snapshots/` 里那几份整库副本可以直接拿来还原 |
 | 冻结出来的 exe 双击了没反应 | 先跑带控制台的那一版（`python tools/build_exe.py --console`），回溯会打在控制台上。**无控制台的版本撞上未捕获异常只弹一个错误框、进程还活着**——所以"任务管理器里进程在"不能当成"起来过" |
-| 构建报某模块没被收进去 | 去 `build/biosnn-memterm/biosnn-memterm/warn-biosnn-memterm.txt` 看（PyInstaller 会在 workpath 下**再套一层同名目录**，别按 `build/biosnn-memterm/warn-*.txt` 找）。里面绝大多数行是无害的，要看的只是 `tools/build_exe.py` 里 `_FORBIDDEN_MISSING` 那六个名字 |
+| 构建报某模块没被收进去 | 去 `build/axo/axo/warn-axo.txt` 看（PyInstaller 会在 workpath 下**再套一层同名目录**，别按 `build/axo/warn-*.txt` 找）。里面绝大多数行是无害的，要看的只是 `tools/build_exe.py` 里 `_FORBIDDEN_MISSING` 那六个名字 |
 | 冻结产物的对话区白屏 | 两种可能，构建时自检分得开：**web 资产没进镜像**（第 2 条）与 **QtWebEngine 的运行件没带上**（第 3 条，`QtWebEngineProcess.exe` / `qtwebengine_locales` / `plugins`）。重跑一次构建看它报哪条，别去改应用代码 |
 | 首次双击弹 SmartScreen | 正常：exe 没有代码签名。点「更多信息 → 仍要运行」是一次性的 |
 | 冻结产物没有自定义图标 | 构建时画图标那一步失败了，只打一句话、不中断构建（图标是外观，不该让整次构建挂掉）。重跑看那句报错 |
 | 窗口标题栏、任务栏上没图标 | 与资源管理器里那个**文件**图标是两回事：前者是程序启动时自己装的（`ui/main_window.py` 的 `_install_window_icon`，跟着主题主色走），后者才是嵌在 exe 里的那一份。所以这一条只会出现在旧产物上——构建自检第 5 条会拦下它，重跑一次构建即可 |
-| 构建完了，可 exe 找不到 | 它在 `dist/biosnn-memterm/`，而 `dist/` 在 `.gitignore` 里——编辑器里是灰的、远端上不存在，所以"看不见"是常态。构建成功时桌面会多一个快捷方式；**没多就是那次自检没过**（快捷方式只在全过之后才放），回构建输出里看它报的是哪一条 |
+| 构建完了，可 exe 找不到 | 它在 `dist/axo/`，而 `dist/` 在 `.gitignore` 里——编辑器里是灰的、远端上不存在，所以"看不见"是常态。构建成功时桌面会多一个快捷方式；**没多就是那次自检没过**（快捷方式只在全过之后才放），回构建输出里看它报的是哪一条 |
 | 桌面那个快捷方式点了没反应，或指向旧位置 | 它里面是**绝对路径**（`.lnk` 的固有属性），仓库搬过家它就指着旧的。重新构建一次会覆盖成新的（`--no-shortcut` 那次不会重新放）。桌面被 OneDrive 接管过也不影响——路径是问系统要的 |
 
 ### 退出码怎么读
@@ -1595,14 +1595,14 @@ python tools/build_exe.py --console   # 带控制台的排障版，与上面那�
 python tools/build_exe.py --no-shortcut   # 只构建，不碰桌面
 ```
 
-产物是**一个目录**（onedir，`dist/biosnn-memterm/` 里是 exe 加一个 `_internal/`），不是
+产物是**一个目录**（onedir，`dist/axo/` 里是 exe 加一个 `_internal/`），不是
 单文件。单文件每次启动都要把几百 MB 解到临时目录，而这个产物的几百 MB 里主要是
 QtWebEngine——解压那一下正好压在启动路径上（现在实测**起一次 1.9 秒**，含窗口出现）。
 机器上**不需要装 Python**，`_internal` 里带着解释器与全部依赖。
 
 **产物藏在哪、怎么找到它。** `dist/` 是构建输出、在 `.gitignore` 里，所以它在编辑器里是灰的、
 在远端上根本不存在——"构建完了却找不到 exe"是常态，不是谁弄错了。所以**自检全过之后会在桌面
-放一个快捷方式**（文件名取界面上的显示名，即 `BioSNN 记忆终端.lnk`，目标与工作目录都指着
+放一个快捷方式**（文件名取界面上的显示名，即 `Axo.lnk`，目标与工作目录都指着
 产物），双击即启动；`--no-shortcut` 关掉它。三条要知道的：
 
 * **只在自检全过之后才放。** 指向一个自检没过的 exe，比桌面上什么都没有更糟。
@@ -1626,8 +1626,8 @@ QtWebEngine——解压那一下正好压在启动路径上（现在实测**起�
 平台件落在镜像外、某个 import 漏了——它们表现为"双击之后什么都没发生"。所以构建完立刻查
 盘上的这六条：
 
-1. 产物在（`dist/biosnn-memterm/biosnn-memterm.exe`）。
-2. **镜像路径假设成立**：`_internal/biosnn_memterm/ui/` 下的 qss 与三处网页资产都在。
+1. 产物在（`dist/axo/axo.exe`）。
+2. **镜像路径假设成立**：`_internal/axo/ui/` 下的 qss 与三处网页资产都在。
    这一条成立，应用代码才一个字都不用改（那两处读取是 `Path(__file__).with_name(...)`）。
 3. **QtWebEngine 的运行件在**：`QtWebEngineProcess.exe`、`translations/qtwebengine_locales/`、
    `plugins/`，以及 `resources/` 下四份运行件（它们是第 6 条删掉的那些的孪生）。
@@ -1673,14 +1673,14 @@ BLAS（`numpy.libs/` 20.2 MB）。里面**能删且删得干净**的只有一组
   那条**仍然开着**：P6a 冻结的是 exe，不是 wheel（见 `pyproject.toml` 与三份 `CORPUS.md`）。
 
 **只靠眼睛验的两件事**（没有一条腿能替）：双击**桌面上那个快捷方式**（或
-`dist/biosnn-memterm/biosnn-memterm.exe`），确认窗口、**对话区（那一区是网页，最可能因为
+`dist/axo/axo.exe`），确认窗口、**对话区（那一区是网页，最可能因为
 资产没带对而白屏）**、托盘图标、记忆窗口都正常；以及那个图标在三处的观感——它是程序画的圆角
 方块加一个点，放大到 256px 好不好看、缩到任务栏那一档还认不认得出来，只有看了才知道。
 （**"有没有"不在此列**：自检第 5 条会拦下没图标的产物。）
 
-**冻结的入口是 `src/biosnn_memterm/__main__.py`**，不是 `ui/app.py`：PyInstaller 收的是
+**冻结的入口是 `src/axo/__main__.py`**，不是 `ui/app.py`：PyInstaller 收的是
 **一份脚本**，它把入口文件当 `__main__` 跑、`__package__` 是空的，而 `ui/app.py` 里那几处
-相对 import 在那种情况下解析不了。`run.bat` 走的仍然是 `-m biosnn_memterm.ui.app`，源码
+相对 import 在那种情况下解析不了。`run.bat` 走的仍然是 `-m axo.ui.app`，源码
 检出那条路没动。
 
 #### 发给别人：`--release`
@@ -1706,12 +1706,12 @@ python tools/build_exe.py --release --skip-build    # 产物已经在 dist/ 里�
    文件自己，没有任何别的文件提到那 8 个名字才动手；提到了就**一个都不删**并报红——半剔
    的树比没剔的更坏（既没消掉许可风险，又留下一堆指向空处的插件）。实测那 8 个名字的
    引用者只有 4 个 QML 插件目录与 1 个输入法插件，都在 `_GPL_ONLY_COMPANIONS` 里。
-2. **首启探测。** 给子进程一个临时的 `BIOSNN_MEMTERM_DATA`，起完之后**断言那个目录是首启
+2. **首启探测。** 给子进程一个临时的 `AXO_DATA`，起完之后**断言那个目录是首启
    形状**：库建出来了、库里**只有内置人格锚一条**、没有逐字稿、没有壁纸。这一句就是
    "别人下载到的是最初始化的版本"的机器判据。（顺带修掉一个旧毛病，见下。）
 3. **残留闸门。** 产物树里不许有 `*.db` / `*.log` / `*.jsonl`，不许有 `sessions/`、
    `wallpapers/`、`benchmarks/`、`tests/`、`tools/`；内容上，全树不许出现**检出路径**，
-   而**用户目录那一族**只在仓自己的文件里（顶层 exe 与 `_internal/biosnn_memterm/`）搜。
+   而**用户目录那一族**只在仓自己的文件里（顶层 exe 与 `_internal/axo/`）搜。
    这条区分是实测逼出来的：产物 3157 个文件里有 270 个（Qt 的 DLL、CPython 的 `.pyd`）嵌着
    **它们构建机**的用户目录路径——Qt 的构建机用户名是 `qt`、CPython 的落在一个临时构建
    目录里，都不是我们的痕迹。全树搜会天天误报，然后被无视。这里**不把那些路径写进本文**
@@ -1725,12 +1725,12 @@ python tools/build_exe.py --release --skip-build    # 产物已经在 dist/ 里�
    结局是慢慢与现实脱节，而那种失效看起来一切正常。
 
 **隔离数据目录这一条修掉的是个真毛病。** 原来的活体探测只弹掉了 `QT_QPA_PLATFORM`，
-没有隔离数据目录——于是子进程按 `paths.data_dir()` 落到 `%LOCALAPPDATA%\biosnn-memterm`，
+没有隔离数据目录——于是子进程按 `paths.data_dir()` 落到 `%LOCALAPPDATA%\axo`，
 **每次构建都拿你自己的真库起一遍应用**，往真库里写内置锚、真库里本来就有的东西也一并被
 读到，而构建日志里一个字都不显示。现在子进程拿到一个临时目录，"这次构建碰过我的库没有"
 这个问题才有答案，而且答案是"没有"。
 
-产物是 `dist/biosnn-memterm-<版本>-win64.zip`（版本从 `pyproject.toml` 读，不写第二份常量），
+产物是 `dist/axo-<版本>-win64.zip`（版本从 `pyproject.toml` 读，不写第二份常量），
 顶层一个目录，里面是产物树 + `README.txt`（**写给拿到它的人**，不出现本仓行话——由
 `tests/test_packaging.py` 机械地查）+ `LICENSE` + `THIRD-PARTY-NOTICES.txt` + `licenses/`
 （GPL/LGPL 全文，逐字节钉在 `tests/test_licenses.py` 里；其余第三方的短许可打包时从装好的
@@ -1743,23 +1743,23 @@ python tools/build_exe.py --release --skip-build    # 产物已经在 dist/ 里�
 必须报出这两条并且**不出 zip**；塞一个假的 `Qt6Charts.dll` 并让另一个文件提到它，剔除那一步
 必须**拒绝删并报红**。两条都实测过。
 
-**解压到仓外再起一次**也实测过：在空目录里解开，以隔离的 `BIOSNN_MEMTERM_DATA` 起来等 15 秒
+**解压到仓外再起一次**也实测过：在空目录里解开，以隔离的 `AXO_DATA` 起来等 15 秒
 再结束，产物目录**一个文件都没多、没少、没变**，而数据目录里是 `memory/mem.db` 一条
 `persona://default`、外加空的 `sessions/` 与 `wallpapers/`。
 
 ## 数据放在哪
 
-默认 `%LOCALAPPDATA%\biosnn-memterm\`。**刻意不放在仓库目录里**——否则
+默认 `%LOCALAPPDATA%\axo\`。**刻意不放在仓库目录里**——否则
 `git clean -xdf` 会抹掉全部记忆，而且有把私人对话提交进版本控制的风险。
 
-用环境变量 `BIOSNN_MEMTERM_DATA` 改到别处（开发时常指向仓库里的 `data/`，
+用环境变量 `AXO_DATA` 改到别处（开发时常指向仓库里的 `data/`，
 它已在 `.gitignore` 里）。
 
 **卸载要删两处，不是一个目录。** 除了数据目录，外观与后端设置走 `QSettings`，
 而在 Windows 上它的原生格式**是注册表**：
 
 ```
-HKEY_CURRENT_USER\Software\BioSNN\biosnn-memterm
+HKEY_CURRENT_USER\Software\Axo\axo
 ```
 
 记忆库、逐字稿、壁纸都不在那儿（它们全在数据目录里），那里只有主题、选中的模型、
@@ -1776,7 +1776,7 @@ Windows 账户 + 当前机器」加密的，拷到别的账户或别的机器上
 
 | 层 | 管什么 | 在哪儿 |
 |---|---|---|
-| 默认值 | 数据目录根本不在仓库里 | `src/biosnn_memterm/paths.py` |
+| 默认值 | 数据目录根本不在仓库里 | `src/axo/paths.py` |
 | 忽略规则 | 万一指进来，也进不了 `git add` | `.gitignore`（含 `*.jsonl`、`*.db*`、`sessions/`、`wallpapers/`） |
 | 断言 | **索引里现在确实没有**——查的是 `git ls-files`，不读 `.gitignore` | `tests/test_repo_hygiene.py` + pre-commit 钩子 `repo-hygiene` + CI |
 
@@ -1822,7 +1822,7 @@ src/
     graph.py          关联图 A：关联码的 Jaccard + top-m 邻居（派生缓存，可重建）
     substrate.py      神经元级 W：``AᵀA`` 的隐含表示（不物化 4096² 稠密矩阵）
     consolidation.py  睡眠巩固：分簇 + 簇内局部 W 回放 + 事件行（纯；不碰库不碰盘）
-  biosnn_memterm/
+  axo/
     bench/            量具层：读语料、跑被测对象、算子项（纯；不 import Qt/httpx）
       corpus.py       三份语料共用的读盘：指纹 + 逐行 JSON + 禁词表
       goldset.py      召回语料：条目 / 查询 / 指纹 / 目录定位
@@ -1872,7 +1872,7 @@ src/
       memory_window.py  记忆界面（独立窗口）
       memory_worker.py  记忆侧的后台动作：建图、以某条为线索召回一次（**唯一要联网的那件**）、跑一轮巩固（不碰网络）
       thread_tracking.py  worker/线程生命周期的唯一入口
-    __main__.py       进程入口（`python -m biosnn_memterm`），**也是冻结产物的入口**
+    __main__.py       进程入口（`python -m axo`），**也是冻结产物的入口**
     paths.py          数据目录解析
     secrets.py        密钥加密：Windows DPAPI 的薄封装（**平台相关的东西集中在这一处**）
 benchmarks/gold/      金标准语料（量具，不是数据集）
@@ -1950,7 +1950,7 @@ tools/
 run.bat ci.bat        双击启动 / 双击跑一遍 CI（**必须是 CRLF**）
 ```
 
-依赖方向单向：`biosnn_memterm` 依赖 `memcore`，反过来不成立。这条约束由
+依赖方向单向：`axo` 依赖 `memcore`，反过来不成立。这条约束由
 `tests/test_layering.py` 用 AST 遍历 import 语句强制，不靠自觉。
 
 **界面里不写判断句。** 记忆界面的取舍逻辑全部落在不 import Qt 的纯模块里

@@ -26,16 +26,16 @@ import pytest
 # 导入不值当。
 from fakes import ScriptedBackend, text_chunk, tool_chunk
 
-from biosnn_memterm.llm.base import (
+from axo.llm.base import (
     ChatBackendError,
     ChatMessage,
     ChatRequest,
     ToolCall,
     ToolSpec,
 )
-from biosnn_memterm.ui import chat_worker
-from biosnn_memterm.ui.chat_worker import ChatWorker, ModelListWorker
-from biosnn_memterm.ui.settings_store import (
+from axo.ui import chat_worker
+from axo.ui.chat_worker import ChatWorker, ModelListWorker
+from axo.ui.settings_store import (
     PROVIDER_CLOUD,
     PROVIDER_OLLAMA,
     BackendSettings,
