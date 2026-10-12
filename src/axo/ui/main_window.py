@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal, Slot
-from PySide6.QtGui import QAction, QGuiApplication, QKeySequence
+from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -106,6 +106,7 @@ from ..memory.consolidation import ConsolidationRun, last_run, summary_line
 from ..paths import (
     data_dir,
     data_root_source,
+    default_data_dir,
     memory_db_path,
     reminders_fired_path,
     reminders_path,
@@ -121,7 +122,8 @@ from .app import make_settings
 from .chat_view import ChatView
 from .chat_worker import ChatWorker, ModelListWorker
 from .consolidation_scheduler import MIN_DELAY_MS, ConsolidationScheduler
-from .data_root import MoveReport, discard_source
+from .data_move import MoveKind, MovePlan, plan_move
+from .data_root import MoveReport, discard_source, stage_move
 from .layout import plan_pane_sizes
 from .memory_window import MemoryWindow
 from .memory_worker import (
@@ -132,6 +134,7 @@ from .memory_worker import (
     MemorySyncWorker,
     render_recall_detail,
 )
+from .relaunch import restart_application
 from .reminder_scheduler import ReminderScheduler
 from .settings_dialog import SettingsDialog
 from .settings_store import (
@@ -2067,6 +2070,9 @@ class MainWindow(QMainWindow):
                 dialog.consolidation_requested.connect(self._on_manual_consolidation)
                 dialog.persona_save_requested.connect(self._on_persona_save_requested)
                 dialog.persona_clear_requested.connect(self._on_persona_clear_requested)
+                dialog.open_data_folder_requested.connect(self._on_open_data_folder)
+                dialog.change_data_location_requested.connect(self._on_change_data_location)
+                dialog.restore_data_location_requested.connect(self._on_restore_data_location)
                 self._settings_dialog = dialog
             else:
                 # 重开时重新对齐：这段时间里系统明暗可能变过（跟随系统时外观已经变了），
@@ -2098,6 +2104,11 @@ class MainWindow(QMainWindow):
             # 记忆库里（卡片、记忆窗口都能改它）。混进同一个 ``set_state`` 会让"这
             # 一页从哪儿读"变含糊，而含糊的代价是设置页显示一段过期的正文。
             self._settings_dialog.set_persona(*self._persona_texts())
+            # 数据页同理，**每次打开都现读**——而且它的真源是第三个：外观与后端在
+            # QSettings 里、人设在记忆库里，而"现在用哪个目录"在 ``paths`` 里（是
+            # 这个**进程**的事实）。搬迁跨重启才生效，所以这里读到的与设置里那一格
+            # 未必是同一个值——那正是要显示的东西。
+            self._settings_dialog.set_data(self._data_root, self._data_source)
         except Exception as exc:  # noqa: BLE001 —— 见 docstring：要把它变成一句人话
             # 构造失败时上面那句赋值没跑到，于是 `_settings_dialog` 仍是 None：
             # 再点一次会重试，而不是永远拿着一个坏掉的对象。
@@ -2647,6 +2658,93 @@ class MainWindow(QMainWindow):
         self.show()
         self.raise_()
         self.activateWindow()
+
+    @Slot()
+    def _on_open_data_folder(self) -> None:
+        """在资源管理器里打开记忆所在的那个文件夹。
+
+        这是"重新下载之后还能找到"那件事的界面一侧：把位置显示出来还不够，还得能一键
+        过去——备份、看一眼库里有什么，都得先到那个文件夹。
+        """
+        self._open_directory(self._data_root)
+
+    def _open_directory(self, path: Path) -> None:
+        """**可覆盖的测试缝。** ``QDesktopServices`` 在没有桌面会话的环境里是个空操作，
+        而这条链要能在离屏测试里断言"点了一下、开的是那个目录"。"""
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    @Slot(str)
+    def _on_change_data_location(self, chosen: str) -> None:
+        self._start_data_move(Path(chosen))
+
+    @Slot()
+    def _on_restore_data_location(self) -> None:
+        """「恢复默认位置」走**同一条搬迁链**，只是目标换成默认那个。
+
+        不另写一条"只改指针"的短路：那会让它变成唯一一个不判断、不搬迁的入口，而它
+        同样可能撞上"目标里已经有别的东西""现在这个已经是默认位置了"。
+        """
+        self._start_data_move(default_data_dir())
+
+    def _start_data_move(self, destination: Path) -> None:
+        """用户挑好了新位置：判断 → 确认 → 写标记 → 重启。**这里不复制。**
+
+        复制发生在新进程里（理由见 :mod:`axo.ui.data_root` 的模块文档）。这一步只做
+        两件落盘的事：写一条搬迁标记，然后重启。**位置指针一个字都没改**——所以此刻
+        断电、或者重启起不来，程序用的都还是那份完整的源。
+        """
+        self._set_data_note("")
+        plan = plan_move(self._data_root, destination)
+        if plan.kind is MoveKind.REFUSE:
+            QMessageBox.warning(self, "这个位置不能用", plan.summary)
+            return
+        if not self._confirm_data_move(plan):
+            return
+
+        stage_move(make_settings(), self._data_root, destination)
+        if restart_application():
+            self._shutdown()
+            return
+        # **重启失败不是搬迁失败。** 标记已经在注册表里，用户下次自己打开照样会办完
+        # ——这条降级路径是"跨重启"那个选择顺带得到的，也是它比"原地搬"稳的地方之一。
+        self._set_data_note(
+            "已经安排好了：下次打开程序时会自动把记忆搬过去，然后就用新位置。"
+            "（刚才没能自动重启，你自己关掉再打开一次也一样。）"
+        )
+
+    def _confirm_data_move(self, plan: MovePlan) -> bool:
+        """确认框。**可覆盖的测试缝**——弹真对话框的测试跑不了。
+
+        文案里必须有两句实话：**要重启一次**、**旧的那份不会自动删**。少了第一句，
+        用户会以为点完就生效；少了第二句，他会以为旧位置已经清掉了。
+        """
+        if plan.kind is MoveKind.COPY:
+            extra = (
+                f"\n\n程序要重启一次；重启时会把记忆复制过去"
+                f"（约 {plan.total_bytes / 1024**2:.1f} MB），可能要等一会儿。"
+            )
+        else:
+            extra = "\n\n程序要重启一次，重启之后就用那个位置。"
+        answer = QMessageBox.question(
+            self,
+            "换一个放记忆的文件夹",
+            f"{plan.summary}{extra}\n\n旧位置那份不会自动删，确认搬好了你自己处置。",
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Ok,
+        )
+        return answer == QMessageBox.StandardButton.Ok
+
+    def _set_data_note(self, text: str) -> None:
+        """搬迁那条链的反馈，落在**数据页**上而不是对话流里——它是设置页上那个动作的
+        结果，用户的眼睛在那儿。
+
+        设置窗口没开过时退到对话流：这条路上唯一用得到它的是"重启没成功"，而那时
+        总得有个地方说一句，不然用户看到的是"点了没反应"。
+        """
+        if self._settings_dialog is not None:
+            self._settings_dialog.set_data_note(text)
+        elif text:
+            self.chat_view.append_message("system", text)
 
     def report_data_move(self, report: MoveReport) -> None:
         """把这次启动在搬迁上做的事说出来。**由 ``ui/app.py`` 在 ``show()`` 之后调。**

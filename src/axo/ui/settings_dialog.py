@@ -65,6 +65,7 @@ from ..llm import openai_compat
 from ..llm.ollama import probe
 from ..paths import wallpapers_dir
 from .color import parse_hex, readable_foreground
+from .data_root import data_root_description
 from .settings_store import (
     DEFAULT_CLOUD_BASE_URL,
     DEFAULT_HOST,
@@ -88,8 +89,9 @@ from .theme import (
     describe_accent,
 )
 from .thread_tracking import track, wait_for_all
+from .widgets import ElidedLabel
 
-__all__ = ["SettingsDialog"]
+__all__ = ["DataPage", "SettingsDialog"]
 
 #: 壁纸的像素上限（4000 万）。**这不是洁癖**：一张 8000×6000 的图会被 Chromium
 #: 解成约 190 MB 的位图，而每次页面重载都要重解一次。
@@ -1280,6 +1282,114 @@ class MemoryPage(QWidget):
         self.consolidate_requested.emit()
 
 
+class DataPage(QWidget):
+    """数据页：**记忆与数据放在哪个文件夹**，以及重新看一遍新手引导。
+
+    与这个窗口里其它页都不同——**它改的不是一条设置，是一次搬迁**。所以：
+
+    * **没有 ``changed`` 信号。** 位置只有一个写入口（主窗口那条搬迁链：写标记 →
+      重启 → 新进程里复制并校验），这一页碰不到它；
+    * **没有快照。** 底部那个「撤销修改」**撤不回位置**（与人设页同一种例外，理由也
+      一样——它不是一次参数改动，是一次有后果的落盘动作）；
+    * **不做真正的 I/O**（本文件的既有约定）：选目录走可覆盖的
+      :meth:`_ask_for_directory`，开文件夹与搬迁都交给主窗口。
+
+    两个按钮在 ``source == "env"`` 时是灰的：环境变量 ``AXO_DATA`` 优先级最高，
+    界面里改了不生效。**灰按钮必须带一句解释**——否则用户看到的是一个"点了没反应"
+    的界面，而那种症状指不到环境变量上去。
+    """
+
+    open_folder_requested = Signal()
+    #: 已经挑好的新目录（绝对路径）。**只是"用户挑了这个"，不是"已经搬了"**——
+    #: 搬不搬、怎么搬由主窗口决定，它才知道当前根在哪、库有多大。
+    change_location_requested = Signal(str)
+    restore_default_requested = Signal()
+    onboarding_requested = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._root: Path | None = None
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(16, 16, 16, 16)
+        outer.setSpacing(10)
+
+        outer.addWidget(_section("记忆与数据的位置"))
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("现在的文件夹："))
+        self.path_label = ElidedLabel()
+        self.path_label.setObjectName("dataRootPath")
+        row.addWidget(self.path_label, 1)
+        self.open_button = QPushButton("打开文件夹")
+        self.open_button.clicked.connect(self.open_folder_requested)
+        row.addWidget(self.open_button)
+        outer.addLayout(row)
+
+        #: 位置是**听谁的**。与上面那个路径一样重要：默认位置与你选的位置会给出同一个
+        #: 路径字符串，分不开的话用户就没法判断那两个按钮该不该灰。
+        self.source_label = QLabel()
+        self.source_label.setObjectName("dataRootSource")
+        self.source_label.setWordWrap(True)
+        outer.addWidget(self.source_label)
+
+        buttons = QHBoxLayout()
+        self.change_button = QPushButton("更改位置…")
+        self.change_button.setProperty("kind", "primary")
+        self.change_button.clicked.connect(self._on_change)
+        buttons.addWidget(self.change_button)
+        self.restore_button = QPushButton("恢复默认位置")
+        self.restore_button.clicked.connect(self.restore_default_requested)
+        buttons.addWidget(self.restore_button)
+        buttons.addStretch(1)
+        outer.addLayout(buttons)
+
+        outer.addWidget(
+            _hint(
+                "库、逐字稿、壁纸、提醒都在这个文件夹里。换文件夹会把现有的东西一起搬"
+                "过去，搬完要重启一次程序。"
+            )
+        )
+        outer.addWidget(
+            _hint("这个选择记在注册表里，与程序所在文件夹无关——重新下载一份新的，它还在。")
+        )
+        self.note_label = _hint("")
+        outer.addWidget(self.note_label)
+
+        outer.addStretch(1)
+        self.onboarding_button = QPushButton("重新打开新手引导")
+        self.onboarding_button.clicked.connect(self.onboarding_requested)
+        outer.addWidget(self.onboarding_button, 0, Qt.AlignmentFlag.AlignLeft)
+
+    def set_state(self, root: Path, source: str) -> None:
+        """**每次打开设置窗口都现读**（同 :meth:`SettingsDialog.set_graph_note`）。
+
+        真源在 ``paths`` 那边——这个进程实际在用哪个目录只有它说了算，而搬迁是跨重启
+        才生效的。把结果缓存进这一页，会出现"刚搬完还没重启，页面已经显示成新的了"。
+        """
+        self._root = root
+        self.path_label.setText(str(root))
+        self.path_label.setToolTip(str(root))
+        self.source_label.setText(data_root_description(source))
+        locked = source == "env"
+        self.change_button.setEnabled(not locked)
+        self.restore_button.setEnabled(not locked)
+
+    def set_note(self, text: str) -> None:
+        """搬迁那条链的反馈落在这里，不落进对话流（同人设页的 ``note``）。"""
+        self.note_label.setText(text)
+
+    def _on_change(self) -> None:
+        chosen = self._ask_for_directory()
+        if chosen:
+            self.change_location_requested.emit(chosen)
+
+    def _ask_for_directory(self) -> str:
+        """可覆盖的测试缝——弹真文件对话框的测试跑不了（同工具页那一处）。"""
+        start = "" if self._root is None else str(self._root)
+        return QFileDialog.getExistingDirectory(self, "挑一个放记忆的文件夹", start)
+
+
 class SettingsDialog(QDialog):
     """设置窗口本体。非模态——改一下就要看一眼主窗口，模态会把这件事变成
     "关窗 → 看效果 → 再开窗"。"""
@@ -1294,6 +1404,14 @@ class SettingsDialog(QDialog):
     consolidation_requested = Signal()
     persona_save_requested = Signal(str)
     persona_clear_requested = Signal()
+    #: 数据页那四根线。**它们全是"动作"而不是设置**，所以与外观/后端那几路分开：
+    #: 接这几根线的接收方做的是开文件夹、写搬迁标记、重启——不是"存一条设置"。
+    open_data_folder_requested = Signal()
+    change_data_location_requested = Signal(str)
+    restore_data_location_requested = Signal()
+    #: 「重新打开新手引导」。放在数据页而不是托盘菜单：这个程序没有菜单栏，而"记忆
+    #: 在哪"与"重看一遍引导"是同一类"配置这台机器"的动作，摆在一起最好找。
+    onboarding_requested = Signal()
 
     def __init__(
         self,
@@ -1338,7 +1456,7 @@ class SettingsDialog(QDialog):
         # 行距却只有 16 像素"的画面（一条蓝条压住左右邻居的字），而那种错看起来像字体坏了。
         # QSS 那份只留横向内边距（文字离左边框多远），纵向高度由这里的 sizeHint 说了算。
         item_height = self.categories.fontMetrics().height() + 2 * _CATEGORY_PAD_Y
-        for label in ("外观", "人设", "后端 / API", "工具", "记忆"):
+        for label in ("外观", "人设", "后端 / API", "工具", "记忆", "数据"):
             item = QListWidgetItem(label)
             item.setSizeHint(QSize(0, item_height))
             self.categories.addItem(item)
@@ -1350,11 +1468,13 @@ class SettingsDialog(QDialog):
         self.backend = BackendPage(self)
         self.tools = ToolPage(self)
         self.memory = MemoryPage(self)
+        self.data = DataPage(self)
         self.pages.addWidget(self.appearance)
         self.pages.addWidget(self.persona)
         self.pages.addWidget(self.backend)
         self.pages.addWidget(self.tools)
         self.pages.addWidget(self.memory)
+        self.pages.addWidget(self.data)
         body.addWidget(self.pages, 1)
         outer.addLayout(body, 1)
 
@@ -1395,6 +1515,10 @@ class SettingsDialog(QDialog):
         # 出来的，与后端页的「应用地址」同一形状。
         self.persona.save_requested.connect(self.persona_save_requested)
         self.persona.clear_requested.connect(self.persona_clear_requested)
+        self.data.open_folder_requested.connect(self.open_data_folder_requested)
+        self.data.change_location_requested.connect(self.change_data_location_requested)
+        self.data.restore_default_requested.connect(self.restore_data_location_requested)
+        self.data.onboarding_requested.connect(self.onboarding_requested)
 
         self.set_state(
             theme,
@@ -1464,6 +1588,17 @@ class SettingsDialog(QDialog):
 
     def set_persona_note(self, note: str) -> None:
         self.persona.set_note(note)
+
+    def set_data(self, root: Path, source: str) -> None:
+        """**打开窗口时现读，不进 :meth:`set_state`。** 与 :meth:`set_persona` 同一条
+        理由，只是真源又换了一个：外观与后端在 ``QSettings`` 里、人设在记忆库里，而
+        "现在用哪个数据目录"在 ``paths`` 里——它是**这个进程**的事实，不是一条设置
+        （搬迁要跨重启才生效，设置里那一格写的是"下次启动用哪个"）。
+        """
+        self.data.set_state(root, source)
+
+    def set_data_note(self, note: str) -> None:
+        self.data.set_note(note)
 
     # ── 撤销 ────────────────────────────────────────────────────────────────
 
