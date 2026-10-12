@@ -38,7 +38,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, QRect, Qt, QThread, QTimer, QUrl, Signal, Slot
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -150,6 +150,7 @@ from .onboarding import OnboardingWizard
 from .relaunch import restart_application
 from .reminder_scheduler import ReminderScheduler
 from .screen import grab as capture_screen
+from .screen import own_window_rects
 from .settings_dialog import SettingsDialog
 from .settings_store import (
     PROVIDER_OLLAMA,
@@ -2375,19 +2376,12 @@ class MainWindow(QMainWindow):
         取应用所在的那块屏（``self.screen()``）：多屏时"用户的注意力在哪"只有这个窗口
         知道，而主屏往往是另一边。
 
-        ``exclude`` 要**自己乘上缩放**：``frameGeometry()`` 是逻辑坐标，而 ``grabWindow``
-        给的是设备像素——不乘的话，在高 DPI 屏上涂掉的那一块会缩在左上角（而它看起来
-        只是"涂得小了一点"）。
+        **涂掉的是应用自己的每一个顶层窗口**，不只是主窗口——设置窗口、记忆窗口、
+        首启向导都是独立的顶层窗口，主窗口那一块盖不住它们（见
+        :func:`~axo.ui.screen.own_window_rects` 里那一段实测）。
         """
         screen = self.screen()
-        ratio = screen.devicePixelRatio() if screen is not None else 1.0
-        frame = self.frameGeometry()
-        exclude = QRect(
-            round(frame.x() * ratio),
-            round(frame.y() * ratio),
-            round(frame.width() * ratio),
-            round(frame.height() * ratio),
-        )
+        exclude = own_window_rects(screen, QApplication.topLevelWidgets())
         return capture_screen(screen, exclude=exclude)
 
     @Slot(str, str, str)

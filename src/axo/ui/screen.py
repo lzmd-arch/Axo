@@ -24,12 +24,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from PySide6.QtCore import QBuffer, QIODevice, QRect, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPixmap, QScreen
+from PySide6.QtWidgets import QWidget
 
 from ..agent.tools import Capture
 
-__all__ = ["MAX_WIDTH", "grab", "looks_blank", "mask_rect", "scale_down"]
+__all__ = ["MAX_WIDTH", "grab", "looks_blank", "mask_rect", "own_window_rects", "scale_down"]
 
 MAX_WIDTH = 1600
 """交出去的图最大多宽（长边）。见模块文档第 2 条。"""
@@ -52,18 +55,59 @@ _BLANK_SHARE = 0.98
 """采样点里这么大比例是黑的 → 判"整张几乎全黑"。不取 1.0：锁屏上常有一条时钟或提示。"""
 
 
+def own_window_rects(screen: QScreen | None, widgets: Iterable[QWidget]) -> list[QRect]:
+    """应用自己的那些**顶层窗口**在这块屏上的矩形，**设备像素**。
+
+    **要涂掉的是每一个窗口，不只是主窗口。** 设置窗口、记忆窗口、首启向导都是独立的
+    顶层窗口，主窗口那块矩形盖不住它们。2026-10-12 实测到这一条：用户开着设置窗口截了
+    一次屏，模型的描述里出现了"左边一列"——那正是设置窗口左边那条栏目。记忆窗口那一档
+    更严重：它整屏都是用户自己的记忆，而它会被原样发出去。
+
+    三条过滤，各自对着一种"涂错了"：
+
+    * **不可见的不要**（``isVisible()`` 为假）：隐藏的窗口在屏幕上没有像素，算进去只会
+      白涂一块——而那块可能是用户真的在看的别的东西。
+    * **不在同一块屏上的不要**：多屏时目标屏上根本没有它。不筛的话，副屏上的窗口矩形
+      会落到主屏的坐标系里，涂掉的是**另一块地方**。
+    * 逻辑坐标要**乘 ``devicePixelRatio``**：``grabWindow`` 给的是设备像素，不乘的话
+      高 DPI 上涂掉的那一块会缩在左上角（看起来只是"涂得小了一点"）。
+    """
+    ratio = screen.devicePixelRatio() if screen is not None else 1.0
+    rects: list[QRect] = []
+    for widget in widgets:
+        try:
+            if not widget.isVisible() or widget.screen() is not screen:
+                continue
+            frame = widget.frameGeometry()
+        except RuntimeError:
+            # 窗口在遍历途中被销毁了（PySide 的包装器会这样）。跳过——一次截屏不该
+            # 因为一个正在关闭的窗口而失败。
+            continue
+        rects.append(
+            QRect(
+                round(frame.x() * ratio),
+                round(frame.y() * ratio),
+                round(frame.width() * ratio),
+                round(frame.height() * ratio),
+            )
+        )
+    return rects
+
+
 def grab(
     screen: QScreen | None = None,
     *,
-    exclude: QRect | None = None,
+    exclude: QRect | Iterable[QRect] | None = None,
 ) -> Capture:
     """截一块屏幕，返回可以直接交给模型的 :class:`Capture`。
 
     Args:
         screen: 截哪一块屏；``None`` = 主屏。**多屏时由调用方给**（应用所在那块），
             因为"用户的注意力在哪块屏上"只有它知道。
-        exclude: **设备像素**坐标下要涂掉的一块（我们自己窗口的矩形）。调用方负责
-            把逻辑坐标乘上 ``devicePixelRatio``——那一处换算只有它知道窗口在哪。
+        exclude: **设备像素**坐标下要涂掉的矩形——我们自己每一个窗口各一块
+            （用 :func:`own_window_rects` 收）。给一块也可以（测试与单窗口的调用方）。
+            换算（逻辑 → 设备像素）在 :func:`own_window_rects` 里做，因为只有它
+            知道那些窗口在哪。
 
     失败一律是 :class:`Capture` 里的 ``reason``（一句人话），**不抛**：工具那一侧对
     这几种收场要做的是同一件事——如实告诉模型没看成。
@@ -76,8 +120,12 @@ def grab(
     if whole.isNull() or whole.width() == 0 or whole.height() == 0:
         return Capture(reason="这一次没有截到屏幕")
 
-    if exclude is not None and not exclude.isEmpty():
-        whole = mask_rect(whole, exclude)
+    # 一块或多块都收：``QRect`` 本身是可迭代的陷阱（它没有 ``__iter__``，所以这里
+    # 用 isinstance 判，而不是试着迭代它）。
+    patches = [exclude] if isinstance(exclude, QRect) else list(exclude or ())
+    for patch in patches:
+        if not patch.isEmpty():
+            whole = mask_rect(whole, patch)
 
     sized = scale_down(whole)
     if looks_blank(sized):

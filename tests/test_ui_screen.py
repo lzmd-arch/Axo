@@ -22,7 +22,7 @@ import pytest
 from PySide6.QtCore import QRect
 from PySide6.QtGui import QColor, QGuiApplication, QPixmap
 
-from axo.ui.screen import MAX_WIDTH, grab, looks_blank, mask_rect, scale_down
+from axo.ui.screen import MAX_WIDTH, grab, looks_blank, mask_rect, own_window_rects, scale_down
 
 pytestmark = pytest.mark.gui
 
@@ -159,3 +159,102 @@ def test_the_offscreen_screen_is_reported_as_black_not_as_a_success(qapp: Any) -
 
     assert shot.ok is False
     assert "黑的" in shot.reason
+
+
+# ── 涂掉的是**每一个**窗口，不只是主窗口 ────────────────────────────────────
+#
+# 2026-10-12 实测到的缺陷：用户开着设置窗口截了一次屏，模型的描述里出现了"左边一列"
+# ——那正是设置窗口左边那条栏目。设置窗口与记忆窗口都是**独立的顶层窗口**，主窗口那一块
+# 矩形盖不住它们；而记忆窗口整屏都是用户自己的记忆。
+
+
+class _FakeScreen:
+    def __init__(self, ratio: float) -> None:
+        self._ratio = ratio
+
+    def devicePixelRatio(self) -> float:  # noqa: N802
+        return self._ratio
+
+
+class _FakeWindow:
+    def __init__(
+        self, screen: Any, rect: QRect, *, visible: bool = True, dead: bool = False
+    ) -> None:
+        self._screen = screen
+        self._rect = rect
+        self._visible = visible
+        self._dead = dead
+
+    def isVisible(self) -> bool:  # noqa: N802
+        if self._dead:
+            raise RuntimeError("Internal C++ object already deleted.")
+        return self._visible
+
+    def screen(self) -> Any:
+        return self._screen
+
+    def frameGeometry(self) -> QRect:  # noqa: N802
+        return self._rect
+
+
+def test_every_visible_window_of_ours_is_masked(qapp: Any) -> None:
+    """主窗口 + 设置窗口 + 记忆窗口**各涂一块**。
+
+    只涂一块的话，旁边开着的设置窗口会原样进图——而它左边那条栏目、以及记忆窗口里
+    用户自己的记忆，都会跟着发出去。
+    """
+    screen = _FakeScreen(1.0)
+    rects = own_window_rects(
+        screen,
+        [
+            _FakeWindow(screen, QRect(0, 0, 800, 600)),
+            _FakeWindow(screen, QRect(850, 40, 500, 400)),
+        ],
+    )
+
+    assert rects == [QRect(0, 0, 800, 600), QRect(850, 40, 500, 400)]
+
+
+def test_hidden_and_foreign_windows_are_not_masked(qapp: Any) -> None:
+    """隐藏的、以及**不在同一块屏**上的窗口都不涂。
+
+    前者在屏幕上没有像素，涂它只会白涂一块（而那块可能是用户真在看的东西）；后者在
+    这块屏上根本不存在，算进去会把副屏的坐标当成主屏的坐标，涂掉**另一块地方**。
+    """
+    here, there = _FakeScreen(1.0), _FakeScreen(1.0)
+    rects = own_window_rects(
+        here,
+        [
+            _FakeWindow(here, QRect(0, 0, 10, 10), visible=False),
+            _FakeWindow(there, QRect(0, 0, 10, 10)),
+        ],
+    )
+
+    assert rects == []
+
+
+def test_the_scale_is_applied(qapp: Any) -> None:
+    """逻辑坐标 → 设备像素：**乘 ``devicePixelRatio``**。
+
+    不乘的话，高 DPI 屏上涂掉的那一块会缩在左上角，而它看起来只是"涂得小了一点"。
+    """
+    screen = _FakeScreen(1.5)
+
+    rects = own_window_rects(screen, [_FakeWindow(screen, QRect(10, 20, 100, 200))])
+
+    assert rects == [QRect(15, 30, 150, 300)]
+
+
+def test_a_window_that_dies_mid_scan_is_skipped(qapp: Any) -> None:
+    """遍历途中被销毁的窗口跳过，**不让一次截屏失败**（PySide 的包装器会这样）。"""
+    screen = _FakeScreen(1.0)
+
+    rects = own_window_rects(
+        screen,
+        [
+            _FakeWindow(screen, QRect(0, 0, 10, 10), dead=True),
+            _FakeWindow(screen, QRect(1, 1, 2, 2)),
+        ],
+    )
+
+    assert rects == [QRect(1, 1, 2, 2)]
