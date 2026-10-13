@@ -423,6 +423,8 @@ class OpenAICompatChatBackend:
     #: （见 :attr:`~axo.llm.base.ChatMessage.images`）。``agent/loop.py`` 按这个属性
     #: 决定截图是贴着工具结果那一行，还是另起一条。
     images_ride_on = "user"
+    #: 原声也只挂 **user** 行（input_audio 分片）——同一个协议的另一半。
+    audio_ride_on = "user"
 
     """云端 OpenAI 兼容端点上的一个对话模型。
 

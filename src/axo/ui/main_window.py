@@ -32,6 +32,7 @@
 
 from __future__ import annotations
 
+import base64
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
@@ -659,6 +660,7 @@ class MainWindow(QMainWindow):
         #: 跨装配存活（``_on_submit`` → 装配线程 → 回复线程是一整轮异步），所以放在这里
         #: 而不是栈上传参；每个真正发出去的 ``_on_submit`` 重写它，早退分支不残留。
         self._spoken_reply = False
+        self._pending_audio = b""
 
         #: 周期巩固的表。**与上面那个并存、不打架**：两个独立 ``QTimer``、两个不同的
         #: 槽、没有共享可变状态（见 ``ui/consolidation_scheduler.py`` 的模块文档）。
@@ -1541,7 +1543,7 @@ class MainWindow(QMainWindow):
         """
         return route_turn(text, self._router_state)
 
-    def _on_submit(self, text: str, *, spoken: bool = False) -> None:
+    def _on_submit(self, text: str, *, spoken: bool = False, audio: bytes = "") -> None:
         # **用户开口 = 她让路。** 这一句排在下面 ``_streaming`` 那一支**之前**：
         # 生成中再提交会被忽略，但"她正在说"与生成是两件事——她说话**不锁输入框**
         # （那正是这一条链的立论），所以用户完全可能在她说到一半时开口。
@@ -1614,6 +1616,7 @@ class MainWindow(QMainWindow):
         # **只在"这一轮真的要发出去"时落**：help/裸切换那些早退分支在上面就 return 了，
         # 不会把"说出来的"留到下一轮（下一轮进这里照样重写）。
         self._spoken_reply = spoken
+        self._pending_audio = audio
         self._streaming = True
         self._preparing = True
         self._cancel_requested = False
@@ -1688,7 +1691,18 @@ class MainWindow(QMainWindow):
         # 歧义那一轮的语域也是 ``CHAT``，但那不是"用户想闲聊"，而是"没判准，什么都
         # 不该动"——两条路的语域相同、结论相同（都不给工具），所以这里用哪个都不改变
         # 行为，但用路由给的结论意味着**将来改那条规则只需要改一处**。
-        if self._turn_uses_tools:
+        # **原声贴到本轮 user 行**（听得见才贴；发完即清）。贴在这里一处，
+        # agent 路与 ChatWorker 路拿到的是同一份装配。
+        assembly, hears_audio = self._attach_pending_audio(assembly)
+        if self._turn_uses_tools and hears_audio:
+            # **捎上原声的这一轮只听、不调工具**。三个理由（见 docs/agent.md）：
+            # 音频模型多半不实现工具调用；对着说话的形态是对话不是任务；
+            # 可退化可解释——想用工具就打字说。
+            self.chat_view.append_message(
+                "system",
+                "这一轮只听、不调工具（原声直接给了模型）；要用工具就打字说。",
+            )
+        elif self._turn_uses_tools:
             registry = self._tools()
             if len(registry):
                 self._explain_the_missing_screen_tool()
@@ -1757,6 +1771,57 @@ class MainWindow(QMainWindow):
         if not name:
             return False
         return "vision" in self._model_caps.get(str(name), ())
+
+    def _model_can_hear(self) -> bool:
+        """当前模型听不听得见**原声**。**本机 Ollama 恒为假；云端问用户。**
+
+        与 :meth:`_model_can_see` 同族、同姿态，但分野不同：
+
+        * **本机 Ollama：恒为假**——不是「问不到」而是**协议收不了**（官方 ChatMessage
+          只有 ``images``、无 ``audio``，2026-10-13 实测入档）。用户勾了也没用，
+          那时说一句原因（见 :meth:`_attach_pending_audio`）。
+        * **OpenAI 兼容端点：问用户**（``ToolSettings.audio_in``）：``/models`` 不报
+          能力，与 ``cloud_vision`` 同一困境。**不按模型名猜**——猜错的方向是「用户的
+          声音被模型当成一段杂音」，而那个失败看起来像识别不准。
+
+        勾上 = 语音那一轮**原声直进**（连转写文字一起）；不勾 = 只发转写文字（默认路，
+        永远可用）。听得见与否**不影响她回不回出声**（那是另一格）。
+        """
+        if not self._backend_settings.is_cloud:
+            return False
+        return self._tool_settings.audio_in
+
+    def _attach_pending_audio(self, assembly: Assembly) -> tuple[Assembly, bool]:
+        """把本轮原声贴到那条 user 行上；返回 ``(贴好后的装配, 有没有贴上)``。
+
+        **发完即清**：``_pending_audio`` 只活在这一轮（与截图同姿态——音频不落逐字稿）。
+
+        两条「不贴」各有各的话说：**没勾「听得见」** → 静默只发转写文字（设计好的
+        默认路）；**勾了但这一路收不了** → **说一句原因**：刚做完一个声明就被静默降级，
+        界面上必须留下为什么（同「工具没出现要解释」那条纪律）。
+        """
+        audio, self._pending_audio = self._pending_audio, b""
+        if not audio:
+            return assembly, False
+        if self._model_can_hear() and getattr(self._backend, "audio_ride_on", None) == "user":
+            encoded = base64.b64encode(audio).decode("ascii")
+            messages = list(assembly.messages)
+            for index in range(len(messages) - 1, -1, -1):
+                if messages[index].role == "user":
+                    messages[index] = replace(messages[index], audio=(encoded,))
+                    break
+            return replace(assembly, messages=tuple(messages)), True
+        if self._tool_settings.audio_in:
+            where = (
+                "本机 Ollama 的接口收不了音频（只有 images 字段，实测）"
+                if not self._backend_settings.is_cloud
+                else "这个端点没声明收原声"
+            )
+            self.chat_view.append_message(
+                "system",
+                "**原声没有发出去**（这一轮发的是转写文字）。\n\n" + where + "。",
+            )
+        return assembly, False
 
     def _explain_the_missing_screen_tool(self) -> None:
         """这一句要看屏幕，而这一轮的工具表里没有那个工具 —— **把为什么说出来**。
@@ -1978,7 +2043,7 @@ class MainWindow(QMainWindow):
         if result.ok:
             # **spoken=True** 是语音这条路与打字唯一的差别：它决定她回不回出声
             # （见 :meth:`_on_reply_finished``），其余（逐字稿/记忆/路由/闸门）完全同一条路。
-            self._on_submit(result.text, spoken=True)
+            self._on_submit(result.text, spoken=True, audio=result.audio)
             return
         # 失败要说出来（同 `_remember` 那条纪律）：不说的话，用户对着屏幕说了半天、
         # 界面回到空闲、而没有任何一处提到那句话去哪了。

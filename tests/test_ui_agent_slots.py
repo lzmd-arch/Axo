@@ -376,9 +376,10 @@ class VoiceStub(Stub):
         self.submitted: list[str] = []
         self.last_spoken = False
 
-    def _on_submit(self, text: str, *, spoken: bool = False) -> None:
+    def _on_submit(self, text: str, *, spoken: bool = False, audio: bytes = "") -> None:
         self.submitted.append(text)
         self.last_spoken = spoken
+        self.last_audio = audio
 
 
 def statuses(stub: Stub) -> list[str]:

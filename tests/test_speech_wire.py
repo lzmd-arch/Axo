@@ -92,3 +92,10 @@ def test_yielding_stops_playdown_before_any_early_return(tree: ast.Module) -> No
         f"停播在第一个裸 return 之后（stop 在 {player_stops}，return 在 {returns}）——"
         "纯播放的打断会被 early-return 吞掉"
     )
+
+
+def test_the_assembly_line_attaches_the_recording(tree: ast.Module) -> None:
+    """`_on_assembly_ready` 真的调了 `_attach_pending_audio`——贴音频是接线，不是纯层。"""
+    assert _calls(_method(tree, "_on_assembly_ready"), "_attach_pending_audio"), (
+        "_on_assembly_ready 没贴原声——勾了「听得见」也是发文字"
+    )
