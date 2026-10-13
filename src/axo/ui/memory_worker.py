@@ -225,8 +225,10 @@ class AssemblyWorker(QObject):
         # 了。装不下由装配器按优先级丢，账本两处各说各的实话：召回说"选出 N 条"，
         # 装配说"发出去 M 条、K 条没装下"。
         #
-        # 排除本会话写下的记忆：它们的正文此刻就在逐字稿里，再注入一遍等于让模型
-        # 同时看到"你刚才说的话"和"一条提醒你刚才说过那句话的记忆"。
+        # **不排除本会话写下的记忆。** 以前这里按会话 id 把它们排掉，
+        # 于是老会话看不到自己最近写的那批——那正是「新老会话之间能够调用到的记忆有
+        # 很明显的差距」的两个真凶之一。重复的代价由视图层的临时归并吸收（刚说出口的
+        # 碎条目会被并成一条），完整性优先。
         ledger: RecallLedger | None = None
         injected: list[MemoryInjection] = []
         try:
@@ -237,9 +239,6 @@ class AssemblyWorker(QObject):
                 query_vector=query_vector,
                 space_id="" if self._embedding is None else (self._embedding.space_id or ""),
                 config=self._config,
-                exclude_ids=self._store.ids_for_session(self._session_id)
-                if self._session_id
-                else (),
                 graph=self._graph,
             )
             injected = [

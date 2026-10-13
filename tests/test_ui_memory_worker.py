@@ -429,3 +429,16 @@ def test_a_write_failure_still_hands_back_the_graph(
 
     assert len(graph) == 1, "算了半天的图不许因为写不进去就丢掉"
     assert "没能写盘" in note and "重启后会再建" in note
+
+
+def test_the_assembly_worker_never_excludes_the_current_session() -> None:
+    """**接线守卫**：装配这一路不再排除本会话写下的记忆。
+
+    纯层全绿不等于接线在——这条守的是"谁调它"。排除一旦接回来，症状是老会话看
+    不到自己最近写的那批，而那正是「新老会话记忆可达范围差很远」的真凶之一。
+    """
+    import importlib
+
+    module = importlib.import_module("axo.ui.memory_worker")
+    source = Path(module.__file__).read_text(encoding="utf-8")
+    assert "ids_for_session" not in source, "排除本会话的那条又接回来了"

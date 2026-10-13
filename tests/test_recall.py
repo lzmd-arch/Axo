@@ -608,3 +608,37 @@ def test_without_a_time_phrase_there_is_no_temporal_channel(store: MemoryStore) 
 
     assert "temporal" not in ledger.channels
     assert all(item.scores.temporal == 0.0 for item in ledger.injected)
+
+
+def test_every_candidate_that_fits_gets_in_by_default(store: MemoryStore) -> None:
+    """默认**不限条数**——「能回想起的记忆少」就死在那个 8 上。"""
+    for index in range(12):
+        add(store, f"盐度探头第 {index} 次标定是在不一样的日子做的。")
+
+    ledger = recall(
+        store,
+        query_text="盐度探头 标定",
+        budget_tokens=100_000,
+        # 关掉去冗：这 12 条同构句词面重合 0.85，会被判重复。这条测的是**条数上限**
+        # 不是去冗——去冗有自己的测试（test_near_duplicates_are_deduplicated）。
+        config=RecallConfig(min_score=0.0, redundancy_threshold=1.0),
+    )
+
+    assert len(ledger.injected) == 12, f"只进了 {len(ledger.injected)} 条"
+    assert not [r for r in ledger.rejected if r.reason is RejectReason.MAX_ITEMS]
+
+
+def test_an_explicit_cap_still_works_for_the_browser_probe(store: MemoryStore) -> None:
+    """显式给一个数仍然有效——那是浏览页的大小，不是上下文额度。"""
+    for index in range(6):
+        add(store, f"盐度探头第 {index} 次标定是在不一样的日子做的。")
+
+    ledger = recall(
+        store,
+        query_text="盐度探头 标定",
+        budget_tokens=100_000,
+        config=RecallConfig(min_score=0.0, max_items=2, redundancy_threshold=1.0),
+    )
+
+    assert len(ledger.injected) <= 2
+    assert [r for r in ledger.rejected if r.reason is RejectReason.MAX_ITEMS]

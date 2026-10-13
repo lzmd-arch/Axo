@@ -167,9 +167,15 @@ class RecallConfig:
     mmr_lambda: float = 0.75
     """MMR 的相关性/多样性权衡。1.0 = 完全按得分排，0.0 = 只挑最不一样的。"""
 
-    max_items: int = 8
-    """本轮最多注入几条。注入越多，越可能挤掉逐字稿——而逐字稿是用户刚刚说过
-    的话，优先级高于"很久以前也许相关"的一条记忆。"""
+    max_items: int | None = None
+    """本轮最多注入几条。**默认 ``None`` = 不限条数。**
+
+    以前默认是 8，那是自设的额度：用户要的是「无论哪一个对话都要能够使用完整的
+    记忆」，而"一次最多 8 条"正是"能回想起的记忆少"的直接原因之一。现在条数只受
+    剩余额度约束（窗口装不下才丢），丢谁由得分决定、账本如实说。
+
+    显式给一个数仍然有效——记忆浏览器的探针给 20，那是**浏览页的大小**，不是上下
+    文额度（``memory/browse.py`` 的 ``PROBE_CONFIG``）。"""
 
     candidate_limit: int = 200
     """进入 MMR 的候选上限（按融合得分取前 N）。
@@ -690,7 +696,8 @@ def _select(
     rejected: list[RejectedCandidate] = []
     used = 0
 
-    while pool and len(selected) < settings.max_items:
+    # ``max_items`` 为 None 时只受额度约束——见它自己的注释。
+    while pool and (settings.max_items is None or len(selected) < settings.max_items):
         index = _best_mmr(pool, selected, settings.mmr_lambda)
         candidate = pool.pop(index)
 
@@ -721,6 +728,8 @@ def _select(
         used += candidate.tokens
 
     if pool:
+        # 只有**条数上限**才会剩下没被看过的一堆；不限条数时每条都被看过、都被
+        # 记过一次拒绝原因（重复 / 装不下 / 分数不够），不该再挂一个 MAX_ITEMS。
         rejected.extend(
             _reject(candidate.item, RejectReason.MAX_ITEMS, candidate.scores.fused)
             for candidate in pool

@@ -20,6 +20,7 @@ CI 每次提交都跑一遍，它要是读了 ``AXO_DATA`` 指向的真库，就
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 
 import numpy as np
 
@@ -34,6 +35,10 @@ from memcore.types import MemoryItem, MemoryKind, Tier
 
 from .goldset import CREATED_AT, GoldMemory, GoldSet
 from .metrics import QueryOutcome
+
+#: 基准的条数上限。取 8 是**沿用旧默认值**——不是重新标定：这样冻结过的基线
+#: （``baseline_lexical.json``）与新一轮量到的是同一个口径，差值才可比。
+BENCH_MAX_ITEMS = 8
 
 __all__ = [
     "build_store",
@@ -252,7 +257,18 @@ def run(
     若每次都给建，扫四档就是建四张一模一样的图。所以工具那边先建一张传进来；
     这里的兜底只服务于"单跑一次、没准备图"的调用方。
     """
-    settings = config or RecallConfig()
+    base = config or RecallConfig()
+    # **基准一定带条数上限**，哪怕受测配置没给（生产默认是 None = 注入全部）。
+    #
+    # 理由是量具口径与产品口径本来就不同：基准量的是"挑得准不准"，那要有槽位才谈
+    # 得上排序质量；而 ``false_injection_rate`` 的口径在槽位填满时会饱和（见它自己的
+    # docstring——"主要响应注入了多少条，而不是排得准不准"），不给上限就退化成
+    # "库里有多少条不是金标准"，那是语料的性质、不是召回的性质，而且它会撞上
+    # ``SANITY_CEILING``（0.9）那道防假基线的门。
+    #
+    # 生产注入全部是**产品口径**：用户要「无论哪一个对话都要能够使用完整的记忆」。
+    # 排序质量在生产里仍然有用——窗口真满时按得分从低到高丢，谁排在前面就是谁活下来。
+    settings = base if base.max_items is not None else replace(base, max_items=BENCH_MAX_ITEMS)
     if store is None:
         store = build_store(goldset.memories, embedder=embedder)
     if graph is None and settings.graph_weight > 0.0:
