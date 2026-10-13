@@ -1645,6 +1645,7 @@ class MainWindow(QMainWindow):
                 tools_declared=self._turn_uses_tools,
                 needs_clarification=self._turn_needs_clarification,
                 speech_receipt=self._take_speech_receipt(),
+                will_speak=bool(spoken and self._voice_settings.enabled),
             ),
             embedding=self._embedding,
             session_id=self._session.session_id,

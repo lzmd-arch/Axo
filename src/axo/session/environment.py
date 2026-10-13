@@ -42,6 +42,7 @@ def build_environment(
     tools_declared: bool = True,
     needs_clarification: bool = False,
     speech_receipt: str = "",
+    will_speak: bool = False,
 ) -> str:
     """拼 L1 的正文。
 
@@ -77,11 +78,21 @@ def build_environment(
     if model_id:
         lines.append(f"你此刻由 {model_id} 驱动；记忆不属于你，属于这台机器。")
     if needs_clarification:
-        lines.append("这一句是闲聊还是要做一件具体的事，没判准。")
+        lines.append(
+            "这一句是闲聊还是要做一件具体的事，没判准。**先反问一句确认；别直接说做不到**——"
+            "这一轮没有工具只是暂时的：用户说清楚（或确认）之后，那一轮就有工具了。"
+        )
     if not tools_declared:
         # 一句**事件**，不是一句"我做不到"。也**不列清单**——清单会被原样背成
         # 能力免责声明，两件事的现场都在模块文档里。
         lines.append("这一轮没有工具可用，也不会有任何动作被执行。")
+    if will_speak:
+        # **这一轮她的回答会出声**——她要知道自己是"说出来"的还是"只给字"的。
+        # 不说的话她会在打字那轮问「听到了吗」（2026-10-14 实测：用户打字提问，她
+        # 答完追问了一句「这句听到了吗」，而那一轮压根不出声）。
+        lines.append("注意：**你这一轮的话会被念出声**（语音对话中）。")
+    else:
+        lines.append("注意：你这一轮的话**只出文字，不出声**。")
     if speech_receipt:
         # 播出回执（``tts.SpeechReceipt.describe`` 的产物）。**用完即清**（调用方
         # 拿走即抹）：这是一条关于「刚说的那句出没出声」的信号，不是常驻状态。

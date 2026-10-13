@@ -19,7 +19,9 @@ from axo.session.environment import build_environment
 
 def test_time_line_reads_as_chinese_and_states_the_weekday() -> None:
     text = build_environment(now=datetime(2026, 10, 10, 15, 4))
-    assert text == "当前时间：2026-10-10 星期六 15:04。"
+    # **钉第一行**：这一条测的是时间行的措辞；环境槽其余的行各有自己的测试
+    # （出不出声那一行、回执行……），整串全等会把它们的变化混进这条的失败里。
+    assert text.splitlines()[0] == "当前时间：2026-10-10 星期六 15:04。"
 
 
 @pytest.mark.parametrize(
@@ -45,9 +47,10 @@ def test_the_model_id_is_how_it_knows_who_is_reading() -> None:
     """同一个记忆库会被不同的模型读到，上下文里要说得出**此刻是谁**。"""
     text = build_environment(model_id="ollama/qwen3-4b", now=datetime(2026, 10, 10, 15, 4))
     lines = text.splitlines()
-    assert len(lines) == 2
+    assert len(lines) == 3
     assert "ollama/qwen3-4b" in lines[1]
     assert "记忆不属于你" in lines[1]
+    assert "只出文字" in lines[2], "出不出声那行也该在（默认不出声）"
 
 
 def test_without_a_model_id_only_the_time_is_said() -> None:
@@ -57,11 +60,14 @@ def test_without_a_model_id_only_the_time_is_said() -> None:
     把注意力花在一个没有信息量的句子上。
     """
     text = build_environment(model_id="", now=datetime(2026, 10, 10, 15, 4))
-    assert text.splitlines() == ["当前时间：2026-10-10 星期六 15:04。"]
+    assert text.splitlines() == [
+        "当前时间：2026-10-10 星期六 15:04。",
+        "注意：你这一轮的话**只出文字，不出声**。",
+    ]
 
 
 def test_arguments_are_keyword_only() -> None:
-    """四个参数都是关键字参数，因为其中两个是字符串——位置调用会把它们悄悄调换。"""
+    """**全部都是关键字参数**——位置调用会把几个字符串悄悄调换，而那不会报错。"""
     with pytest.raises(TypeError):
         build_environment("ollama/qwen3-4b")  # type: ignore[misc]
 
@@ -138,3 +144,28 @@ def test_the_speech_receipt_is_a_fresh_line_each_turn() -> None:
 
     assert "播出回执（23:41）" in with_receipt
     assert "播出回执" not in without
+
+
+def test_the_clarify_line_says_ask_back_not_cannot() -> None:
+    """歧义那一轮，环境要说的是**反问**而不是「做不到」。
+
+    2026-10-14 真机事故：用户说「两分钟后测试语音提醒」（判歧义，这一轮没工具），
+    模型答「我没有定时能力」——一句**伤信任的假结论**（App 明明有 set_reminder）。
+    设计上的收场是反问确认；这条钉住那句指令真在环境里。
+    """
+    text = build_environment(needs_clarification=True)
+
+    assert "反问" in text
+    assert "别直接说做不到" in text
+    assert "没有工具只是暂时的" in text
+
+
+def test_she_knows_whether_this_turn_will_be_spoken() -> None:
+    """**这一轮的话出不出声，她要提前知道**——否则她会在打字那轮问「听到了吗」
+    （2026-10-14 实测就是这么发生的：那一轮压根不出声）。"""
+    speaking = build_environment(will_speak=True)
+    typing = build_environment(will_speak=False)
+
+    assert "会被念出声" in speaking
+    assert "只出文字" in typing
+    assert "念出声" not in typing

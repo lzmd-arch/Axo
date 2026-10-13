@@ -3,27 +3,27 @@
   "corpus": {
     "schema_version": 1,
     "utterances": {
-      "count": 131,
-      "sha256": "f82d346be805ce70ff1f2680cd90562aec2509136bda2131868246b6549d770d"
+      "count": 133,
+      "sha256": "015865f9f986f65c590839bcfa88a9322d36ab513a27ccc99f0a3cfc4aae480a"
     }
   },
   "model": "",
   "model_layer": {},
   "metrics": {
-    "n": 131.0,
-    "coverage": 0.8473282442748091,
+    "n": 133.0,
+    "coverage": 0.8345864661654135,
     "accuracy": 0.9819819819819819,
-    "accuracy_all": 0.9770992366412213,
+    "accuracy_all": 0.9774436090225563,
     "task_recall": 1.0,
     "task_precision": 0.9649122807017544,
     "chat_recall": 0.9642857142857143,
     "chat_precision": 1.0,
-    "ambiguous_rate": 0.15267175572519084,
-    "majority_baseline": 0.5725190839694656
+    "ambiguous_rate": 0.16541353383458646,
+    "majority_baseline": 0.5789473684210527
   },
   "per_category": {
     "ambiguous": {
-      "n": 13.0,
+      "n": 15.0,
       "coverage": 0.0,
       "accuracy": null,
       "ambiguous_rate": 1.0
@@ -129,6 +129,6 @@
     "task_recall": 0.02,
     "chat_recall": 0.02
   },
-  "frozen_at": "2026-10-12T14:48:19Z",
+  "frozen_at": "2026-10-13T19:00:23Z",
   "note": "这是**实测值，不是目标值**（先跑后填）。门槛 = 本文件的值 ± tolerance，方向见 axo.bench.routeeval.GATED（四项都是越大越好），容差的含义见那里的 DEFAULT_TOLERANCE（这份测量是确定性的，容差不是噪声，是「允许几条翻转而不惊动人」）。改语料要同时改 freeze.json 并重跑 --freeze。**门槛只绑规则层**：模型层要 Ollama，把门槛绑上去等于让装没装模型决定提交能不能过。"
 }
