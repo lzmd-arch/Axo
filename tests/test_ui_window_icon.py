@@ -65,7 +65,7 @@ def test_the_icon_reaches_the_window_and_the_application(qapp: Any) -> None:
 
 
 def test_the_window_icon_comes_from_the_brand_asset(
-    qapp: Any, monkeypatch: pytest.MonkeyPatch
+    qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """装上去的是**阿螈立绘**（2026-10-13 用户给的）——图标是产品的脸，不跟主色走了。
 
@@ -75,7 +75,7 @@ def test_the_window_icon_comes_from_the_brand_asset(
 
     art = QPixmap(64, 64)
     art.fill("#ff00ff")
-    art_path = Path(tray_module._ASSET).with_name("tmp-art.png")
+    art_path = tmp_path / "tmp-art.png"
     art.save(str(art_path))
     monkeypatch.setattr(tray_module, "_ASSET", art_path)
 
@@ -88,7 +88,7 @@ def test_the_window_icon_comes_from_the_brand_asset(
 
 
 def test_a_missing_asset_still_gives_a_window_icon(
-    qapp: Any, monkeypatch: pytest.MonkeyPatch
+    qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """资产缺了/坏了也得有个图标——**绝不抛**（这条的抛点在 ``MainWindow.__init``，
     那是启动路径：一个图标不该让程序打不开）。兜底是画笔画的中性灰记号。"""

@@ -78,7 +78,7 @@ def test_the_icon_is_drawn_not_null(qapp: Any) -> None:
 
 
 def test_a_missing_asset_still_gives_a_usable_icon(
-    qapp: Any, monkeypatch: pytest.MonkeyPatch
+    qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """**资产读不到时退回画笔记号，绝不抛**（图标是固定的品牌立绘了，但坏图/缺文件
     仍可能——测试把它指到不存在的路径来走这条路）。
@@ -91,14 +91,14 @@ def test_a_missing_asset_still_gives_a_usable_icon(
 
 
 def test_the_icon_comes_from_the_asset_not_from_a_procedural_mark(
-    qapp: Any, monkeypatch: pytest.MonkeyPatch
+    qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """图标**读的就是资产那张图**——2026-10-13 用户给了阿螈立绘，图标是产品的脸、
     不跟主题主色走了。判据是决定性的：**换成一张纯色小图，图标中心就该是那个颜色**
     （整幅像素比对会踩图标容器补边的坑）。"""
     art = QPixmap(64, 64)
     art.fill("#ff00ff")
-    art_path = Path(tray_module._ASSET).with_name("tmp-art.png")
+    art_path = tmp_path / "tmp-art.png"
     art.save(str(art_path))
     monkeypatch.setattr(tray_module, "_ASSET", art_path)
 
