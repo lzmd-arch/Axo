@@ -1644,6 +1644,7 @@ class MainWindow(QMainWindow):
                 model_id=self._backend.model_id,
                 tools_declared=self._turn_uses_tools,
                 needs_clarification=self._turn_needs_clarification,
+                speech_receipt=self._take_speech_receipt(),
             ),
             embedding=self._embedding,
             session_id=self._session.session_id,
@@ -1653,7 +1654,6 @@ class MainWindow(QMainWindow):
             # 账本里那句 note 说出来，不静默。
             recall_config=self._recall_config(),
             graph=self._graph,
-            speech_receipt=self._take_speech_receipt(),
         )
         worker.ready.connect(self._on_assembly_ready)
         worker.failed.connect(self._on_prepare_failed)

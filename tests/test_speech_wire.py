@@ -99,3 +99,50 @@ def test_the_assembly_line_attaches_the_recording(tree: ast.Module) -> None:
     assert _calls(_method(tree, "_on_assembly_ready"), "_attach_pending_audio"), (
         "_on_assembly_ready 没贴原声——勾了「听得见」也是发文字"
     )
+
+
+def test_constructor_kwargs_actually_exist_on_their_callee() -> None:
+    """`_on_submit` 里两个构造调用的**关键字必须是对方签名里真有的**。
+
+    2026-10-13 的线上事故就是它抓的那类：`speech_receipt=` 被塞进了 `AssemblyWorker(...)`
+    的构造里（它没这个参数）→ `TypeError` 抛在 `_on_submit` 里 → **PySide6 吞掉槽里的
+    异常** → 用户那句已落盘、状态永远停在「正在检索记忆」，无报错、无日志。这次是靠
+    逐字稿里"user 行落了、后面什么都没有"才定位到的。泛化成判据：两个调用点的关键字
+    都不许超对方签名。
+    """
+    import ast as _ast
+
+    source = SOURCE.read_text(encoding="utf-8")
+    tree = _ast.parse(source)
+
+    # 对方签名
+    def params_of(path: Path, name: str) -> set[str]:
+        tree2 = _ast.parse(path.read_text(encoding="utf-8"))
+        for node in _ast.walk(tree2):
+            if isinstance(node, _ast.ClassDef) and node.name == name:
+                for item in node.body:
+                    if isinstance(item, _ast.FunctionDef) and item.name == "__init__":
+                        return {a.arg for a in item.args.args + item.args.kwonlyargs}
+            if isinstance(node, _ast.FunctionDef) and node.name == name:
+                return {a.arg for a in node.args.args + node.args.kwonlyargs}
+        raise AssertionError(f"{path.name} 里找不到 {name}")
+
+    root = Path(__file__).resolve().parents[1]  # 仓根
+    worker_params = params_of(root / "src/axo/ui/memory_worker.py", "AssemblyWorker")
+    env_params = params_of(root / "src/axo/session/environment.py", "build_environment")
+
+    problems: list[str] = []
+    for node in _ast.walk(tree):
+        if not isinstance(node, _ast.Call):
+            continue
+        name = node.func.id if isinstance(node.func, _ast.Name) else ""
+        if name == "AssemblyWorker":
+            bad = [kw.arg for kw in node.keywords if kw.arg and kw.arg not in worker_params]
+            if bad:
+                problems.append(f"AssemblyWorker 的构造调用里有签名没有的关键字：{bad}")
+        if name == "build_environment":
+            bad = [kw.arg for kw in node.keywords if kw.arg and kw.arg not in env_params]
+            if bad:
+                problems.append(f"build_environment 的调用里有签名没有的关键字：{bad}")
+
+    assert problems == [], "；".join(problems)
