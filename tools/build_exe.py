@@ -525,6 +525,12 @@ def _check_layout(name: str) -> list[str]:
         path = internal / relative
         if not path.is_file():
             problems.append(f"镜像里少了资产：{path.relative_to(_ROOT).as_posix()}")
+            continue
+        # **存在还不够，逐字节要等同**（2026-10-14：用户问「任务栏图标还是旧的」，
+        # 而"镜像里有"这条只证存在性——图标要是被旧版本的文件顶了，它照常绿）。
+        source = _ROOT / "src" / relative
+        if source.is_file() and path.read_bytes() != source.read_bytes():
+            problems.append(f"镜像里的资产与源文件不一样：{relative}（可能是旧构建残留顶了新的）")
     for relative in _QT_REQUIRED:
         path = internal / relative
         if not path.exists():
