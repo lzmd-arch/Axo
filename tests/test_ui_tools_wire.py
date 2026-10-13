@@ -62,6 +62,7 @@ def _window(**fields: object) -> SimpleNamespace:
         # 悄悄测成云端那一支。
         "_backend_settings": BackendSettings(),
         "_cloud_vision": False,
+        "_audio_in": False,
     }
     base.update(fields)
     window = SimpleNamespace(**base)

@@ -49,6 +49,7 @@ from axo.ui.settings_dialog import (
     BackendPage,
     ReminderPage,
     SettingsDialog,
+    SpeechPage,
     ToolPage,
 )
 from axo.ui.settings_store import (
@@ -59,6 +60,7 @@ from axo.ui.settings_store import (
     BackendSettings,
     MemorySettings,
     ReminderSettings,
+    SpeechSettings,
     ToolSettings,
 )
 from axo.ui.theme import (
@@ -435,6 +437,7 @@ def test_reopening_moves_the_snapshot(qapp, data_root) -> None:
         tools=ToolSettings(),
         memory=MemorySettings(),
         reminders=ReminderSettings(),
+        voice=SpeechSettings(),
     )
     assert seen == [], "set_state 是在陈述现状，不该发信号"
 
@@ -562,6 +565,7 @@ def test_the_memory_box_opens_on_the_stored_value(qapp, data_root) -> None:
         tools=ToolSettings(),
         memory=MemorySettings(task_memory=True),
         reminders=ReminderSettings(),
+        voice=SpeechSettings(),
     )
     assert dialog.memory.task_box.isChecked()
 
@@ -583,6 +587,7 @@ def test_the_memory_box_emits_only_when_the_user_moves_it(qapp, data_root) -> No
         tools=ToolSettings(),
         memory=MemorySettings(task_memory=True),
         reminders=ReminderSettings(),
+        voice=SpeechSettings(),
     )
     assert seen == [], "摆上当前值不是一次改动"
 
@@ -620,6 +625,7 @@ def _memory_dialog(**memory: Any) -> SettingsDialog:
         tools=ToolSettings(),
         memory=MemorySettings(**memory),
         reminders=ReminderSettings(),
+        voice=SpeechSettings(),
     )
     return dialog
 
@@ -946,7 +952,7 @@ def test_the_categories_line_up_with_the_pages(qapp, data_root) -> None:
     dialog = _dialog()
     labels = [dialog.categories.item(i).text() for i in range(dialog.categories.count())]
 
-    assert labels == ["外观", "人设", "后端 / API", "工具", "记忆", "提醒", "数据"]
+    assert labels == ["外观", "人设", "后端 / API", "工具", "记忆", "提醒", "语音", "数据"]
     assert dialog.pages.count() == len(labels)
     for row, page in enumerate(
         (
@@ -956,6 +962,7 @@ def test_the_categories_line_up_with_the_pages(qapp, data_root) -> None:
             dialog.tools,
             dialog.memory,
             dialog.reminders,
+            dialog.speech,
             dialog.data,
         )
     ):
@@ -1294,6 +1301,7 @@ def test_reopening_moves_the_directory_snapshot(qapp, data_root, monkeypatch, tm
         tools=ToolSettings(read_roots=(new,)),
         memory=MemorySettings(),
         reminders=ReminderSettings(),
+        voice=SpeechSettings(),
     )
     monkeypatch.setattr(dialog.tools, "_ask_for_directory", lambda _start: str(tmp_path / "临时"))
     dialog.tools.add_button.click()
@@ -1812,3 +1820,60 @@ def test_the_autostart_note_has_its_own_line(qapp: Any, data_root: Path) -> None
     assert page.autostart_note.text() == "自启没能写成：拒绝访问"
     page.set_note("")
     assert page.autostart_note.text() == ""
+
+
+# ── 语音页：出声/音量/音色/组件地址 ────────────────────────────────────────
+
+
+def test_the_speech_page_states_what_is_stored(qapp: Any) -> None:
+    """打开窗口时摆的是存的那几个值，**摆上不算一次改动**（同 vision 那格的
+    ``blockSignals`` 纪律）——不然一开窗口就往设置里写一遍当前值。"""
+    page = SpeechPage()
+    seen: list[Any] = []
+    page.changed.connect(seen.append)
+
+    page.set_state(SpeechSettings(enabled=False, volume=30, voice="", base_url="http://pc:9000"))
+
+    assert page.settings().enabled is False
+    assert page.settings().volume == 30
+    assert page.settings().base_url == "http://pc:9000"
+    assert seen == [], "摆上当前值被当成了一次改动"
+
+
+def test_the_speech_page_emits_only_when_the_user_moves_it(qapp: Any) -> None:
+    page = SpeechPage()
+    page.set_state(SpeechSettings())
+    seen: list[Any] = []
+    page.changed.connect(seen.append)
+
+    page.enabled_box.setChecked(False)
+    page.volume_box.setValue(10)
+
+    assert len(seen) == 2
+    assert seen[-1].enabled is False and seen[-1].volume == 10
+
+
+def test_revert_puts_the_speech_page_back(qapp: Any) -> None:
+    """「撤销修改」要把这一页一起收回去——音色与音量是"她长什么样"的一部分。"""
+    page = SpeechPage()
+    page.set_state(SpeechSettings(enabled=True, volume=80))
+    seen: list[Any] = []
+    page.changed.connect(seen.append)
+
+    page.enabled_box.setChecked(False)
+    page.volume_box.setValue(5)
+    page.revert()
+
+    assert page.settings() == SpeechSettings(enabled=True, volume=80)
+    assert len(seen) == 3  # 两次改动 + 撤销那次
+
+
+def test_the_voices_combo_lists_what_is_on_disk(qapp: Any, data_root: Any) -> None:
+    """音色下拉列的是 ``models/voices/`` 下的目录（与 vosk 模型同姿态：资产用户自己放）。"""
+    page = SpeechPage()
+    page.set_state(SpeechSettings())
+
+    labels = [page.voice_combo.itemText(i) for i in range(page.voice_combo.count())]
+    assert labels[0] == "组件默认音色", "第一项要能退回组件默认"
+    # 没放参考音时只有默认那一项——**少一项比多一项好**（见 tts.voices_in 的理由）。
+    assert page.voice_combo.currentData() == ""

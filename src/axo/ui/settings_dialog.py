@@ -64,7 +64,8 @@ from PySide6.QtWidgets import (
 from .. import autostart
 from ..llm import openai_compat
 from ..llm.ollama import probe
-from ..paths import wallpapers_dir
+from ..paths import voices_dir, wallpapers_dir
+from ..tts import voices_in
 from .color import parse_hex, readable_foreground
 from .data_root import data_root_description
 from .settings_store import (
@@ -75,6 +76,7 @@ from .settings_store import (
     BackendSettings,
     MemorySettings,
     ReminderSettings,
+    SpeechSettings,
     ToolSettings,
     wallpaper_file,
 )
@@ -877,6 +879,7 @@ class ToolPage(QWidget):
     roots_changed = Signal(object)
     vision_changed = Signal(bool)
     """「当前模型看得见图」变了。**与目录分开一个信号**：它不是一次授权，而是一句对模型能力的声明。"""
+    audio_changed = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -889,6 +892,7 @@ class ToolPage(QWidget):
         #: 「撤销修改」却发现那一格还亮着，而他会以为撤销坏了。
         self._snapshot: tuple[Path, ...] = ()
         self._vision_snapshot = False
+        self._audio_snapshot = False
 
         outer.addWidget(_section("可读目录"))
 
@@ -950,6 +954,21 @@ class ToolPage(QWidget):
             )
         )
 
+        self.audio_box = QCheckBox("当前模型听得见原声（云端问不到这个能力，要你自己声明）", self)
+        self.audio_box.setObjectName("cloudAudioBox")
+        self.audio_box.toggled.connect(self._on_audio_toggled)
+        outer.addWidget(self.audio_box)
+        outer.addWidget(
+            _hint(
+                "勾上后，你说话那一轮会把**原声**一起发给模型（连转写文字一起）。本机 Ollama 收不了音频（协议没有这个字段，实测），勾了也只会发文字——那时界面会说一句。"
+            )
+        )
+        outer.addWidget(
+            _hint(
+                "**勾上意味着你的声音会发到那个端点**。记忆库与聊天记录仍然不出这台机器，但那一段声音会随请求发出去。"
+            )
+        )
+
         self.note = _hint("")
         self.note.setObjectName("toolNote")
         outer.addWidget(self.note)
@@ -974,6 +993,10 @@ class ToolPage(QWidget):
         blocked = self.vision_box.blockSignals(True)
         self.vision_box.setChecked(settings.cloud_vision)
         self.vision_box.blockSignals(blocked)
+        self._audio_snapshot = settings.audio_in
+        blocked = self.audio_box.blockSignals(True)
+        self.audio_box.setChecked(settings.audio_in)
+        self.audio_box.blockSignals(blocked)
         self.set_note("")
 
     def set_note(self, text: str) -> None:
@@ -982,6 +1005,13 @@ class ToolPage(QWidget):
     def vision(self) -> bool:
         """「当前模型看得见图」这一格。"""
         return self.vision_box.isChecked()
+
+    def audio(self) -> bool:
+        """「当前模型听得见原声」这一格。"""
+        return self.audio_box.isChecked()
+
+    def _on_audio_toggled(self, checked: bool) -> None:
+        self.audio_changed.emit(bool(checked))
 
     def _on_vision_toggled(self, checked: bool) -> None:
         self.vision_changed.emit(bool(checked))
@@ -1009,6 +1039,11 @@ class ToolPage(QWidget):
             self.vision_box.setChecked(self._vision_snapshot)
             self.vision_box.blockSignals(blocked)
             self.vision_changed.emit(self._vision_snapshot)
+        if self.audio() != self._audio_snapshot:
+            blocked = self.audio_box.blockSignals(True)
+            self.audio_box.setChecked(self._audio_snapshot)
+            self.audio_box.blockSignals(blocked)
+            self.audio_changed.emit(self._audio_snapshot)
 
     # ── 增删 ────────────────────────────────────────────────────────────────
 
@@ -1604,6 +1639,126 @@ class DataPage(QWidget):
         return QFileDialog.getExistingDirectory(self, "挑一个放记忆的文件夹", start)
 
 
+class SpeechPage(QWidget):
+    """语音页：**她的话出不出声、用谁的声音、从哪个组件合成**。
+
+    与提醒页「由她说一句」**正交**（那个管要不要由她生成，这个管出不出声）——两个都开
+    到点那句才念出来；只开前者只出字；只开后者语音回合她开口回答。
+
+    形状与提醒页同一套：边改边生效，底部「撤销修改」兜着（:meth:`revert`）。
+    """
+
+    changed = Signal(object)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(16, 16, 16, 16)
+        outer.setSpacing(10)
+
+        self._snapshot = SpeechSettings()
+        self._syncing = False
+
+        outer.addWidget(_section("出声"))
+        # 初值从 dataclass 的默认来，不在这儿抄第二份 True（同提醒页那条理由）。
+        self.enabled_box = QCheckBox("她的话念出来", self)
+        self.enabled_box.setObjectName("speechEnabledBox")
+        self.enabled_box.setChecked(self._snapshot.enabled)
+        self.enabled_box.toggled.connect(self._on_toggled)
+        outer.addWidget(self.enabled_box)
+        outer.addWidget(
+            _hint(
+                "只在两类时刻响：你**说话**那一轮她的回答、到点那句提醒。"
+                "打字问一句不响。与提醒页「由她说一句」正交——那个管要不要生成，这个管出不出声。"
+            )
+        )
+
+        outer.addWidget(_section("音量"))
+        self.volume_box = QSpinBox(self)
+        self.volume_box.setObjectName("speechVolume")
+        self.volume_box.setRange(0, 100)
+        self.volume_box.setSuffix(" %")
+        self.volume_box.setValue(self._snapshot.volume)
+        self.volume_box.valueChanged.connect(self._on_toggled)
+        outer.addWidget(self.volume_box)
+        outer.addWidget(_hint("调到 0 就是静音。应用级：换台机器要重新设。"))
+
+        outer.addWidget(_section("音色"))
+        self.voice_combo = QComboBox(self)
+        self.voice_combo.setObjectName("speechVoice")
+        self._fill_voices(self._snapshot.voice)
+        self.voice_combo.currentIndexChanged.connect(self._on_toggled)
+        outer.addWidget(self.voice_combo)
+        outer.addWidget(
+            _hint(
+                "列的是数据目录 models/voices/ 下的音色（零样本克隆的参考音目录）。"
+                "没有列出来 = 还没放参考音：去 models/voices/<名字>/ 放一段 10–30 秒的"
+                "参考音（ref.wav）与它的逐字稿（ref.txt）。"
+            )
+        )
+
+        outer.addWidget(_section("语音组件"))
+        self.endpoint_edit = QLineEdit(self._snapshot.base_url, self)
+        self.endpoint_edit.setObjectName("speechEndpoint")
+        self.endpoint_edit.editingFinished.connect(self._on_toggled)
+        outer.addWidget(self.endpoint_edit)
+        outer.addWidget(
+            _hint(
+                "离线克隆 TTS 那个独立程序的地址（默认 http://127.0.0.1:8800）。"
+                "它没在跑时**不出声，但会说一句原因**——对话照常，只是不出声。"
+            )
+        )
+
+        self.note = _hint("")
+        self.note.setObjectName("speechNote")
+        outer.addWidget(self.note)
+        outer.addStretch(1)
+
+    # ── 状态进出 ──────────────────────────────────────────────────────────
+
+    def _fill_voices(self, selected: str) -> None:
+        self.voice_combo.blockSignals(True)
+        self.voice_combo.clear()
+        self.voice_combo.addItem("组件默认音色", "")
+        for voice in voices_in(voices_dir()):
+            self.voice_combo.addItem(voice.name, voice.name)
+        index = self.voice_combo.findData(selected)
+        self.voice_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.voice_combo.blockSignals(False)
+
+    def set_state(self, settings: SpeechSettings) -> None:
+        """打开窗口时调，陈述现状；顺带重置快照（撤销回到这一次打开时的样子）。"""
+        self._snapshot = settings
+        self._syncing = True
+        self.enabled_box.setChecked(settings.enabled)
+        self.volume_box.setValue(settings.volume)
+        self._fill_voices(settings.voice)
+        self.endpoint_edit.setText(settings.base_url)
+        self._syncing = False
+        self.set_note("")
+
+    def settings(self) -> SpeechSettings:
+        return SpeechSettings(
+            enabled=self.enabled_box.isChecked(),
+            volume=self.volume_box.value(),
+            voice=str(self.voice_combo.currentData() or ""),
+            base_url=self.endpoint_edit.text().strip(),
+        )
+
+    def revert(self) -> None:
+        if self.settings() == self._snapshot:
+            return
+        self.set_state(self._snapshot)
+        self.changed.emit(self.settings())
+
+    def set_note(self, text: str) -> None:
+        self.note.setText(text)
+
+    def _on_toggled(self, *_args: Any) -> None:
+        if not self._syncing:
+            self.changed.emit(self.settings())
+
+
 class SettingsDialog(QDialog):
     """设置窗口本体。非模态——改一下就要看一眼主窗口，模态会把这件事变成
     "关窗 → 看效果 → 再开窗"。"""
@@ -1612,6 +1767,9 @@ class SettingsDialog(QDialog):
     backend_changed = Signal(object)
     tools_changed = Signal(object)
     vision_changed = Signal(bool)
+    voice_changed = Signal(object)
+    audio_changed = Signal(bool)
+    """语音输出那一页变了（出声/音量/音色/组件地址），由 :class:`SpeechPage` 转发。"""
     """「当前模型看得见图」变了。由工具页转发（见 :class:`ToolPage`）。"""
     memory_changed = Signal(object)
     reminders_changed = Signal(object)
@@ -1640,6 +1798,7 @@ class SettingsDialog(QDialog):
         tools: ToolSettings | None = None,
         memory: MemorySettings | None = None,
         reminders: ReminderSettings | None = None,
+        voice: SpeechSettings | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("设置")
@@ -1674,7 +1833,7 @@ class SettingsDialog(QDialog):
         # 行距却只有 16 像素"的画面（一条蓝条压住左右邻居的字），而那种错看起来像字体坏了。
         # QSS 那份只留横向内边距（文字离左边框多远），纵向高度由这里的 sizeHint 说了算。
         item_height = self.categories.fontMetrics().height() + 2 * _CATEGORY_PAD_Y
-        for label in ("外观", "人设", "后端 / API", "工具", "记忆", "提醒", "数据"):
+        for label in ("外观", "人设", "后端 / API", "工具", "记忆", "提醒", "语音", "数据"):
             item = QListWidgetItem(label)
             item.setSizeHint(QSize(0, item_height))
             self.categories.addItem(item)
@@ -1687,6 +1846,7 @@ class SettingsDialog(QDialog):
         self.tools = ToolPage(self)
         self.memory = MemoryPage(self)
         self.reminders = ReminderPage(self)
+        self.speech = SpeechPage(self)
         self.data = DataPage(self)
         self.pages.addWidget(self.appearance)
         self.pages.addWidget(self.persona)
@@ -1694,6 +1854,7 @@ class SettingsDialog(QDialog):
         self.pages.addWidget(self.tools)
         self.pages.addWidget(self.memory)
         self.pages.addWidget(self.reminders)
+        self.pages.addWidget(self.speech)
         self.pages.addWidget(self.data)
         body.addWidget(self.pages, 1)
         outer.addLayout(body, 1)
@@ -1722,6 +1883,9 @@ class SettingsDialog(QDialog):
         # 没有"应用"这一步可等——它只是一行设置，而且底部有「撤销修改」兜着。
         self.tools.roots_changed.connect(self.tools_changed)
         self.tools.vision_changed.connect(self.vision_changed)
+        self.tools.audio_changed.connect(self.audio_changed)
+        self.speech.changed.connect(self.voice_changed)
+        self.speech.set_state(voice if voice is not None else SpeechSettings())
         # 记忆页也是"边改边生效"：一个勾选框，勾上就是下一次写入生效。
         self.memory.changed.connect(self.memory_changed)
         # 提醒页同形（也是一个勾选框，勾上就是下一次到点生效）。
@@ -1750,6 +1914,7 @@ class SettingsDialog(QDialog):
             tools=ToolSettings() if tools is None else tools,
             memory=MemorySettings() if memory is None else memory,
             reminders=ReminderSettings() if reminders is None else reminders,
+            voice=voice if voice is not None else SpeechSettings(),
         )
 
     # ── 状态进出 ────────────────────────────────────────────────────────────
@@ -1764,6 +1929,7 @@ class SettingsDialog(QDialog):
         tools: ToolSettings,
         memory: MemorySettings,
         reminders: ReminderSettings,
+        voice: SpeechSettings,
     ) -> None:
         """**打开窗口时调。** 顺带把快照换成这一份——「撤销修改」回到的是**这一次**
         打开时的样子，而不是上一次的。
@@ -1778,6 +1944,7 @@ class SettingsDialog(QDialog):
         self.tools.set_state(tools)
         self.memory.set_state(memory)
         self.reminders.set_state(reminders)
+        self.speech.set_state(voice if voice is not None else SpeechSettings())
 
     def set_resolved(self, resolved: Resolved) -> None:
         self.appearance.set_resolved(resolved)

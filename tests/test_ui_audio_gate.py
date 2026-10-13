@@ -33,6 +33,7 @@ def _window(*, cloud: bool, hears: bool, audio: bytes = b"", ride: str | None = 
     window = SimpleNamespace(
         _backend_settings=SimpleNamespace(is_cloud=cloud),
         _tool_settings=SimpleNamespace(audio_in=hears),
+        _audio_in=hears,
         _backend=SimpleNamespace(audio_ride_on=ride),
         _pending_audio=audio,
         chat_view=_Recorder(),

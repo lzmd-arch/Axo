@@ -467,6 +467,7 @@ class MainWindow(QMainWindow):
         #: 当前云端模型看不看得见图——**用户声明的**（云端问不到这个能力，见
         #: :meth:`_model_can_see`）。本机不走这一位：那边 Ollama 自己会报。
         self._cloud_vision: bool = self._tool_settings.cloud_vision
+        self._audio_in: bool = self._tool_settings.audio_in
         #: 用不用**任务记忆**（:class:`~axo.memory.policy.TaskPolicy`）。
         #: 默认关，存在 ``QSettings`` 的 ``memory/*`` 里，由设置窗口的「记忆」页改。
         self._task_memory: bool = self._settings_store.load_memory().task_memory
@@ -1789,7 +1790,7 @@ class MainWindow(QMainWindow):
         """
         if not self._backend_settings.is_cloud:
             return False
-        return self._tool_settings.audio_in
+        return self._audio_in
 
     def _attach_pending_audio(self, assembly: Assembly) -> tuple[Assembly, bool]:
         """把本轮原声贴到那条 user 行上；返回 ``(贴好后的装配, 有没有贴上)``。
@@ -1811,7 +1812,7 @@ class MainWindow(QMainWindow):
                     messages[index] = replace(messages[index], audio=(encoded,))
                     break
             return replace(assembly, messages=tuple(messages)), True
-        if self._tool_settings.audio_in:
+        if self._audio_in:
             where = (
                 "本机 Ollama 的接口收不了音频（只有 images 字段，实测）"
                 if not self._backend_settings.is_cloud
@@ -2875,6 +2876,7 @@ class MainWindow(QMainWindow):
                     # 以为切云端根本没生效（而请求其实一直发在云端）。
                     backend=self._backend_settings,
                     tools=self._current_tool_settings(),
+                    voice=self._voice_settings,
                     memory=MemorySettings(
                         task_memory=self._task_memory,
                         graph_channel=self._graph_enabled,
@@ -2887,6 +2889,8 @@ class MainWindow(QMainWindow):
                 dialog.backend_changed.connect(self._on_backend_changed)
                 dialog.tools_changed.connect(self._on_tools_changed)
                 dialog.vision_changed.connect(self._on_cloud_vision_changed)
+                dialog.audio_changed.connect(self._on_cloud_audio_changed)
+                dialog.voice_changed.connect(self._on_voice_settings_changed)
                 dialog.memory_changed.connect(self._on_memory_changed)
                 dialog.reminders_changed.connect(self._on_reminders_changed)
                 dialog.graph_rebuild_requested.connect(self._on_rebuild_graph)
@@ -2909,6 +2913,7 @@ class MainWindow(QMainWindow):
                     self._resolved,
                     self._backend_settings,
                     tools=self._current_tool_settings(),
+                    voice=self._voice_settings,
                     memory=MemorySettings(
                         task_memory=self._task_memory,
                         graph_channel=self._graph_enabled,
@@ -3029,7 +3034,9 @@ class MainWindow(QMainWindow):
         字段就要记得改两处，而漏掉的那一处症状是"设置窗口里勾了、主窗口不认"
         （重开窗口那条路走的正是第二处）。所以拼装只有一个出处。
         """
-        return ToolSettings(read_roots=self._read_roots, cloud_vision=self._cloud_vision)
+        return ToolSettings(
+            read_roots=self._read_roots, cloud_vision=self._cloud_vision, audio_in=self._audio_in
+        )
 
     @Slot(bool)
     def _on_cloud_vision_changed(self, flag: bool) -> None:
@@ -3044,6 +3051,25 @@ class MainWindow(QMainWindow):
         """
         self._cloud_vision = bool(flag)
         self._settings_store.save_tools(self._current_tool_settings())
+
+    @Slot(bool)
+    def _on_cloud_audio_changed(self, flag: bool) -> None:
+        """用户声明了「当前模型听得见原声」。存一次用一次（同 vision 那格）。"""
+        self._audio_in = bool(flag)
+        self._settings_store.save_tools(self._current_tool_settings())
+
+    @Slot(object)
+    def _on_voice_settings_changed(self, settings: Any) -> None:
+        """语音输出那一页变了：**改一次就存一次**（同外观那条），并且当场接管。
+
+        三件跟着走：``_voice_settings``（出声判定）、``_speech_backend``（组件地址
+        变了要换调用端）、音量（``SpeechPlayer.set_volume``）。**不打断正在播的**：
+        改设置不是让路，那条腿留给用户开口。
+        """
+        self._voice_settings = settings
+        self._settings_store.save_voice(settings)
+        self._speech_backend = RemoteSpeech(settings.base_url)
+        self._speech_player.set_volume(settings.volume)
 
     @Slot(object)
     def _on_reminders_changed(self, settings: ReminderSettings) -> None:

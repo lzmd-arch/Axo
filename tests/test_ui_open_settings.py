@@ -26,7 +26,7 @@ from PySide6.QtWidgets import QApplication
 
 from axo.ui import main_window as main_window_module
 from axo.ui.main_window import MainWindow
-from axo.ui.settings_store import BackendSettings, ReminderSettings
+from axo.ui.settings_store import BackendSettings, ReminderSettings, SpeechSettings
 from axo.ui.theme import Theme, resolve
 
 pytestmark = pytest.mark.gui
@@ -64,6 +64,8 @@ def _window() -> SimpleNamespace:
         # 工具页新增的第二项（2026-10-12）：**云端模型看不看得见图**，默认关。
         # 它由用户声明，因为云端那条协议不报这个能力。
         _cloud_vision=False,
+        _audio_in=False,
+        _voice_settings=SpeechSettings(),
         # 记忆页那一份：**任务记忆关着**，与一个刚装好的终端一模一样。
         _task_memory=False,
         # 记忆页的另一项：**联想通道也是关的**（它是量出来的负数，默认关）。
@@ -85,6 +87,8 @@ def _window() -> SimpleNamespace:
         _on_backend_changed=lambda *_args: None,
         _on_tools_changed=lambda *_args: None,
         _on_cloud_vision_changed=lambda *_args: None,
+        _on_cloud_audio_changed=lambda *_args: None,
+        _on_voice_settings_changed=lambda *_args: None,
         _on_memory_changed=lambda *_args: None,
         _on_reminders_changed=lambda *_args: None,
         _on_rebuild_graph=lambda *_args: None,
@@ -128,6 +132,8 @@ def _consolidate_signals() -> SimpleNamespace:
         "memory_changed",
         "reminders_changed",
         "vision_changed",
+        "audio_changed",
+        "voice_changed",
         "graph_rebuild_requested",
         "consolidation_requested",
         "persona_save_requested",
