@@ -37,7 +37,7 @@ from axo.llm.base import ChatMessage, ToolCall
 from axo.session.store import Message
 from axo.ui import voice as voice_module
 from axo.ui.main_window import SPEECH_TIMEOUT_MS, MainWindow, display_rows
-from axo.ui.settings_store import ReminderSettings
+from axo.ui.settings_store import ReminderSettings, SpeechSettings
 from memcore.store import MemoryStore
 
 pytestmark = pytest.mark.gui
@@ -175,6 +175,36 @@ class FakeVoice:
         self.listening = False
 
 
+class FakePlayer:
+    """``SpeechPlayer`` 的替身：只记"念了几段、停过几次"。"""
+
+    def __init__(self) -> None:
+        self.played: list[bytes] = []
+        self.stops = 0
+
+    def speak(self, wav: bytes) -> str:
+        self.played.append(wav)
+        return ""
+
+    def stop(self) -> None:
+        self.stops += 1
+
+
+class FakeTts:
+    """``RemoteSpeech`` 的替身：按脚本回收条，记下被念的文本。"""
+
+    def __init__(self, *, wav: bytes = b"WAV", reason: str = "") -> None:
+        self._wav = wav
+        self._reason = reason
+        self.asked: list[str] = []
+
+    def synthesize(self, text: str, *, voice: str = "") -> Any:
+        self.asked.append(text)
+        from axo.tts import SpeechResult
+
+        return SpeechResult(wav=self._wav, reason=self._reason)
+
+
 class FakeSpeechWorker:
     """``ChatWorker`` 那一半：只记"被叫停过"。"""
 
@@ -218,6 +248,9 @@ class Stub(QObject):
     _on_voice_finished = MainWindow._on_voice_finished
     _on_voice_done = MainWindow._on_voice_done
     _discard_voice = MainWindow._discard_voice
+    _speak_reply = MainWindow._speak_reply
+    _on_reply_finished = MainWindow._on_reply_finished
+    _on_tts_done = MainWindow._on_tts_done
     _track = MainWindow._track
 
     def __init__(
@@ -258,6 +291,15 @@ class Stub(QObject):
         # ── 语音输入那一档 ──
         self._voice = FakeVoice()
         self._voice_state = ""
+        #: ── 语音输出那一族（她开口）──
+        self._voice_settings = SpeechSettings()
+        self._speech_player = FakePlayer()
+        self._speech_backend = FakeTts()
+        self._tts_thread: Any = None
+        self._tts_worker: Any = None
+        self._tts_live = False
+        self._tts_serial = 0
+        self._spoken_reply = False
         self._voice_worker: Any = None
         self._voice_thread: Any = None
         #: ``_on_voice_done`` 会把识别结果交给 ``_on_submit``——这里换成一个记录器，
@@ -267,6 +309,10 @@ class Stub(QObject):
         self.minimized = False
         self.window_calls: list[str] = []
         self.flashes = 0
+
+    def _reset_generation_state(self) -> None:
+        """替身版：只记一次。真件那一半碰的是会话/按钮/三个 worker——那是别处的事。"""
+        self.resets = getattr(self, "resets", 0) + 1
 
     def _append(self, message: Any) -> None:
         self.stored.append(message)
@@ -328,9 +374,11 @@ class VoiceStub(Stub):
     def __init__(self, **fields: Any) -> None:
         super().__init__(**fields)
         self.submitted: list[str] = []
+        self.last_spoken = False
 
-    def _on_submit(self, text: str) -> None:
+    def _on_submit(self, text: str, *, spoken: bool = False) -> None:
         self.submitted.append(text)
+        self.last_spoken = spoken
 
 
 def statuses(stub: Stub) -> list[str]:
@@ -1321,3 +1369,104 @@ def test_recording_that_hits_the_cap_still_gets_transcribed(qapp: Any) -> None:
     assert stub._voice.stops == 1
     assert stub._voice_state == "recognizing"
     assert ("setVoiceState", "recognizing") in stub.chat_view.calls
+
+
+# ── 出声（TTS）：谁该出声、谁不该 ────────────────────────────────────────────
+#
+# 2026-10-13 语音对话闭环。出声的判定**只有一个**：这一轮是用户说出来的（`spoken`）。
+# 五条判据各对着一类坏法：错出声（打字也念）、不出声（说出来的也不念）、念半句（被打断的）、
+# 翻历史念（回看）、停不下来（让路漏了播放）。
+
+
+def test_she_reads_her_reply_after_a_spoken_turn(qapp: Any) -> None:
+    """用户**说**出来的那一轮：她的回复交给合成（出声的唯一入口）。"""
+    stub = VoiceStub()
+    stub._spoken_reply = True
+
+    stub._on_reply_finished("记得买牛奶。", {"interrupted": False})
+
+    # 合成在工作线程、落地是排队信号——**等两站都到**（同 `_speaking_stub` 那族的写法）。
+    assert _wait_until(qapp, lambda: stub._speech_backend.asked == ["记得买牛奶。"]), (
+        "说出来的那一轮没让合成上"
+    )
+    assert _wait_until(qapp, lambda: stub._speech_player.played == [b"WAV"]), "合成完了没开播"
+    assert _wait_until(qapp, lambda: not stub._live_threads)
+
+
+def test_a_typed_turn_stays_silent(qapp: Any) -> None:
+    """**打字问的不出声**——这是"我说话她才开口"那条决定的另一半。
+
+    反空转那一条：判定错成"每轮都念"也能过上一条测试，只有这条能拦住它。
+    """
+    stub = VoiceStub()
+    stub._spoken_reply = False
+
+    stub._on_reply_finished("记得买牛奶。", {"interrupted": False})
+
+    assert stub._speech_backend.asked == [], "打字那轮也去合成了"
+    assert stub._speech_player.played == []
+
+
+def test_an_interrupted_or_empty_reply_is_not_read(qapp: Any) -> None:
+    """打断的半句与空回复**都不念**：念一句空的是无声，念半句是念一个被打断的念头。"""
+    stub = VoiceStub()
+    stub._spoken_reply = True
+    stub._on_reply_finished("（半句）", {"interrupted": True})
+    stub._on_reply_finished("   ", {"interrupted": False})
+
+    assert stub._speech_backend.asked == []
+
+
+def test_the_reminder_line_is_read_too(qapp: Any) -> None:
+    """到点那句**也念**——「到点由她开口」的本意就是开口（C4 只有文字是因为当时没 TTS）。"""
+    stub, _backend = _speaking_stub(qapp, script=[[text_chunk("该睡了，早点休息。", done=True)]])
+
+    stub._on_reminder_fired(reminder_alert("该睡了"))
+
+    assert _wait_until(qapp, lambda: not stub._live_threads), "那一轮没跑完"
+    assert stub._speech_backend.asked == ["该睡了，早点休息。"], "提醒句没让合成上"
+
+
+def test_the_degraded_reminder_is_not_read(qapp: Any) -> None:
+    """降级成**程序说**的那句不念：它是 `system` 气泡，不是"她说的话"——
+    机器声念一句"本该由她开口"是二次羞辱。"""
+    stub = VoiceStub()
+
+    stub._tell_reminder(reminder_alert("该睡了"), note="模型没能开口")
+
+    assert stub._speech_backend.asked == []
+
+
+def test_stopping_speech_stops_playback_and_drops_late_synthesis(qapp: Any) -> None:
+    """让路要收掉**两样**：正在播的，和还没合成完的。
+
+    前者漏了 = 她说到一半停不下来（让路要治的正是这个病）；后者漏了 = 用户已经说别的了，
+    她那句才姗姗来迟地响起来——像她插了一句。
+    """
+    stub = VoiceStub()
+    stub._speech_player.played.append(b"EARLIER")  # 字节字面量只收 ASCII
+    stub._tts_live = True
+
+    stub._stop_speech(tell=False)
+
+    assert stub._speech_player.stops >= 1, "让路没停播放"
+    assert stub._tts_live is False, "迟到的合成还许落地"
+
+
+def test_a_spoken_user_line_is_marked_when_read_back() -> None:
+    """说出来的那句回看时带「语音说的」小标，**而且逐字稿往返丢不掉它**。
+
+    小标是"这句话是说出来的"唯一的痕迹（音频不落盘）。丢法有两种都要堵：display_rows
+    忘了映射、或者 Message 往返忘了写这个字段——后者是静默的（老行不受影响，所以
+    schema 守卫看不出来）。
+    """
+    line = Message(role="user", content="帮我记一下", spoken=True)
+    back = Message.from_dict(line.to_dict())
+
+    assert back.spoken is True
+    rows = display_rows([back])
+    assert rows[0]["meta"]["title"] == "语音说的"
+
+    typed = Message(role="user", content="帮我记一下", spoken=False)
+    assert display_rows([typed])[0]["meta"] == {}, "打字那句不该带小标"
+    assert "spoken" not in typed.to_dict(), "假字段也写了——老行的逐字节不变就没了"

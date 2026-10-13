@@ -195,6 +195,9 @@ def test_the_slot_actually_pushes_that_sentence(qapp: Any) -> None:
         _append=lambda _message: None,
         _remember=lambda *_args, **_kwargs: None,
         _reset_generation_state=lambda: None,
+        # 出声那一族（2026-10-13）：这个替身只关心空回复那句话，朗读全换空操作。
+        _spoken_reply=False,
+        _speak_reply=lambda _text: None,
     )
 
     MainWindow._on_reply_finished(window, "", {"interrupted": False})  # type: ignore[arg-type]

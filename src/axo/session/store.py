@@ -139,6 +139,17 @@ class Message:
     一直缺的一位：它记了"调了什么工具"，没记"它怎么结束的"。
     """
 
+    spoken: bool = False
+    """这一句是用户**说**出来的，不是打字打进来的。
+
+    来源：语音输入那条路（``ui/voice.py`` 识别回来 → ``_on_submit(..., spoken=True)``）。
+    **只标 user 行**：她那一半不用标——它紧挨着说出来的那句，回看时是一对。这与
+    ``proactive`` 同一手法（一个布尔 + 回看时一个字面标题），而"哪句是说的"在翻历史时
+    是有信息量的：说出来的那句可能有识别误差，读到怪句子时先往那儿想。
+
+    **非空才写**（同 ``proactive``）：老行逐字节不变。
+    """
+
     proactive: bool = False
     """这一行是**她主动开口**说的，不是回答用户哪句话。
 
@@ -177,6 +188,8 @@ class Message:
             payload["tool_name"] = self.tool_name
         if self.no_replay is not None:
             payload["no_replay"] = self.no_replay
+        if self.spoken:
+            payload["spoken"] = True
         # 同一条"非空才写"：老行（``proactive`` 为假）逐字节不变。
         if self.proactive:
             payload["proactive"] = True
@@ -196,6 +209,7 @@ class Message:
             tool_name=_optional_str(payload.get("tool_name")),
             no_replay=_optional_str(payload.get("no_replay")),
             proactive=bool(payload.get("proactive", False)),
+            spoken=bool(payload.get("spoken", False)),
         )
 
 

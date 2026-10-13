@@ -97,6 +97,7 @@ from ..llm.openai_compat import (
     fallback_models,
     pick_cloud_chat_model,
 )
+from ..llm.speech import RemoteSpeech
 from ..memory import (
     BUILTIN_PERSONA_VERSION,
     DEFAULT_PERSONA,
@@ -161,6 +162,7 @@ from .settings_store import (
     ToolSettings,
     wallpaper_file,
 )
+from .speech_player import SpeechPlayer, TtsWorker
 from .theme import Resolved, Theme, resolve
 from .theme_qt import QSettingsBackend, apply_theme, os_color_scheme
 from .thread_tracking import track, wait_for_all
@@ -247,6 +249,9 @@ SPEECH_MAX_TOKENS = 512
 更要紧的是：**这个程序里其它每一轮都没有关思考**，只在"她开口"这一轮关掉，等于让同一
 个模型在两条路上有两种推理行为，而那种差别只会在某次答非所问里露出来。
 """
+
+_SPOKEN_TITLE = "语音说的"
+"""说出来的那句 user 行的标题小字（回看用）。"""
 
 _PROACTIVE_TITLE = "提醒"
 """她主动开口那条气泡的标题（网页侧渲染成气泡上方那行小字）。
@@ -353,6 +358,10 @@ def display_rows(messages: Sequence[Message]) -> list[dict[str, Any]]:
         meta: dict[str, Any] = {}
         text = message.content
         role = message.role
+        if message.spoken and role == "user":
+            # 他说出来的那句。**只加标题小字**（网页渲染 ``meta.title`` 那行本来就有），
+            # 零 JS 改动——回看与当时的图要一样，变的只有这一行小字。
+            meta["title"] = _SPOKEN_TITLE
         if message.proactive:
             # 她主动开口那一句。**只把角色名换掉**，其余（正文、标题）与当时屏幕上
             # 那一条逐字段相同——网页那边按 role 拼类名（``msg-proactive``），于是
@@ -636,6 +645,20 @@ class MainWindow(QMainWindow):
         #: 这一遍的状态："" = 没在录；"listening" / "recognizing"。
         #: **它是唯一的事实来源**（网页那个按钮显示的也是它）。
         self._voice_state: str = ""
+        #: ── 语音输出那一族（她开口）──
+        #: 设置整份现读；组件不在也只是不出声（``_on_tts_done`` 的收条纪律）。
+        self._voice_settings = self._settings_store.load_voice()
+        self._speech_player = SpeechPlayer(parent=self)
+        self._speech_backend = RemoteSpeech(self._voice_settings.base_url)
+        #: 合成的一对（线程, worker），形状照 ``_speak_*`` 那一套。
+        self._tts_thread: QThread | None = None
+        self._tts_worker: Any = None
+        self._tts_live = False
+        self._tts_serial = 0
+        #: **这一轮是不是用户说出来的**——说出来的那轮她开口回（见 :meth:`_speak_reply`）。
+        #: 跨装配存活（``_on_submit`` → 装配线程 → 回复线程是一整轮异步），所以放在这里
+        #: 而不是栈上传参；每个真正发出去的 ``_on_submit`` 重写它，早退分支不残留。
+        self._spoken_reply = False
 
         #: 周期巩固的表。**与上面那个并存、不打架**：两个独立 ``QTimer``、两个不同的
         #: 槽、没有共享可变状态（见 ``ui/consolidation_scheduler.py`` 的模块文档）。
@@ -1518,7 +1541,7 @@ class MainWindow(QMainWindow):
         """
         return route_turn(text, self._router_state)
 
-    def _on_submit(self, text: str) -> None:
+    def _on_submit(self, text: str, *, spoken: bool = False) -> None:
         # **用户开口 = 她让路。** 这一句排在下面 ``_streaming`` 那一支**之前**：
         # 生成中再提交会被忽略，但"她正在说"与生成是两件事——她说话**不锁输入框**
         # （那正是这一条链的立论），所以用户完全可能在她说到一半时开口。
@@ -1583,11 +1606,14 @@ class MainWindow(QMainWindow):
         # 于切片写没写对，而写错的表现是当前输入出现两次——一个不报错、只是让模型
         # 看到自己把问题重复了一遍的错误。
         history = list(self._session.messages)
-        self._append(Message(role="user", content=text))
-        self.chat_view.append_message("user", text)
+        self._append(Message(role="user", content=text, spoken=spoken))
+        self.chat_view.append_message("user", text, {"title": _SPOKEN_TITLE} if spoken else None)
 
         self._budget = TokenBudget(window=self._backend.context_window)
         self._pending_text = text
+        # **只在"这一轮真的要发出去"时落**：help/裸切换那些早退分支在上面就 return 了，
+        # 不会把"说出来的"留到下一轮（下一轮进这里照样重写）。
+        self._spoken_reply = spoken
         self._streaming = True
         self._preparing = True
         self._cancel_requested = False
@@ -1950,7 +1976,9 @@ class MainWindow(QMainWindow):
         """识别回来了：**成功就走 `_on_submit`**（与打字同一条路），失败就说出来。"""
         self._set_voice_state("")
         if result.ok:
-            self._on_submit(result.text)
+            # **spoken=True** 是语音这条路与打字唯一的差别：它决定她回不回出声
+            # （见 :meth:`_on_reply_finished``），其余（逐字稿/记忆/路由/闸门）完全同一条路。
+            self._on_submit(result.text, spoken=True)
             return
         # 失败要说出来（同 `_remember` 那条纪律）：不说的话，用户对着屏幕说了半天、
         # 界面回到空闲、而没有任何一处提到那句话去哪了。
@@ -1983,6 +2011,12 @@ class MainWindow(QMainWindow):
         # 所以取缺省。**装的是哪套策略决定它有没有用**——条目模式根本不看它。
         self._remember(text, interrupted=interrupted, tool_trace=statistics.get("tool_trace", ()))
         self._reset_generation_state()
+        if self._spoken_reply:
+            self._spoken_reply = False
+            # 说出来的那一轮：**她开口回**。打断的半句与空回复都不念——念一句空的是
+            # 无声，念半句是念一个被打断的念头。
+            if not interrupted and text.strip():
+                self._speak_reply(text)
         if interrupted:
             self.chat_view.set_status("已停止")
         else:
@@ -2306,6 +2340,10 @@ class MainWindow(QMainWindow):
             )
         )
         self.chat_view.append_message("proactive", text, {"title": _PROACTIVE_TITLE})
+        # **提醒句也念**：「到点由她开口」这条接缝的本意就是开口（C4 那一版只有文字，
+        # 是因为当时还没有 TTS）。它与 ``speak_on_alert`` 正交：那个开关管"要不要由她
+        # 生成"，这个管"出不出声"。
+        self._speak_reply(text)
 
     @Slot(str)
     def _on_speech_failed(self, detail: str) -> None:
@@ -2337,6 +2375,52 @@ class MainWindow(QMainWindow):
         if alert is not None:
             self._tell_reminder(alert, note="等了二十秒还没说完")
 
+    def _speak_reply(self, text: str) -> None:
+        """把她说的这段交给组件合成、然后播出来。**出声的唯一入口。**
+
+        两处调用：说出来的那一轮她的回复（``_on_reply_finished``）、到点那句
+        （``_on_speech_finished``）。**打字回合不调**——"我说话她才开口"就是这一处
+        的判定（调用方带着 ``spoken`` 标志），不设第二个开关。
+
+        合成在工作线程（HTTP 到组件，克隆 TTS 第一次要几秒到十几秒），播放在界面线程
+        （``SpeechPlayer``）。开关关着时**静默不念**（那是用户自己关的），组件不在时
+        由 :meth:`_on_tts_done` 说一句——两种收场不一样：一个是"我不要"，一个是
+        "我要但做不到"，后者必须说出来。
+        """
+        if not self._voice_settings.enabled or not text.strip():
+            return
+        thread = QThread(self)
+        worker = TtsWorker(self._speech_backend, text, self._voice_settings.voice)
+        self._tts_serial += 1
+        serial = self._tts_serial
+        self._tts_live = True
+        # **身份在创建处绑死**（同 ``thread_tracking`` 用闭包不用 ``sender()`` 的理由）。
+        # 序号多挡一种：上一次合成迟到时**新一轮已经开了**，旧结果不许顶掉新结果。
+        worker.done.connect(lambda result, serial=serial: self._on_tts_done(result, serial))
+        worker.done.connect(thread.quit)
+        self._track(thread, worker, what="合成声音线程", slot="tts")
+        thread.start()
+
+    def _on_tts_done(self, result: Any, serial: int | None = None) -> None:
+        """合成回来了：开播；失败**说一句**（不静默，同 `_on_voice_done` 的纪律）。
+
+        **迟到的结果不落地**（``_tts_live`` + 序号双重校验）：让路之后才合成完的那句
+        不许再响——用户已经说别的话了。**不用 ``sender()``**：实测它在这种
+        「真件方法绑到替身对象」的连接形态下回 ``None``，身份由创建处的闭包带过来
+        （同 ``thread_tracking`` 用闭包不用 ``sender()`` 的那条理由）。
+        """
+        if not self._tts_live or serial != self._tts_serial:
+            return
+        self._tts_live = False
+        if not result.ok:
+            # 失败**说一句**（同 `_on_voice_done` 的纪律）：静默的话，
+            # 「该出声的没出声」与「这个功能本来就不出声」长得一模一样。
+            self.chat_view.append_message("system", f"**没有出声**\n\n{result.reason}")
+            return
+        problem = self._speech_player.speak(result.wav)
+        if problem:
+            self.chat_view.append_message("system", f"**没有出声**\n\n{problem}")
+
     def _stop_speech(self, *, tell: bool) -> None:
         """让她让路（:meth:`_on_submit` 的第一件事）。
 
@@ -2349,7 +2433,13 @@ class MainWindow(QMainWindow):
         :meth:`_start_reminder_speech`），一个字都还没显示过，留下来只会是一条半截
         气泡。真正不能丢的是那条提醒——所以降级那一句在下面**同步**落，而不是等那个
         排队回来的 ``finished``（它会被上面那道发送者校验挡住）。
+
+        **播放与迟到的合成排在 early-return 之前**：这条方法在 ``_speak_worker is None``
+        时也会到达（纯播放的打断、合成还没回来的打断），放在那句 return 之后就全漏掉了
+        ——而漏掉的症状是"她说到一半停不下来"，正是让路要治的那个病。
         """
+        self._speech_player.stop()
+        self._tts_live = False
         if self._speak_worker is None:
             return
         self._speak_worker.stop()
