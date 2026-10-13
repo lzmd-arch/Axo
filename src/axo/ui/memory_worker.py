@@ -248,6 +248,8 @@ class AssemblyWorker(QObject):
                     content=item.content,
                     tokens=item.tokens,
                     explain=item.explain,
+                    created_at=item.created_at,
+                    span=item.span,
                 )
                 for item in ledger.injected
             ]

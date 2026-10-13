@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -46,17 +47,29 @@ def add(
     pinned: bool = False,
     kind: MemoryKind = MemoryKind.FACT,
     vector: np.ndarray | None = None,
+    created_at: float = 0.0,
+    meta: dict | None = None,
 ) -> MemoryItem:
-    item = MemoryItem(
-        memory_id=new_ulid(),
-        kind=kind,
-        tier=tier,
-        content=content,
-        taint=Taint.USER,
-        weight=weight,
-        pinned=pinned,
-        lex_sdr=encode_lexical(content),
-    )
+    """往库里放一条。``created_at`` 给 0 表示「用现在」（默认工厂）。
+
+    只有要钉住时刻的测试才传它——而**时刻不许被顺手改成别的**：``MemoryItem`` 的
+    ``__post_init__`` 会拿 ``created_at`` 去对齐衰减起点，所以必须在构造时就给定，
+    不能构造完再改。
+    """
+    payload: dict = {
+        "memory_id": new_ulid(),
+        "kind": kind,
+        "tier": tier,
+        "content": content,
+        "taint": Taint.USER,
+        "weight": weight,
+        "pinned": pinned,
+        "lex_sdr": encode_lexical(content),
+        "meta": dict(meta or {}),
+    }
+    if created_at > 0:
+        payload["created_at"] = created_at
+    item = MemoryItem(**payload)
     store.add(item)
     if vector is not None:
         store.set_embedding(item.memory_id, SPACE, vector)
@@ -453,3 +466,57 @@ def test_query_without_encodable_characters_still_works(store: MemoryStore) -> N
     ledger = recall(store, query_text="？？？", budget_tokens=500)
     assert ledger.channels == ()
     assert "不含可编码字符" in " ".join(ledger.notes)
+
+
+WHEN = datetime(2026, 10, 13, 22, 41).timestamp()
+
+
+def test_injected_items_carry_their_time(store: MemoryStore) -> None:
+    """召回要把 ``created_at`` 带出来——装配层只能渲染它拿到的东西。
+
+    时间戳不是装饰：没有它，「昨天我说了什么」在召回这一层就已经答不了了。
+    """
+    add(store, "感冒那位回来了。", created_at=WHEN)
+
+    ledger = recall(
+        store,
+        query_text="感冒那位",
+        budget_tokens=500,
+        config=RecallConfig(min_score=0.0),
+    )
+
+    assert ledger.injected, "这一条该被召回"
+    assert ledger.injected[0].created_at == WHEN
+    assert ledger.injected[0].span is None
+
+
+def test_a_merged_entry_carries_its_span(store: MemoryStore) -> None:
+    """归并产物的区间从 ``meta["span"]`` 来；原句没有区间，记 ``None``。"""
+    end = WHEN + 180
+    add(
+        store,
+        "感冒那位回来了，还带了杯奶茶。",
+        created_at=WHEN,
+        meta={"derived": True, "derived_from": ["a", "b"], "span": [WHEN, end]},
+    )
+
+    ledger = recall(
+        store,
+        query_text="感冒那位",
+        budget_tokens=500,
+        config=RecallConfig(min_score=0.0),
+    )
+
+    assert ledger.injected[0].span == (WHEN, end)
+
+
+def test_a_dirty_span_is_ignored_rather_than_failing_the_round(store: MemoryStore) -> None:
+    """``meta`` 是自由格式 JSON，脏数据不该让整轮召回失败。"""
+    add(store, "路由器在书房。", meta={"span": "显然是坏的"})
+
+    ledger = recall(
+        store, query_text="路由器", budget_tokens=500, config=RecallConfig(min_score=0.0)
+    )
+
+    assert ledger.injected, "召回本身不受影响"
+    assert ledger.injected[0].span is None

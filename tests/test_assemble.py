@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 
 from axo.llm.base import ChatMessage, ToolCall
@@ -47,13 +49,20 @@ def history(turns: int = 3) -> list[Message]:
     return out
 
 
-def memory(memory_id: str, content: str = "", *, tokens: int | None = None) -> MemoryInjection:
+def memory(
+    memory_id: str,
+    content: str = "",
+    *,
+    tokens: int | None = None,
+    created_at: float = 0.0,
+) -> MemoryInjection:
     body = content or f"这是一条记忆 {memory_id}。" * 4
     return MemoryInjection(
         memory_id=memory_id,
         content=body,
         tokens=tokens if tokens is not None else METER.text(body),
         explain=f"因语义 0.87 被注入，{tokens or 0} token",
+        created_at=created_at,
     )
 
 
@@ -1032,3 +1041,71 @@ def test_a_skipped_pair_is_not_counted_as_dropped_or_broken() -> None:
     assert "1 对按策略不回放" in tail.note
     # 一个被跳过、一个被留下，而且留下的那对是**完整**的
     assert [row.content for row in tail.rows if row.role == "tool"] == ["正常结果。" * 4]
+
+
+# ── 记忆行的时间戳 ──────────────────────────────────────────────────────────
+
+WHEN = datetime(2026, 10, 13, 22, 41).timestamp()
+SPAN = (
+    datetime(2026, 10, 13, 13, 2).timestamp(),
+    datetime(2026, 10, 13, 13, 5).timestamp(),
+)
+
+
+def test_every_recall_line_carries_its_time() -> None:
+    """注入行必须带时间戳——这是「模型能形成时间观念」的唯一来源。
+
+    环境行给了「现在几点」，记忆行不给「那件事是几点」，模型就只能猜先后。用户
+    的原话是「记忆没有时间戳，模型无法形成时间观念」，落点就是这一行。
+    """
+    result = assemble(
+        history(),
+        current="昨天我说了什么？",
+        budget=ROOMY,
+        recalled=[memory("m1", "感冒那位回来了。", created_at=WHEN)],
+    )
+
+    assert "· [2026-10-13 22:41] 感冒那位回来了。" in system_of(result)
+
+
+def test_a_merged_entry_shows_its_span_instead_of_one_point() -> None:
+    """归并产物挂**区间**，不挂单点——区间才是「这件事从几点到几点」。"""
+    merged = MemoryInjection(
+        memory_id="g1",
+        content="感冒那位回来了，还带了杯奶茶。",
+        tokens=20,
+        explain="整理产物",
+        created_at=SPAN[0],
+        span=SPAN,
+    )
+    result = assemble(history(), current="问。", budget=ROOMY, recalled=[merged])
+
+    assert "· [2026-10-13 13:02–13:05] 感冒那位回来了，还带了杯奶茶。" in system_of(result)
+
+
+def test_a_memory_without_a_time_gets_no_bracket() -> None:
+    """没时间就不编时间。``created_at <= 0`` 渲染成没有方括号，绝不能变 1970。"""
+    result = assemble(
+        history(), current="问。", budget=ROOMY, recalled=[memory("m1", "路由器在书房。")]
+    )
+    system = system_of(result)
+
+    assert "· 路由器在书房。" in system
+    assert "1970" not in system
+    assert "· [" not in system
+
+
+def test_the_ledger_shows_the_same_stamp() -> None:
+    """账本与上下文用同一个时间戳来源（``_stamp_of``）。
+
+    两处各写一套就会出现「账本说 22:41、正文写 22:40」——而账本对不上就等于没有
+    账本（同 ``layer_ceiling`` 那条注释的理由）。
+    """
+    result = assemble(
+        history(),
+        current="问。",
+        budget=ROOMY,
+        recalled=[memory("m1", "路由器在书房。", created_at=WHEN)],
+    )
+
+    assert "[2026-10-13 22:41] 因语义 0.87 被注入" in result.ledger.render()

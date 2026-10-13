@@ -155,6 +155,16 @@ class RecalledMemory:
     scores: ChannelScores
     pinned: bool = False
     session_id: str = ""
+    created_at: float = 0.0
+    """写下这条记忆的时刻（``MemoryItem.created_at``）。
+
+    进上下文的行要带它——用户要的是"模型能形成时间观念"，而没有时间戳的原话
+    只是一串没有先后的句子。渲染格式见 :mod:`memcore.timefmt`。
+    """
+
+    span: tuple[float, float] | None = None
+    """归并产物的（起、止）时刻，从 ``meta["span"]`` 来。单条记忆没有区间，记
+    ``None``。"""
 
     @property
     def explain(self) -> str:

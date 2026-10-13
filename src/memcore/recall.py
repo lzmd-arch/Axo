@@ -696,10 +696,29 @@ def _select(
             scores=candidate.scores,
             pinned=candidate.item.pinned,
             session_id=candidate.item.session_id,
+            created_at=candidate.item.created_at,
+            span=_span_of(candidate.item),
         )
         for candidate in selected
     ]
     return injected, rejected, used
+
+
+def _span_of(item: MemoryItem) -> tuple[float, float] | None:
+    """归并产物的（起、止）时刻，从 ``meta["span"]`` 取；不是归并产物就是 ``None``。
+
+    **取不到就当没有。** ``meta`` 是自由格式的 JSON 对象，脏数据不该让整轮召回
+    失败——那会变成「这一轮没有记忆」，离原因很远（同 ``_row_to_item`` 对坏
+    ``meta_json`` 的态度）。
+    """
+    raw = item.meta.get("span")
+    if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+        return None
+    try:
+        start, end = float(raw[0]), float(raw[1])
+    except (TypeError, ValueError):
+        return None
+    return (start, end) if start > 0 else None
 
 
 def _best_mmr(pool: list[_Candidate], selected: list[_Candidate], mmr_lambda: float) -> int:

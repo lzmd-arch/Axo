@@ -37,6 +37,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from memcore.timefmt import format_span, format_when, has_time
+
 from ..llm.base import ChatMessage, ToolCall
 from .budget import GENERATION_PROMPT, PER_MESSAGE_OVERHEAD, TokenBudget, TokenMeter
 from .store import Message
@@ -144,6 +146,13 @@ class MemoryInjection:
     content: str
     tokens: int
     explain: str
+    created_at: float = 0.0
+    """写下这条记忆的时刻。进上下文的那一行要带它——没有时间戳的原话只是一串
+    没有先后的句子，而用户要的正是"模型能形成时间观念"。``<= 0`` 表示不知道，
+    渲染时省掉方括号（见 :mod:`memcore.timefmt`）。"""
+
+    span: tuple[float, float] | None = None
+    """归并产物的（起、止）时刻。单条记忆没有区间，记 ``None``。"""
 
 
 @dataclass(frozen=True)
@@ -240,7 +249,9 @@ class AssemblyLedger:
         if self.injected:
             lines.append("")
             for item in self.injected:
-                lines.append(f"  · {item.explain}")
+                stamp = _stamp_of(item)
+                prefix = f"[{stamp}] " if stamp else ""
+                lines.append(f"  · {prefix}{item.explain}")
         for note in self.notes:
             lines.append(f"  ⚠ {note}")
         return "\n".join(lines)
@@ -279,9 +290,27 @@ class Assembly:
 
 
 def _render_recall(items: Sequence[MemoryInjection]) -> str:
+    """L2 那一段正文。**每行都带时间**。
+
+    时间写在方括号里、紧挨正文：模型扫一行就同时拿到「什么时候」和「什么事」，
+    而「昨天我说了什么」全靠这两样挨在一起。没时间的条目不打方括号——编一个时间
+    比没有时间更坏，它会被模型当事实读（见 :mod:`memcore.timefmt`）。
+    """
     if not items:
         return ""
-    return "\n".join([_RECALL_HEADER, *(f"· {item.content}" for item in items)])
+    return "\n".join([_RECALL_HEADER, *(_recall_line(item) for item in items)])
+
+
+def _recall_line(item: MemoryInjection) -> str:
+    stamp = _stamp_of(item)
+    return f"· [{stamp}] {item.content}" if stamp else f"· {item.content}"
+
+
+def _stamp_of(item: MemoryInjection) -> str:
+    """这一行该挂哪个时间戳。区间优先于单点，都没有就空串。"""
+    if item.span is not None:
+        return format_span(*item.span)
+    return format_when(item.created_at) if has_time(item.created_at) else ""
 
 
 def _to_chat(message: Message) -> ChatMessage | None:

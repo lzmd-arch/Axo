@@ -389,8 +389,17 @@ class MemoryItem:
 
     @property
     def has_embedding(self) -> bool:
-        """语义通道可用的前提。"""
-        return bool(self.space_id) and self.sem_srd is not None
+        """语义通道可用的前提——**指的是内存里这条**。
+
+        历史上这里写的是 ``self.sem_srd``（字段叫 ``sem_sdr``），一读就是
+        AttributeError：一个"语义通道可用的前提"从来没被求过值。拼写修了，但要
+        知道它的**作用域**：库里读出来的条目 ``sem_sdr`` 恒为空（向量存在另一张
+        ``embeddings`` 表里，从不回写 ``memories`` 行），所以"库里这条有没有向量"
+        仍然不能问它——那要问
+        :meth:`memcore.store.MemoryStore.missing_embedding_ids`。它回答的是写入侧
+        手里那条（内存态）有没有向量。
+        """
+        return bool(self.space_id) and self.sem_sdr is not None
 
     def decayed_weight(self, at: float, *, half_life_days: float) -> float:
         """结算惰性衰减后的权重（只算，不写回——写回是 store 的事）。
