@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from PySide6.QtGui import QGuiApplication, QIcon
+from PySide6.QtGui import QGuiApplication, QIcon, QPixmap
 from PySide6.QtWidgets import QWidget
 
 from axo.ui.main_window import _install_window_icon
@@ -58,34 +58,45 @@ def test_the_icon_reaches_the_window_and_the_application(qapp: Any) -> None:
     窗口级管主窗口的标题栏；应用级管设置窗口与记忆窗口——它们是独立顶层窗口，不挂
     在主窗口上，只设窗口级的话那两个的标题栏照样空着。"""
     window = QWidget()
-    _install_window_icon(window, _ACCENT)
+    _install_window_icon(window)
 
     assert window.windowIcon().isNull() is False
     assert QGuiApplication.windowIcon().isNull() is False
 
 
-def test_the_window_icon_is_drawn_in_the_accent(qapp: Any) -> None:
-    """装上去的那一份得**是画出来的那个记号**，不是随便一个非空图标。
+def test_the_window_icon_comes_from_the_brand_asset(
+    qapp: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """装上去的是**阿螈立绘**（2026-10-13 用户给的）——图标是产品的脸，不跟主色走了。
 
-    取两个点验色：中心那个白点、以及正上方一米处的方块本体（避开圆角——四个角在
-    圆角之外是透明的）。索引用位图自己的宽度算，因为高 DPI 上 ``pixmap()`` 会按
-    ``devicePixelRatio`` 交回一张更大的图。"""
+    判据是决定性的：**换成一张纯色小图，图标中心就该是那个颜色**（以前这条验的是
+    画出来的记号跟主题主色一致；那条路已废）。"""
+    from axo.ui import tray as tray_module
+
+    art = QPixmap(64, 64)
+    art.fill("#ff00ff")
+    art_path = Path(tray_module._ASSET).with_name("tmp-art.png")
+    art.save(str(art_path))
+    monkeypatch.setattr(tray_module, "_ASSET", art_path)
+
     window = QWidget()
-    _install_window_icon(window, _ACCENT)
+    _install_window_icon(window)
 
     image = window.windowIcon().pixmap(ICON_SIZE, ICON_SIZE).toImage()
     middle = image.width() // 2
-    assert image.pixelColor(middle, middle).name() == "#ffffff", "中心那个点没画出来"
-    assert image.pixelColor(middle, 1).name() == _ACCENT, "方块本体不是这一支主色"
+    assert image.pixelColor(middle, middle).name() == "#ff00ff", "图标不是从资产缩出来的"
 
 
-def test_a_broken_accent_still_gives_a_window_icon(qapp: Any) -> None:
-    """主题坏了（手改的注册表、降级回旧版本）也得有个图标——**绝不抛**。
+def test_a_missing_asset_still_gives_a_window_icon(
+    qapp: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """资产缺了/坏了也得有个图标——**绝不抛**（这条的抛点在 ``MainWindow.__init``，
+    那是启动路径：一个图标不该让程序打不开）。兜底是画笔画的中性灰记号。"""
+    from axo.ui import tray as tray_module
 
-    这条路的抛点在 ``MainWindow.__init__`` 里，那是启动路径：一个图标颜色不该让程序
-    打不开。兜底颜色由 :func:`~axo.ui.tray.build_icon` 决定。"""
+    monkeypatch.setattr(tray_module, "_ASSET", Path("nope/missing.png"))
     window = QWidget()
-    _install_window_icon(window, "不是颜色")
+    _install_window_icon(window)
 
     assert window.windowIcon().isNull() is False
 

@@ -401,7 +401,7 @@ def _details_hint() -> str:
     return "详情在启动它的那个控制台窗口里（`run.bat` 会保留它）。"
 
 
-def _install_window_icon(window: QWidget, accent: str) -> None:
+def _install_window_icon(window: QWidget) -> None:
     """把画出来的图标装到窗口上：标题栏、任务栏、Alt-Tab 三处看的是它。
 
     **与 exe 里嵌的那一份是两件事。** ``tools/build_exe.py`` 的 ``--icon`` 决定的是
@@ -414,7 +414,7 @@ def _install_window_icon(window: QWidget, accent: str) -> None:
     应用级与窗口级**都设**：前者让之后新建的设置窗口、记忆窗口也带上（它们是独立
     顶层窗口，不挂在这个窗口上），后者保证主窗口当场生效。
     """
-    icon = build_icon(accent)
+    icon = build_icon()
     QGuiApplication.setWindowIcon(icon)
     window.setWindowIcon(icon)
 
@@ -595,7 +595,7 @@ class MainWindow(QMainWindow):
         #: 系统托盘。**不可用时它什么都不做，关窗行为也与托盘出现之前一样**——
         #: 那台机器上拦下关窗等于让应用变得够不着（见 ``ui/tray.py`` 的模块文档）。
         #: 放在 ``_build_ui`` 之前：图标要在窗口第一次显示时就位。
-        self._tray = TrayController(accent=self._resolved.accent, parent=self)
+        self._tray = TrayController(parent=self)
         self._tray.show_requested.connect(self._on_tray_show)
         # 「立即巩固」。**与定时那条路共用一个 worker，只差一个 force**——手动按下
         # 就是"我不在乎有没有新东西，现在就跑一遍"，而那正是 GraphWorker 的 force
@@ -823,7 +823,7 @@ class MainWindow(QMainWindow):
         # 图标装在这里而不是 ``__init__`` 里单写一处：换主色（设置窗口的实时预览、
         # 系统明暗翻转）走的是同一个入口，装在这儿才不会有"托盘变了、标题栏还是旧
         # 色"的两处不一致。
-        _install_window_icon(self, resolved.accent)
+        _install_window_icon(self)
         self._push_appearance()
         return resolved
 
@@ -3031,7 +3031,6 @@ class MainWindow(QMainWindow):
         self._settings_store.save(theme)
         # 托盘图标按**解析后**的主色重画，与网页那一侧同源：浅色模式下主色可能已经
         # 被调暗过，用原色画出来的图标会和窗口对不上。
-        self._tray.set_accent(resolved.accent)
         if self._settings_dialog is not None:
             self._settings_dialog.set_resolved(resolved)
 

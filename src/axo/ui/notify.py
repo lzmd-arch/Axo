@@ -57,7 +57,6 @@ def show_balloon(
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QApplication, QSystemTrayIcon
 
-    from .theme import DEFAULT_THEME
     from .tray import build_icon
 
     app = QApplication.instance() or QApplication([])
@@ -66,7 +65,7 @@ def show_balloon(
     if not available:
         return False
 
-    tray = QSystemTrayIcon(build_icon(DEFAULT_THEME.accent), app)
+    tray = QSystemTrayIcon(build_icon(), app)
     tray.show()
     tray.showMessage(title, body, QSystemTrayIcon.MessageIcon.Information, wait_ms)
     # **有限时长的事件循环**，不是 ``app.exec()`` 到天荒地老：这条路径上没有窗口、

@@ -95,6 +95,7 @@ axo.ui.app``（``run.bat``）。但 PyInstaller 收的是**脚本**：它把入�
 
 DATAS = (
     ("src/axo/ui/theme.qss", "axo/ui"),
+    ("src/axo/ui/axo-icon.png", "axo/ui"),
     ("src/axo/ui/web", "axo/ui/web"),
 )
 """要带进镜像的**非 ``.py`` 资产**（本仓的非 Python 资产就这些）。
@@ -120,6 +121,7 @@ imageformats/qico.dll``），而 Windows 从资源管理器到任务栏会按 DP
 
 _MIRRORED = (
     "axo/ui/theme.qss",
+    "axo/ui/axo-icon.png",
     "axo/ui/web/index.html",
     "axo/ui/web/css/app.css",
     "axo/ui/web/js/app.js",
@@ -201,38 +203,6 @@ import 这个模块"那条承诺）。它进这份名单的**前提是它随产�
 # ── 图标 ────────────────────────────────────────────────────────────────────
 
 
-def _icon_pngs(sizes: Sequence[int]) -> list[tuple[int, bytes]]:
-    """每一档**现画**一张 PNG，返回 ``(边长, PNG 字节)``。
-
-    画的是 ``ui/tray.py`` 那个图标本身（托盘用的就是它），只是换个边长重画一次——
-    把 64px 那张缩到 16px 会**把中心那个点缩没**，而 16px 恰恰是任务栏和资源管理器最
-    常用的那一档。
-
-    ``QT_QPA_PLATFORM=offscreen`` 是必须的：``QPixmap``/``QIcon`` 要求先有一个
-    ``QGuiApplication``，而这个脚本可能在没有桌面会话的地方跑。这一句必须在建 app
-    **之前**写进环境。
-    """
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtCore import QBuffer, QIODevice
-    from PySide6.QtGui import QGuiApplication
-
-    from axo.ui.theme import DEFAULT_THEME
-    from axo.ui.tray import build_icon
-
-    app = QGuiApplication.instance() or QGuiApplication([])
-
-    out: list[tuple[int, bytes]] = []
-    for size in sizes:
-        image = build_icon(DEFAULT_THEME.accent, size).pixmap(size, size).toImage()
-        buffer = QBuffer()
-        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
-        image.save(buffer, "PNG")
-        out.append((size, bytes(buffer.data())))
-        buffer.close()
-    del app
-    return out
-
-
 def _write_ico(path: Path, pngs: Sequence[tuple[int, bytes]]) -> None:
     """把若干 PNG 拼成一个 ``.ico``。**格式全部小端。**
 
@@ -252,6 +222,40 @@ def _write_ico(path: Path, pngs: Sequence[tuple[int, bytes]]) -> None:
         body += data
         offset += len(data)
     path.write_bytes(bytes(header) + bytes(entries) + bytes(body))
+
+
+ICON_SOURCE = _ROOT / "src" / "axo" / "ui" / "axo-icon.png"
+"""品牌立绘（阿螈）——``.ico`` 的每一张都从它缩出来。运行时那份由 ``DATAS``镜像进产物（``axo/ui/axo-icon.png``），与 ``theme.qss`` 同一姿态。"""
+
+
+def _icon_pngs(sizes: Sequence[int]) -> list[tuple[int, bytes]]:
+    """每一档**从品牌立绘缩一张** PNG，返回 ``(边长, PNG 字节)``。
+
+    2026-10-13 换的：以前是构建时现画记号（每一档现画是因为缩 64px 那张会把中心
+    那个点缩没）；现在是用户给的**阿螈立绘**——各档都从**原图**平滑缩（笔画粗，
+    16px 缩了还认得出）。资产读不到就返回空表，``_draw_icon`` 那边**不中断构建**
+    （图标是外观，不该让整次构建挂掉）。
+    """
+    from PySide6.QtCore import QBuffer, QByteArray, QIODevice, Qt
+    from PySide6.QtGui import QPixmap
+
+    source = QPixmap(str(ICON_SOURCE))
+    if source.isNull():
+        return []
+    out: list[tuple[int, bytes]] = []
+    for size in sizes:
+        scaled = source.scaled(
+            size,
+            size,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        buffer = QBuffer()
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        scaled.save(buffer, "PNG")
+        out.append((size, bytes(QByteArray(buffer.data()))))
+        buffer.close()
+    return out
 
 
 def _draw_icon(path: Path) -> bool:

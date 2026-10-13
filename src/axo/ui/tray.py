@@ -31,6 +31,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon, QWidget
@@ -48,46 +50,55 @@ _DOT_RADIUS = 0.18
 """中心那个点占图标边长的比例。太小在 16px 下会被缩没，太大就不像一个"点"。"""
 
 
-def build_icon(accent: str, size: int = ICON_SIZE) -> QIcon:
-    """按强调色画一个图标。**纯绘制，不读文件。**
+_ASSET = Path(__file__).with_name("axo-icon.png")
+"""**品牌立绘**（阿螈）：窗口、托盘、exe 三处的图标都读这一份（exe 那份是打包时
+从它生成的 ``.ico``）。放在源码树里与 ``theme.qss`` 同一姿态：``build_exe.py``
+ 把它镜像进产物（``DATAS``），运行时按 ``Path(__file__).with_name(...)`` 读——
+ 打包与否路径都对。可替换：测试把它指到别处来走兜底那条路。"""
 
-    形状：圆角方块 + 中心一个点。选它是因为**在 16px 下还认得出来**——托盘图标实际
-    就那么点大，笔画细的、带文字的在那个尺寸上都糊成一团。
 
-    颜色解析走 :func:`~axo.ui.color.parse_hex` 那一套的宽容度：这个函数
-    拿到的 ``accent`` 来自主题，而主题可能是手改过的注册表（见
-    ``ui/settings_store.py`` 的三条纪律）。**画不出来就退回一个中性灰，绝不抛**——
-    一个托盘图标不值得让程序打不开。
+def build_icon(size: int = ICON_SIZE) -> QIcon:
+    """产品的图标：**品牌立绘**（阿螈）。**读不到资产就画兜底，绝不抛**。
 
-    ``size`` 是给打包时**手工拼多尺寸 ``.ico``** 用的（见 ``tools/build_exe.py``）：
-    Windows 从任务栏到资源管理器会按 DPI 挑不同档位，每一档都得**现画**一张——把
-    64px 那张缩到 16px 会把那个点缩没。托盘自己只用默认那一档。
+    2026-10-13 换的：以前是按主题强调色画的记号（圆角方块 + 一点），理由是
+    「16px 下还认得出来」；用户给了立绘，**图标不再跟主色走**——它是产品的脸，
+    不是一块皮肤。16px 那档从**原图**平滑缩（立绘笔画粗，缩了还认得出）。
+
+    ``size`` 的用途不变：打包时手工拼多尺寸 ``.ico`` 每档各取一张（见
+    ``tools/build_exe.py``），托盘自己只用默认那一档。
+
+    兜底（资产缺失/坏图）仍画那个中性灰记号——**图标不该让程序打不开**。
     """
+    pixmap = QPixmap(str(_ASSET))
+    if not pixmap.isNull():
+        scaled = pixmap.scaled(
+            size,
+            size,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        return QIcon(scaled)
+    return QIcon(_fallback_pixmap(size))
+
+
+def _fallback_pixmap(size: int) -> QPixmap:
+    """资产读不到时画的记号：圆角方块 + 中心一点（中性灰）。**画不出绝不抛。**"""
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
-    colour = QColor(accent)
-    if not colour.isValid():
-        # 主题坏了（手改的注册表、降级回旧版本）。**这里不抛**：设置窗口会把坏值
-        # 修好，而托盘是启动路径上的东西。
-        colour = QColor("#6b7280")
-
+    colour = QColor("#6b7280")
     painter = QPainter(pixmap)
     try:
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(colour)
-        # 圆角半径取边长的四分之一：再方一点像一个应用图标，再圆一点在小尺寸下
-        # 会看不出圆角。
         painter.drawRoundedRect(0, 0, size, size, size / 4, size / 4)
         painter.setBrush(QColor("#ffffff"))
         radius = size * _DOT_RADIUS
         centre = size / 2 - radius
         painter.drawEllipse(int(centre), int(centre), int(radius * 2), int(radius * 2))
     finally:
-        # ``end()`` 必须走到，**连抛的时候也要**：没结束的 QPainter 在析构时会往
-        # stderr 打一句警告，而且那之后这个 pixmap 上再画什么都不可预期。
         painter.end()
-    return QIcon(pixmap)
+    return pixmap
 
 
 class TrayController(QObject):
@@ -98,7 +109,6 @@ class TrayController(QObject):
             （``QSystemTrayIcon.isSystemTrayAvailable()``）。可注入是为了让"不可用
             那台机器"这条路径能在测试里走到——那正是最容易写错、又最不容易被真人
             碰到的一支。
-        accent: 图标底色（主题强调色）。
         parent: Qt 父对象。**传主窗口**，于是它跟着窗口一起销毁。
     """
 
@@ -121,7 +131,6 @@ class TrayController(QObject):
         self,
         *,
         available: bool | None = None,
-        accent: str = "#6b7280",
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -150,7 +159,7 @@ class TrayController(QObject):
         self._quit_action.triggered.connect(self.quit_requested)
         self._menu.addAction(self._quit_action)
 
-        self._tray = QSystemTrayIcon(build_icon(accent), parent)
+        self._tray = QSystemTrayIcon(build_icon(), parent)
         self._tray.setToolTip("Axo")
         self._tray.setContextMenu(self._menu)
         # 双击与单击都叫回窗口：Windows 上双击是习惯，而 Linux 的某些面板只发单击。
@@ -166,11 +175,6 @@ class TrayController(QObject):
         关窗那一支的判据就是它：为假时行为与托盘出现之前完全一样（关窗即退）。
         """
         return self._tray is not None
-
-    def set_accent(self, accent: str) -> None:
-        """主题换了，重画图标。**不可用时是空操作**，调用方不必先问。"""
-        if self._tray is not None:
-            self._tray.setIcon(build_icon(accent))
 
     def show(self) -> None:
         """放上去。**幂等**——``QSystemTrayIcon.show()`` 本来就是。"""
