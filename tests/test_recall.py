@@ -520,3 +520,91 @@ def test_a_dirty_span_is_ignored_rather_than_failing_the_round(store: MemoryStor
 
     assert ledger.injected, "召回本身不受影响"
     assert ledger.injected[0].span is None
+
+
+NOW = datetime(2026, 10, 14, 15, 30).timestamp()
+YESTERDAY = datetime(2026, 10, 13, 22, 41).timestamp()
+LAST_WEEK = datetime(2026, 10, 6, 9, 0).timestamp()
+
+
+def test_time_window_hits_outrank_the_rest(store: MemoryStore) -> None:
+    """「昨天我说了什么」——窗内那条必须排在窗外那条前面。
+
+    这是整批的验收点。以前两条打成平手（词面都撞不上「昨天」），于是召回按权重
+    随缘排，用户看到的是「她记不住事」。
+    """
+    outside = add(store, "路由器在书房书架顶层。", created_at=LAST_WEEK)
+    inside = add(store, "感冒那位回来了。", created_at=YESTERDAY)
+
+    ledger = recall(
+        store,
+        query_text="昨天我说了什么",
+        budget_tokens=10_000,
+        config=RecallConfig(min_score=0.0, max_items=2),
+        now=NOW,
+    )
+
+    assert list(ledger.injected_ids) == [inside.memory_id, outside.memory_id]
+
+
+def test_the_ledger_says_which_window_it_used(store: MemoryStore) -> None:
+    """账本要能回答「你说的昨天是哪一天」——两行的时间戳与它必须可比。"""
+    add(store, "感冒那位回来了。", created_at=YESTERDAY)
+
+    ledger = recall(
+        store,
+        query_text="昨天我说了什么",
+        budget_tokens=10_000,
+        config=RecallConfig(min_score=0.0),
+        now=NOW,
+    )
+
+    assert "temporal" in ledger.channels
+    window_notes = [note for note in ledger.notes if note.startswith("时间窗")]
+    assert window_notes, f"账本没说用了哪个时间窗：{ledger.notes}"
+    assert "2026-10-13 00:00" in window_notes[0]
+    assert "窗内 1 条" in window_notes[0]
+
+
+def test_a_window_hit_survives_even_without_an_encoding(store: MemoryStore) -> None:
+    """窗内命中不因缺编码被挡——用户问的是那段时间里有什么。
+
+    缺编码是数据问题，但它在任何不带时间词的轮次里都会以 NO_ENCODING 冒出来，
+    不会因为这一条放行就永远瞒住。
+    """
+    bare = MemoryItem(
+        memory_id=new_ulid(),
+        kind=MemoryKind.FACT,
+        tier=Tier.LONGTERM,
+        content="那天说了路由器的事。",
+        taint=Taint.USER,
+        created_at=YESTERDAY,
+    )
+    store.add(bare)
+
+    ledger = recall(
+        store,
+        query_text="昨天我说了什么",
+        budget_tokens=10_000,
+        config=RecallConfig(min_score=0.0),
+        now=NOW,
+    )
+
+    assert list(ledger.injected_ids) == [bare.memory_id]
+    assert ledger.injected[0].scores.temporal == 1.0
+
+
+def test_without_a_time_phrase_there_is_no_temporal_channel(store: MemoryStore) -> None:
+    """没认出时间就没有这个通道——不是「都算命中」。"""
+    add(store, "路由器在书房。", created_at=YESTERDAY)
+
+    ledger = recall(
+        store,
+        query_text="路由器在哪",
+        budget_tokens=10_000,
+        config=RecallConfig(min_score=0.0),
+        now=NOW,
+    )
+
+    assert "temporal" not in ledger.channels
+    assert all(item.scores.temporal == 0.0 for item in ledger.injected)

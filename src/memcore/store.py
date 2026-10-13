@@ -530,6 +530,26 @@ class MemoryStore:
             ).fetchall()
         return {str(row["memory_id"]) for row in rows}
 
+    def items_created_between(self, since: float, until: float) -> list[MemoryItem]:
+        """按 ``created_at`` 取一段时间里的条目（升序，半开区间 ``[since, until)``）。
+
+        时间窗召回要用它——「昨天我说了什么」的检索键是时间，不是词面。
+
+        **不做任何语义过滤**：``tier`` / ``taint`` / ``pinned`` 一律不看。「这段时间
+        里有什么」是存储层的事实，「哪些该进上下文」是召回层的判断；混在一起之后
+        账本就说不清是谁丢的。调用方拿全量再自己筛。
+
+        没有为 ``created_at`` 建索引：它每轮只跑一次、库在千条量级，而加索引要动
+        建表语句——本库的纪律是**库结构一字不动**（见 ``docs/memory.md``）。
+        """
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM memories WHERE created_at >= ? AND created_at < ?"
+                " ORDER BY created_at, memory_id",
+                (float(since), float(until)),
+            ).fetchall()
+        return [self._row_to_item(row) for row in rows]
+
     def ids_for_session(self, session_id: str) -> list[str]:
         """某个会话里写下的全部记忆 id。
 

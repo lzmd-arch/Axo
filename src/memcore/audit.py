@@ -40,6 +40,7 @@ _ATTRIBUTION_FLOOR = 0.005
 _RAW_DISPLAY_EPSILON = 0.01
 
 _CHANNEL_NAMES: tuple[tuple[str, str], ...] = (
+    ("temporal", "时间"),
     ("semantic", "语义"),
     ("lexical", "词法"),
     ("graph", "联想"),
@@ -107,6 +108,13 @@ class ChannelScores:
     脱钩。原始余弦如果需要，在 :attr:`semantic_raw` 里。
 
     :attr:`graph` 在 P1 恒为 0——关联基质要到 P4 才建。
+    """
+
+    temporal: float = 0.0
+    """时间窗通道。**只有 0 和 1 两档**：这条记忆在不在用户点名的那段时间里。
+
+    不做"越近越高分"的连续打分——那是另一件事（新近度），而用户说的是「昨天我
+    说了什么」，他要的是**那一批**，不是"最近的几条"。
     """
 
     lexical: float = 0.0

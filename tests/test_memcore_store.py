@@ -431,3 +431,22 @@ def test_meta_is_stored_as_readable_json(store: MemoryStore) -> None:
     connection.close()
     assert json.loads(raw) == {"键": "值"}
     assert "值" in raw, "ensure_ascii=False：中文不该被转义成 \\uXXXX"
+
+
+def test_items_created_between_is_half_open_and_unfiltered(store: MemoryStore) -> None:
+    """按时间区间读：半开区间，而且不做任何语义过滤。
+
+    「这段时间里有什么」是存储层的事实，「哪些该进上下文」是召回层的判断。存储层
+    顺手把 tier/pinned 筛了，账本就说不清是谁丢的。
+    """
+    early = make_item("早的。", created_at=100.0)
+    edge = make_item("卡在 until 上的。", created_at=200.0)
+    late = make_item("晚的。", created_at=300.0)
+    forgotten = make_item("已经忘了的。", created_at=150.0, tier=Tier.COLD)
+    for item in (early, edge, late, forgotten):
+        store.add(item)
+
+    hits = store.items_created_between(100.0, 200.0)
+
+    assert [item.content for item in hits] == ["早的。", "已经忘了的。"]
+    assert edge.memory_id not in {item.memory_id for item in hits}, "until 是开区间"

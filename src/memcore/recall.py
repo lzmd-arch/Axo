@@ -33,6 +33,7 @@ from __future__ import annotations
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import datetime
 
 import numpy as np
 
@@ -47,6 +48,8 @@ from .errors import SDRCapacityError, SpaceNotFoundError, StoreError
 from .graph import GraphIndex
 from .sdr import encode_lexical
 from .store import MemoryStore
+from .temporal_window import parse_time_window
+from .timefmt import format_when
 from .tokens import estimate_tokens
 from .types import SDR, MemoryItem, Tier, now_ts
 
@@ -99,6 +102,16 @@ class RecallConfig:
     """
 
     semantic_weight: float = 0.45
+
+    time_weight: float = 1.0
+    """时间窗通道的权重。**默认给满**，这是刻意的。
+
+    「昨天我说了什么」里的「昨天」不是形容词，是**范围限定**：窗内的那一批就是
+    用户要的东西，窗内的条目按定义该排在窗外的前面。给 0.6 这种半截权重的话，
+    一条窗外但词面撞车的记忆照样压得过窗内那条，症状是「她把前天的事说成昨天的」。
+
+    窗外的条目照常打分：窗里一条都没有时（那天确实什么都没记）不至于召回空手。
+    """
     """语义通道的可靠度。**只有词法的一半**，理由见上。
 
     这一条直接决定"语义通道单独能把一条记忆顶过阈值吗"：一条只有语义命中、
@@ -234,6 +247,16 @@ def recall(
     notes: list[str] = []
 
     query_lex = _query_sdr(query_text, notes)
+    # 时间窗跟着 now 走：now 是这条路径上唯一的时间旅行入口，而「昨天」不跟着
+    # 它走的话，同一句查询在今天和明天召回的东西不一样，测试写不出来。
+    window = parse_time_window(query_text, datetime.fromtimestamp(at))
+    window_ids: set[str] | None = None
+    if window is not None:
+        since, until = window
+        window_ids = {item.memory_id for item in store.items_created_between(since, until)}
+        notes.append(
+            f"时间窗 {format_when(since)} – {format_when(until)}（窗内 {len(window_ids)} 条）"
+        )
     scores_by_id = _semantic_channel(
         store, query_vector=query_vector, space_id=space_id, notes=notes
     )
@@ -253,7 +276,8 @@ def recall(
         )
         notes.append(f"联想通道已启用，但{reason}，本轮它不参与")
     channel_names = (
-        (("lexical",) if query_lex is not None else ())
+        (("temporal",) if window_ids is not None else ())
+        + (("lexical",) if query_lex is not None else ())
         + (("semantic",) if scores_by_id is not None else ())
         + (("graph",) if graph_scores is not None else ())
     )
@@ -263,6 +287,7 @@ def recall(
         query_lex=query_lex,
         scores_by_id=scores_by_id,
         graph_scores=graph_scores,
+        window_ids=window_ids,
         excluded=excluded,
         at=at,
         settings=settings,
@@ -457,6 +482,7 @@ def _scan(
     query_lex: SDR | None,
     scores_by_id: dict[str, float] | None,
     graph_scores: dict[str, float] | None,
+    window_ids: set[str] | None,
     excluded: set[str],
     at: float,
     settings: RecallConfig,
@@ -482,6 +508,8 @@ def _scan(
     # 都要在权重表里找到键。只在确实算过扩散时才加这一项，是为了让"没开"与"没有
     # 这个功能"走到完全一样的连乘上去。
     weights = {"lexical": lexical_weight, "semantic": semantic_weight}
+    if window_ids is not None:
+        weights["temporal"] = settings.time_weight
     if graph_scores is not None:
         weights["graph"] = settings.graph_weight
     pool: list[_Candidate] = []
@@ -502,13 +530,18 @@ def _scan(
         lexical = _lexical_score(query_lex, item)
         pair = None if scores_by_id is None else scores_by_id.get(item.memory_id)
         semantic = None if pair is None else pair[1]
+        temporal = 1.0 if window_ids is not None and item.memory_id in window_ids else None
 
-        if lexical is None and semantic is None:
+        # 时间窗命中**不因为缺编码被挡在外面**：用户问的是那段时间里有什么，而缺
+        # 编码这件事在任何不带时间词的轮次里都会以 NO_ENCODING 冒出来，瞒不住。
+        if lexical is None and semantic is None and temporal is None:
             rejected.append(_reject(item, RejectReason.NO_ENCODING, 0.0))
             continue
 
         graph = None if graph_scores is None else graph_scores.get(item.memory_id)
         fired: dict[str, float] = {}
+        if temporal is not None:
+            fired["temporal"] = temporal
         if lexical is not None:
             fired["lexical"] = lexical
         if semantic is not None:
@@ -526,7 +559,7 @@ def _scan(
                     item,
                     RejectReason.BELOW_THRESHOLD,
                     score,
-                    detail=_score_detail(lexical, semantic, graph),
+                    detail=_score_detail(lexical, semantic, graph, temporal=temporal),
                 )
             )
             continue
@@ -537,6 +570,7 @@ def _scan(
                 weight=weight,
                 tokens=estimate_tokens(item.content),
                 scores=ChannelScores(
+                    temporal=temporal or 0.0,
                     lexical=lexical or 0.0,
                     semantic=semantic or 0.0,
                     semantic_raw=0.0 if pair is None else pair[0],
@@ -600,8 +634,15 @@ def _lexical_score(query_lex: SDR | None, item: MemoryItem) -> float | None:
     return item.lex_sdr.jaccard(query_lex)
 
 
-def _score_detail(lexical: float | None, semantic: float | None, graph: float | None = None) -> str:
+def _score_detail(
+    lexical: float | None,
+    semantic: float | None,
+    graph: float | None = None,
+    temporal: float | None = None,
+) -> str:
     parts = []
+    if temporal is not None:
+        parts.append(f"时间 {temporal:.2f}")
     if lexical is not None:
         parts.append(f"词法 {lexical:.2f}")
     if semantic is not None:
