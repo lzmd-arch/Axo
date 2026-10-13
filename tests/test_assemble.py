@@ -55,6 +55,8 @@ def memory(
     *,
     tokens: int | None = None,
     created_at: float = 0.0,
+    session_id: str = "",
+    derived_from: tuple[str, ...] = (),
 ) -> MemoryInjection:
     body = content or f"这是一条记忆 {memory_id}。" * 4
     return MemoryInjection(
@@ -63,6 +65,8 @@ def memory(
         tokens=tokens if tokens is not None else METER.text(body),
         explain=f"因语义 0.87 被注入，{tokens or 0} token",
         created_at=created_at,
+        session_id=session_id,
+        derived_from=derived_from,
     )
 
 
@@ -1109,3 +1113,90 @@ def test_the_ledger_shows_the_same_stamp() -> None:
     )
 
     assert "[2026-10-13 22:41] 因语义 0.87 被注入" in result.ledger.render()
+
+
+# ── 注入时的临时归并（视图层，零写库） ──────────────────────────────────────
+
+
+def test_fragments_of_one_event_merge_on_the_way_out() -> None:
+    """还没被巩固过的新碎条目，在渲染那一层当场并成一条。
+
+    这一层归并**零写库**：库里的形状完全不变，变的只是发给模型的那几行。
+    """
+    result = assemble(
+        history(),
+        current="问。",
+        budget=ROOMY,
+        recalled=[
+            memory("a", "感冒那位回来了。", created_at=WHEN, session_id="s1"),
+            memory("b", "还带了杯奶茶。", created_at=WHEN + 120, session_id="s1"),
+        ],
+    )
+    system = system_of(result)
+
+    assert "· [2026-10-13 22:41–22:43] 感冒那位回来了；还带了杯奶茶。" in system
+    assert "原话：" in system
+    assert system.count("感冒那位回来了") == 2, "头部一次、原话一次"
+
+
+def test_a_derived_entry_replaces_the_fragments_it_stands_for() -> None:
+    """整理条目代表它的那几条原句——原句不再单独列。
+
+    它的正文里已经带着逐字原话，再列一遍就是同一段话在上下文里出现两次。
+    """
+    result = assemble(
+        history(),
+        current="问。",
+        budget=ROOMY,
+        recalled=[
+            memory(
+                "g1",
+                "感冒那位回来了；还带了杯奶茶。",
+                created_at=WHEN,
+                session_id="s1",
+                derived_from=("a", "b"),
+            ),
+            memory("a", "感冒那位回来了。", created_at=WHEN, session_id="s1"),
+            memory("b", "还带了杯奶茶。", created_at=WHEN + 120, session_id="s1"),
+        ],
+    )
+    system = system_of(result)
+
+    assert system.count("· [") == 1, "只该有一行记忆：" + chr(10) + system
+    assert "还带了杯奶茶。" in system
+
+
+def test_the_timeline_runs_in_time_order_and_unknown_times_go_last() -> None:
+    """按时间升序；时间不可知的排最后——排在最前会让模型以为那是最早的事。"""
+    later = datetime(2026, 10, 13, 23, 59).timestamp()
+    result = assemble(
+        history(),
+        current="问。",
+        budget=ROOMY,
+        recalled=[
+            memory("late", "晚的。", created_at=later, session_id="s1"),
+            memory("unknown", "没时间的。", session_id="s1"),
+            memory("early", "早的。", created_at=WHEN, session_id="s1"),
+        ],
+    )
+    system = system_of(result)
+
+    body = system.split("长期记忆：", 1)[1]
+    assert body.index("早的。") < body.index("晚的。") < body.index("没时间的。")
+
+
+def test_fragments_from_different_sessions_stay_apart() -> None:
+    """跨会话的两句不是「这一场里说的」，哪怕时间挨着也不并。"""
+    result = assemble(
+        history(),
+        current="问。",
+        budget=ROOMY,
+        recalled=[
+            memory("a", "感冒那位回来了。", created_at=WHEN, session_id="s1"),
+            memory("b", "还带了杯奶茶。", created_at=WHEN + 60, session_id="s2"),
+        ],
+    )
+    system = system_of(result)
+
+    assert system.count("· [") == 2
+    assert "原话：" not in system

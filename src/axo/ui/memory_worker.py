@@ -250,6 +250,8 @@ class AssemblyWorker(QObject):
                     explain=item.explain,
                     created_at=item.created_at,
                     span=item.span,
+                    session_id=item.session_id,
+                    derived_from=item.derived_from,
                 )
                 for item in ledger.injected
             ]

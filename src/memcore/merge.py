@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Generic, TypeVar
 
 from .text import tokenize
 from .timefmt import format_clock
@@ -56,11 +57,19 @@ SHORT_CHARS = 12
 MAX_GROUP = 8
 
 
-@dataclass(frozen=True)
-class FragmentGroup:
-    """一组碎条目。:attr:`items` 按 ``created_at`` 升序。"""
+F = TypeVar("F")
 
-    items: tuple[MemoryItem, ...]
+
+@dataclass(frozen=True)
+class FragmentGroup(Generic[F]):
+    """一组碎条目。:attr:`items` 按 created_at 升序。
+
+    **不挑条目的类型**：判据只看 memory_id / content / created_at / session_id
+    这四样，所以库里的 MemoryItem 与注入用的 MemoryInjection 都能进同一套分组
+    ——两层各写一套判据就会长出「库里的整理条目与上下文里的整理条目不是一回事」。
+    """
+
+    items: tuple[F, ...]
 
     @property
     def start(self) -> float:
@@ -103,7 +112,7 @@ def span_of(item: MemoryItem) -> tuple[float, float] | None:
     return (start, end) if start > 0 else None
 
 
-def group_fragments(items: Iterable[MemoryItem]) -> list[FragmentGroup]:
+def group_fragments(items: Iterable[F]) -> list[FragmentGroup[F]]:
     """把碎条目分组。**只并成 2 条以上**——单条没什么可并的。
 
     分组是**链式**的：按时间排序后一条条往前接，接不上就封口。所以「同一件事」
@@ -131,7 +140,7 @@ def group_fragments(items: Iterable[MemoryItem]) -> list[FragmentGroup]:
     return groups
 
 
-def render_group(group: FragmentGroup) -> str:
+def render_group(group: FragmentGroup[F]) -> str:
     """派生条目的正文：按时间序连成的一句 + 原话附在后面。
 
     原话带自己的时刻（不带日期——这一条本身挂着完整日期，见
@@ -145,12 +154,20 @@ def render_group(group: FragmentGroup) -> str:
     return head + "\n" + "    ↳ 原话：" + quotes
 
 
-def _eligible(item: MemoryItem) -> bool:
-    if item.pinned or item.is_persona_anchor:
+def _eligible(item: object) -> bool:
+    """谁有资格参与归并。**取不到的字段一律当「没有」**：
+
+    注入用的 :class:`~axo.session.assemble.MemoryInjection` 没有 ``pinned`` 也没有
+    ``meta``，而它照样要能分组。这里用鸭子类型而不是让两层互相认识——判据只有一套。
+    """
+    if getattr(item, "pinned", False):
         return False
-    if item.meta.get("derived"):
+    if getattr(item, "is_persona_anchor", False):
         return False
-    return bool(item.session_id)
+    meta = getattr(item, "meta", None) or {}
+    if meta.get("derived") or getattr(item, "derived_from", ()):
+        return False
+    return bool(getattr(item, "session_id", ""))
 
 
 def _compatible(left: MemoryItem, right: MemoryItem) -> bool:

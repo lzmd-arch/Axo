@@ -739,6 +739,7 @@ def _select(
             session_id=candidate.item.session_id,
             created_at=candidate.item.created_at,
             span=_span_of(candidate.item),
+            derived_from=_derived_of(candidate.item),
         )
         for candidate in selected
     ]
@@ -760,6 +761,17 @@ def _span_of(item: MemoryItem) -> tuple[float, float] | None:
     except (TypeError, ValueError):
         return None
     return (start, end) if start > 0 else None
+
+
+def _derived_of(item: MemoryItem) -> tuple[str, ...]:
+    """归并产物代表的原句 id；不是归并产物就是空元组。
+
+    与 :func:`_span_of` 同一条纪律：``meta`` 是自由格式的，读不出来就当没有。
+    """
+    raw = item.meta.get("derived_from")
+    if not isinstance(raw, (list, tuple)):
+        return ()
+    return tuple(str(each) for each in raw)
 
 
 def _best_mmr(pool: list[_Candidate], selected: list[_Candidate], mmr_lambda: float) -> int:

@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from memcore.merge import FragmentGroup, group_fragments, render_group
 from memcore.timefmt import format_span, format_when, has_time
 
 from ..llm.base import ChatMessage, ToolCall
@@ -153,6 +154,15 @@ class MemoryInjection:
 
     span: tuple[float, float] | None = None
     """归并产物的（起、止）时刻。单条记忆没有区间，记 ``None``。"""
+
+    session_id: str = ""
+    """写下这条记忆的会话。归并要看它——跨会话的两句不是「这一场里说的」。"""
+
+    derived_from: tuple[str, ...] = ()
+    """非空就说明这一条是**整理条目**，它代表这些原句。
+
+    正文里已经带着逐字原话，所以原句不再单独列——同一段话在上下文里出现两次，
+    第二次还占着记忆层的位置。"""
 
 
 @dataclass(frozen=True)
@@ -290,15 +300,60 @@ class Assembly:
 
 
 def _render_recall(items: Sequence[MemoryInjection]) -> str:
-    """L2 那一段正文。**每行都带时间**。
+    """L2 那一段正文。**每行都带时间**，碎条目当场并成一条。
 
     时间写在方括号里、紧挨正文：模型扫一行就同时拿到「什么时候」和「什么事」，
     而「昨天我说了什么」全靠这两样挨在一起。没时间的条目不打方括号——编一个时间
     比没有时间更坏，它会被模型当事实读（见 :mod:`memcore.timefmt`）。
+
+    **归并在视图这一层做，零写库。** 两条规则：有整理条目代表的原句不再单独列
+    （它的正文里带着逐字原话）；还没被整理过的新碎条目当场打包。判据与
+    :func:`memcore.merge.group_fragments` 是同一套——两层各写一套就会长出
+    「库里的整理条目与上下文里的整理条目不是一回事」。
+
+    **按时间升序排**，时间不可知的排最后：它们不属于这条时间线，而排在最前会
+    让模型以为那是最早发生的事。
     """
     if not items:
         return ""
-    return "\n".join([_RECALL_HEADER, *(_recall_line(item) for item in items)])
+    ordered = sorted(items, key=_order_key)
+    covered = {memory_id for item in ordered for memory_id in item.derived_from}
+    plain = [item for item in ordered if not item.derived_from and item.memory_id not in covered]
+    derived = [item for item in ordered if item.derived_from]
+
+    blocks: list[tuple[float, str]] = [(_sort_time(item), _recall_line(item)) for item in derived]
+    grouped: set[str] = set()
+    for group in group_fragments(plain):
+        if len(group) < 2:
+            continue
+        blocks.append((group.start, _merged_line(group)))
+        grouped.update(group.memory_ids)
+    blocks.extend(
+        (_sort_time(item), _recall_line(item)) for item in plain if item.memory_id not in grouped
+    )
+    blocks.sort(key=lambda block: block[0])
+    return "\n".join([_RECALL_HEADER, *(text for _, text in blocks)])
+
+
+def _sort_time(item: MemoryInjection) -> float:
+    """排时间线用的时刻。**时间不可知的丢到最后**（记无穷大，不是 0）。
+
+    记 0 会让它排在最前，而模型会把「没有时间」读成「最早」——那正是这批要治的
+    「模型形成错误的时间观念」。
+    """
+    return item.created_at if has_time(item.created_at) else float("inf")
+
+
+def _order_key(item: MemoryInjection) -> tuple[float, str]:
+    return (_sort_time(item), item.memory_id)
+
+
+def _merged_line(group: FragmentGroup[MemoryInjection]) -> str:
+    """一组碎条目 → 一行：方括号挂**区间**，正文第一行接在后面，原话另起一行。"""
+    start, end = group.span
+    stamp = format_span(start, end) if end > start else format_when(start)
+    head, _, tail = render_group(group).partition("\n")
+    return f"· [{stamp}] {head}" + (f"\n{tail}" if tail else "")
 
 
 def _recall_line(item: MemoryInjection) -> str:
