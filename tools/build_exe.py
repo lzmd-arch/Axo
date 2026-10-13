@@ -236,8 +236,13 @@ def _icon_pngs(sizes: Sequence[int]) -> list[tuple[int, bytes]]:
     16px 缩了还认得出）。资产读不到就返回空表，``_draw_icon`` 那边**不中断构建**
     （图标是外观，不该让整次构建挂掉）。
     """
-    from PySide6.QtCore import QBuffer, QByteArray, QIODevice, Qt
-    from PySide6.QtGui import QPixmap
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QBuffer, QIODevice, Qt
+    from PySide6.QtGui import QGuiApplication, QPixmap
+
+    # **必须先有一个 QGuiApplication**（缺了它 QPixmap 会当场 abort——0xC0000409，
+    # 在 Git Bash 里看着像退出码 127，第一版就死在这，而且一个字都不打）。
+    app = QGuiApplication.instance() or QGuiApplication([])
 
     source = QPixmap(str(ICON_SOURCE))
     if source.isNull():
@@ -253,8 +258,9 @@ def _icon_pngs(sizes: Sequence[int]) -> list[tuple[int, bytes]]:
         buffer = QBuffer()
         buffer.open(QIODevice.OpenModeFlag.WriteOnly)
         scaled.save(buffer, "PNG")
-        out.append((size, bytes(QByteArray(buffer.data()))))
+        out.append((size, bytes(buffer.data())))
         buffer.close()
+    del app
     return out
 
 
