@@ -422,6 +422,10 @@ class OpenAICompatChatBackend:
     #: 图挂在**一条单独的 user 消息**上：这个协议只认 ``user`` 行的 content 分片数组
     #: （见 :attr:`~axo.llm.base.ChatMessage.images`）。``agent/loop.py`` 按这个属性
     #: 决定截图是贴着工具结果那一行，还是另起一条。
+    #: 端点**拒绝音频**后翻真（见 :meth:`stream`）。界面据此说一句并关掉那格声明；
+    #: 实例属性（不是字段）——它是一次运行期的学习结果，不进任何配置。
+    degraded_audio = False
+
     images_ride_on = "user"
     #: 原声也只挂 **user** 行（input_audio 分片）——同一个协议的另一半。
     audio_ride_on = "user"
@@ -478,12 +482,28 @@ class OpenAICompatChatBackend:
         return None
 
     def stream(self, request: ChatRequest) -> Iterator[ChatChunk]:
-        """流式对话。异常在**第一次迭代**时抛出（见 :class:`ChatBackend`）。"""
+        """流式对话。异常在**第一次迭代**时抛出（见 :class:`ChatBackend`）。
+
+        **端点不认音频时自动退化重发一次**（2026-10-13 实测逼出来的）：勾了「听得见
+        原声」而端点的 content 变体里没有 ``input_audio``（DeepSeek 的 422 原话：
+        ``unknown variant input_audio, expected one of text, image_url, file``），那次
+        请求**整个回合死掉**——连转写文字都没发出去。退化成纯文字重发能保住这一轮；
+        ``degraded_audio`` 翻真，由界面说一句并把那格声明关掉（**不静默降级**）。
+        """
         payload = self._build_payload(request)
 
         with _client(self.base_url, self.api_key) as client:
             try:
                 with client.stream("POST", "/chat/completions", json=payload) as response:
+                    _raise_for_status(response, what=f"对话（{self.model}）", api_key=self.api_key)
+                    yield from _iter_sse_chunks(response)
+            except ChatBackendError as exc:
+                if not (_audio_rejected(str(exc)) and _request_has_audio(request)):
+                    raise
+                self.degraded_audio = True
+                with client.stream(
+                    "POST", "/chat/completions", json=self._build_payload(_strip_audio(request))
+                ) as response:
                     _raise_for_status(response, what=f"对话（{self.model}）", api_key=self.api_key)
                     yield from _iter_sse_chunks(response)
             except (httpx.RequestError, ssl.SSLError) as exc:
@@ -552,6 +572,25 @@ _IMAGE_MIME = "image/png"
 （DeepSeek 的文档里说明它**按内容认格式**、不看这个声明，所以就算哪天这里写错，
 症状也不会是"图发不出去"，而是别的地方说不清的东西——这正是要把它写死在一处的原因。）
 """
+
+
+def _audio_rejected(text: str) -> bool:
+    """端点的报错是"不认音频"吗？看它自己的措辞（``unknown variant input_audio``）。"""
+    return "input_audio" in text and ("unknown variant" in text or "deserialize" in text)
+
+
+def _request_has_audio(request: ChatRequest) -> bool:
+    return any(message.audio for message in request.messages)
+
+
+def _strip_audio(request: ChatRequest) -> ChatRequest:
+    """把整串消息里的原声剥掉（一次性的退化重发用）。"""
+    from dataclasses import replace as _replace
+
+    return _replace(
+        request,
+        messages=tuple(_replace(message, audio=()) for message in request.messages),
+    )
 
 
 def _build_message(message: ChatMessage) -> dict[str, Any]:

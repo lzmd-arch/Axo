@@ -20,7 +20,7 @@ from typing import Any
 
 import pytest
 
-from axo.llm.base import ChatBackendError
+from axo.llm.base import ChatBackendError, ChatMessage, ChatRequest
 from axo.llm.openai_compat import _as_arguments, _iter_sse_chunks
 
 
@@ -319,3 +319,105 @@ def test_an_empty_stream_still_produces_a_done_chunk() -> None:
     assert len(chunks) == 1
     assert chunks[0].done is True
     assert chunks[0].text == ""
+
+
+# ── 端点不认音频：剥掉重发一次，回合不丢 ────────────────────────────────────
+#
+# 2026-10-13 真机实测：勾了「听得见原声」发给 DeepSeek，回来的是
+# `unknown variant input_audio, expected one of text, image_url, file`——**整个回合死掉**，
+# 连转写文字都没发出去。退化重发保住这一轮；degraded_audio 翻真，界面去说一句。
+
+
+class _FakeReply:
+    """只实现 `_raise_for_status` 与 `_iter_sse_chunks` 用到的那几格。"""
+
+    def __init__(self, status: int, text: str, pieces: list[bytes] | None = None) -> None:
+        self.status_code = status
+        self.is_success = 200 <= status < 300  # httpx 的语义
+        self.text = text
+        self._pieces = pieces or []
+
+    def iter_bytes(self) -> Iterator[bytes]:
+        yield from self._pieces
+
+
+class _FakeStream:
+    def __init__(self, reply: _FakeReply) -> None:
+        self._reply = reply
+
+    def __enter__(self) -> _FakeReply:
+        return self._reply
+
+    def __exit__(self, *_args: object) -> bool:
+        return False
+
+
+class _FakeClient:
+    def __init__(self, script: list[_FakeReply]) -> None:
+        self._script = list(script)
+        self.payloads: list[dict[str, Any]] = []
+
+    def __enter__(self) -> _FakeClient:
+        return self
+
+    def __exit__(self, *_args: object) -> bool:
+        return False
+
+    def stream(self, _method: str, _path: str, *, json: dict[str, Any]) -> _FakeStream:
+        self.payloads.append(json)
+        return _FakeStream(self._script.pop(0))
+
+
+def _backend_with(client: _FakeClient) -> Any:
+    from axo.llm.openai_compat import OpenAICompatChatBackend
+
+    backend = OpenAICompatChatBackend.__new__(OpenAICompatChatBackend)
+    backend.model = "deepseek-flash"
+    backend.base_url = "https://api.deepseek.com/v1"
+    backend.api_key = "sk-test"
+    backend.context_window = 65536
+    return backend
+
+
+def test_a_rejected_audio_cause_resends_without_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """端点 422 说不认 `input_audio` → **剥掉原声重发一次**，这轮的回答照常出来；
+    ``degraded_audio`` 翻真（界面据此说一句并关掉那格）。"""
+    import axo.llm.openai_compat as mod
+
+    raw = _sse(_delta(content="好的")) + _sse("[DONE]")
+    denied = _FakeReply(
+        422,
+        '{"error": {"message": "messages[0]: unknown variant input_audio, '
+        'expected one of text, image_url, file"}}',
+    )
+    client = _FakeClient([denied, _FakeReply(200, "", [raw])])
+    monkeypatch.setattr(mod, "_client", lambda *_args, **_kwargs: client)
+
+    backend = _backend_with(client)
+    request = ChatRequest(messages=[ChatMessage(role="user", content="你好", audio=("V0FW",))])
+    chunks = list(backend.stream(request))
+
+    assert [c.text for c in chunks if c.text] == ["好的"], "重发那一轮没出正文"
+    assert len(client.payloads) == 2
+    first, second = client.payloads
+    assert "input_audio" in json.dumps(first)
+    assert "input_audio" not in json.dumps(second), "重发还带着原声"
+    assert backend.degraded_audio is True
+
+
+def test_other_errors_never_trigger_the_resend(monkeypatch: pytest.MonkeyPatch) -> None:
+    """反空转：**别的错误不许被当成"不认音频"**——421（key 错）也带 URL、400 参数错也
+    会重试的话，一个真正的故障会被悄悄重放两次，还顺手把用户的原声剥了。"""
+    import axo.llm.openai_compat as mod
+
+    denied = _FakeReply(401, '{"error": {"message": "invalid api key"}}')
+    client = _FakeClient([denied])
+    monkeypatch.setattr(mod, "_client", lambda *_args, **_kwargs: client)
+
+    backend = _backend_with(client)
+    request = ChatRequest(messages=[ChatMessage(role="user", content="你好", audio=("V0FW",))])
+    with pytest.raises(ChatBackendError):
+        list(backend.stream(request))
+
+    assert len(client.payloads) == 1, "别的错误不该重发"
+    assert backend.degraded_audio is False

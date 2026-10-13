@@ -2075,6 +2075,19 @@ class MainWindow(QMainWindow):
         )
         # ``tool_trace`` 只有任务那一侧才有（``ChatWorker`` 的统计里没有这个键），
         # 所以取缺省。**装的是哪套策略决定它有没有用**——条目模式根本不看它。
+        # **端点不认音频的退化要说出来，并把那格声明关掉**（`openai_compat.stream`
+        # 已经自动用纯文字重发了一次，这一轮没丢）。不关的话下一轮还会白发一次原声、
+        # 再退化一次——每次都慢一拍，而用户看不出为什么。
+        if getattr(self._backend, "degraded_audio", False):
+            self._backend.degraded_audio = False
+            self._audio_in = False
+            self._settings_store.save_tools(self._current_tool_settings())
+            self.chat_view.append_message(
+                "system",
+                "**原声没有发出去**（这个端点不认音频——回的是 unknown variant input_audio）。"
+                + "\n\n"
+                + "这一轮已按转写文字回答；「当前模型听得见原声」那格已替你关掉，想再试就重新勾。",
+            )
         self._remember(text, interrupted=interrupted, tool_trace=statistics.get("tool_trace", ()))
         self._reset_generation_state()
         if self._spoken_reply:
