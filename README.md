@@ -54,7 +54,20 @@
 **她会开口说话（TTS）。** 声音是**离线克隆**的：`models/voices/<名字>/` 下放一段 10–30 秒
 的参考音（`ref.wav`）和它的逐字稿（`ref.txt`），她的声音就用那个音色（零样本，不需要训练）。
 发声引擎是一个**独立安装的组件**（自带它的依赖，torch 不进本程序），默认监听
-`http://127.0.0.1:8800`——**它没在跑时不出声，但会说一句原因**，对话照常。要出声的是两类
+`http://127.0.0.1:8800`——**它没在跑时不出声，但会说一句原因**，对话照常。参考引擎是
+**F5-TTS**（2026-10-13 实测选定：零样本克隆只要参考音；RTX 5060 上热延迟约 **3.8 秒/41 字**，
+CPU 186 秒——**必须用 CUDA 版 torch**，先装 `torch --index-url …/whl/cu128` 再装 f5-tts，
+顺序反了会装成 CPU 版）。组件的安装与启动三步：
+
+```
+uv venv --python 3.11                 # 组件自己的 venv（别混进 Axo 的）
+uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+uv pip install f5-tts
+python server.py --voices <数据目录>\models\voices --port 8800
+```
+
+（`server.py` 是那个组件仓里的参考实现，只说 `/v1/audio/speech` 一件事；引擎换掉时改它，
+Axo 一行不用动。）要出声的是两类
 时刻：你**说话**那一轮她的回答、到点那句提醒；打字问一句不响（设置 → 语音里能关、能调
 音量音色）。
 

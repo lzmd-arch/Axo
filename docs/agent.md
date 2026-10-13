@@ -843,6 +843,23 @@ Live2D 接入（P6b）时把 `setSpeaking` 接在同一个出口上，**不许�
 **捎上原声的那一轮 `tools=()`**（一句 system「这一轮只听、不调工具」）：音频模型多半不
 实现工具调用；对着说话的形态是对话不是任务；想用工具就打字说——可退化、可解释。
 
+### 选型实测（2026-10-13，RTX 5060 / Windows）：**参考引擎定 F5-TTS**
+
+| 引擎 | 装法 | 零样本克隆 | 实测 |
+|---|---|---|---|
+| **F5-TTS** | `pip install f5-tts`（唯一能纯 pip 装的） | ref.wav + ref.txt | **热延迟 3.8 秒/41 字**（≈9× 实时）；冷启动 55 秒是模型加载 |
+| GPT-SoVITS | 仓库 + 预训练权重手工装 | 更强（可微调） | 未装（摩擦最大的一家） |
+| CosyVoice2 | 仓库 + modelscope 权重 | 好 | 未装 |
+
+**两个坑已记**：① 必须**先装 CUDA 版 torch 再装 f5-tts**（反了装 CPU 版，19 字合成 186 秒）；
+② torchaudio 2.11 的 `load` 走 torchcodec，加载 FFmpeg 共享库失败 → 组件的适配层把
+`torchaudio.load` 换成 soundfile（**只换那一个绑定**，f5-tts 调用点零改动）。
+
+**音频侧车选型也有答案**：llama.cpp 的多模态文档明确支持 **audio 输入**（不是猜测——
+`docs/multimodal.md` 原文「we support image, audio and video input」），8 GB 档现成 GGUF：
+**Qwen2.5-Omni-3B**（音频+视觉+文本）、Voxtral-Mini-3B、Ultravox-1B-llama。也就是说侧车
+**不必自养 torch**——llama.cpp server 就够，`input_audio` 入参待跑通后补（S15）。
+
 ### 三家克隆 TTS 引擎的 API 形状（决定契约为什么不贴引擎）
 
 | 引擎 | 自带 HTTP | 形状 | 直接说 `/v1/audio/speech`？ |
