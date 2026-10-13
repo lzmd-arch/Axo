@@ -34,8 +34,10 @@ from __future__ import annotations
 
 import base64
 import sys
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -131,6 +133,7 @@ from ..session.budget import TokenBudget, TokenMeter
 from ..session.environment import build_environment
 from ..session.indicator import ContextState, context_state, format_context
 from ..session.store import Message, Session, SessionStore, new_session_id
+from ..tts import SpeechReceipt
 from .agent_worker import AgentWorker
 from .app import make_settings
 from .chat_view import ChatView
@@ -651,6 +654,7 @@ class MainWindow(QMainWindow):
         #: 设置整份现读；组件不在也只是不出声（``_on_tts_done`` 的收条纪律）。
         self._voice_settings = self._settings_store.load_voice()
         self._speech_player = SpeechPlayer(parent=self)
+        self._speech_player.finished.connect(self._on_speech_played)
         self._speech_backend = RemoteSpeech(self._voice_settings.base_url)
         #: 合成的一对（线程, worker），形状照 ``_speak_*`` 那一套。
         self._tts_thread: QThread | None = None
@@ -662,6 +666,11 @@ class MainWindow(QMainWindow):
         #: 而不是栈上传参；每个真正发出去的 ``_on_submit`` 重写它，早退分支不残留。
         self._spoken_reply = False
         self._pending_audio = b""
+        #: **播出回执**（``tts.SpeechReceipt``）：她说的那句出没出声。**下一轮进
+        #: 环境槽后即清**——它是一条关于「刚说那句」的信号，不是常驻状态。
+        self._speech_receipt: Any = None
+        #: 正在念/正要念的那句（回执要引用它；合成与播放是两步）。
+        self._speaking_text = ""
 
         #: 周期巩固的表。**与上面那个并存、不打架**：两个独立 ``QTimer``、两个不同的
         #: 槽、没有共享可变状态（见 ``ui/consolidation_scheduler.py`` 的模块文档）。
@@ -1644,6 +1653,7 @@ class MainWindow(QMainWindow):
             # 账本里那句 note 说出来，不静默。
             recall_config=self._recall_config(),
             graph=self._graph,
+            speech_receipt=self._take_speech_receipt(),
         )
         worker.ready.connect(self._on_assembly_ready)
         worker.failed.connect(self._on_prepare_failed)
@@ -2454,6 +2464,28 @@ class MainWindow(QMainWindow):
         if alert is not None:
             self._tell_reminder(alert, note="等了二十秒还没说完")
 
+    @Slot()
+    def _take_speech_receipt(self) -> str:
+        """拿走播出回执的那行字。**拿走即清**（用完即清）。没有回执返回空串。
+
+        交给模型的那一行长这样（``tts.SpeechReceipt.describe``）：
+        ``播出回执（23:41）：已播出「记得买牛奶。」`` / ``…：**没播成**「…」——原因``。
+        时间戳是**完成（或失败）时刻**——没有它，模型分不出是这一句还是三分钟前那句。
+        """
+        receipt, self._speech_receipt = self._speech_receipt, None
+        if receipt is None:
+            return ""
+        at = datetime.fromtimestamp(receipt.at).strftime("%H:%M")
+        return receipt.describe(at=at)
+
+    def _on_speech_played(self) -> None:
+        """她那句**播完了**（``SpeechPlayer.finished``——只有自然播完才发）。
+
+        回执记的是**完成时刻**：「这一句出没出声」是一句关于结束的话，而打断与失败
+        各有自己的收条（:meth:`_stop_speech` / :meth:`_on_tts_done`）。
+        """
+        self._speech_receipt = SpeechReceipt(at=time.time(), text=self._speaking_text, ok=True)
+
     def _speak_reply(self, text: str) -> None:
         """把她说的这段交给组件合成、然后播出来。**出声的唯一入口。**
 
@@ -2470,6 +2502,7 @@ class MainWindow(QMainWindow):
             return
         thread = QThread(self)
         worker = TtsWorker(self._speech_backend, text, self._voice_settings.voice)
+        self._speaking_text = text
         self._tts_serial += 1
         serial = self._tts_serial
         self._tts_live = True
@@ -2495,10 +2528,16 @@ class MainWindow(QMainWindow):
             # 失败**说一句**（同 `_on_voice_done` 的纪律）：静默的话，
             # 「该出声的没出声」与「这个功能本来就不出声」长得一模一样。
             self.chat_view.append_message("system", f"**没有出声**\n\n{result.reason}")
+            self._speech_receipt = SpeechReceipt(
+                at=time.time(), text=self._speaking_text, ok=False, reason=result.reason
+            )
             return
         problem = self._speech_player.speak(result.wav)
         if problem:
             self.chat_view.append_message("system", f"**没有出声**\n\n{problem}")
+            self._speech_receipt = SpeechReceipt(
+                at=time.time(), text=self._speaking_text, ok=False, reason=problem
+            )
 
     def _stop_speech(self, *, tell: bool) -> None:
         """让她让路（:meth:`_on_submit` 的第一件事）。
@@ -2517,6 +2556,11 @@ class MainWindow(QMainWindow):
         时也会到达（纯播放的打断、合成还没回来的打断），放在那句 return 之后就全漏掉了
         ——而漏掉的症状是"她说到一半停不下来"，正是让路要治的那个病。
         """
+        if self._speech_player.playing:
+            # **打断也是一种没播成**——模型要能对上是哪一句没说完。
+            self._speech_receipt = SpeechReceipt(
+                at=time.time(), text=self._speaking_text, ok=False, reason="没播完（被打断了）"
+            )
         self._speech_player.stop()
         self._tts_live = False
         if self._speak_worker is None:

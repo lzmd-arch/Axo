@@ -198,6 +198,11 @@ def test_the_slot_actually_pushes_that_sentence(qapp: Any) -> None:
         # 出声那一族（2026-10-13）：这个替身只关心空回复那句话，朗读全换空操作。
         _spoken_reply=False,
         _speak_reply=lambda _text: None,
+        # 退化说明那一条（422 剥音频重发）只在 degraded_audio 为真时才写东西。
+        _backend=SimpleNamespace(degraded_audio=False),
+        _audio_in=False,
+        _settings_store=SimpleNamespace(save_tools=lambda _s: None),
+        _current_tool_settings=lambda: None,
     )
 
     MainWindow._on_reply_finished(window, "", {"interrupted": False})  # type: ignore[arg-type]

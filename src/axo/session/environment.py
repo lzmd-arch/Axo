@@ -41,6 +41,7 @@ def build_environment(
     now: datetime | None = None,
     tools_declared: bool = True,
     needs_clarification: bool = False,
+    speech_receipt: str = "",
 ) -> str:
     """拼 L1 的正文。
 
@@ -81,4 +82,9 @@ def build_environment(
         # 一句**事件**，不是一句"我做不到"。也**不列清单**——清单会被原样背成
         # 能力免责声明，两件事的现场都在模块文档里。
         lines.append("这一轮没有工具可用，也不会有任何动作被执行。")
+    if speech_receipt:
+        # 播出回执（``tts.SpeechReceipt.describe`` 的产物）。**用完即清**（调用方
+        # 拿走即抹）：这是一条关于「刚说的那句出没出声」的信号，不是常驻状态。
+        # 带时间戳、失败带原因——见 ``tts.SpeechReceipt`` 那三条要求。
+        lines.append(speech_receipt)
     return "\n".join(lines)

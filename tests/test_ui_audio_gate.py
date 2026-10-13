@@ -28,6 +28,12 @@ class _Recorder:
     def append_message(self, role: str, text: str, meta: dict | None = None) -> None:
         self.calls.append((role, text))
 
+    def end_message(self) -> None:
+        self.calls.append(("endMessage", ""))
+
+    def set_status(self, text: str) -> None:
+        self.calls.append(("setStatus", text))
+
 
 def _window(*, cloud: bool, hears: bool, audio: bytes = b"", ride: str | None = "user") -> Any:
     window = SimpleNamespace(
@@ -117,3 +123,32 @@ def test_declared_but_unrefusable_says_why(qapp: Any) -> None:
     said = [text for role, text in window.chat_view.calls if role == "system"]
     assert said and "原声没有发出去" in said[0]
     assert "Ollama" in said[0], "没说清是哪一路收不了"
+
+
+def test_a_degraded_endpoint_is_announced_and_the_flag_flipped_off(qapp: Any) -> None:
+    """端点不认音频（422）→ `openai_compat` 用纯文字重发了，**界面要说一句并把那格
+    自动关掉**：不说的话用户只看到这一轮莫名慢一拍；不关的话下一轮还会白发一次原声、
+    再退化一次。想再试就重新勾——这是可逆的，不是替他做主。"""
+    settings = SimpleNamespace(saved=[], save_tools=lambda s: settings.saved.append(s))
+    window = SimpleNamespace(
+        _backend=SimpleNamespace(degraded_audio=True),
+        _audio_in=True,
+        _tool_settings=SimpleNamespace(audio_in=True),
+        _settings_store=settings,
+        _current_tool_settings=lambda: SimpleNamespace(audio_in=False),
+        chat_view=_Recorder(),
+        # `_on_reply_finished` 的其余收尾（落逐字稿/记忆/复位）与这条判据无关，换记录器。
+        _append=lambda _message: None,
+        _remember=lambda *_args, **_kwargs: None,
+        _reset_generation_state=lambda: None,
+        _spoken_reply=False,
+    )
+
+    MainWindow._on_reply_finished(window, "好的", {"interrupted": False})  # type: ignore[arg-type]
+
+    assert window._backend.degraded_audio is False, "标记没复位——每轮都会再说一次"
+    assert window._audio_in is False, "那格没关——下一轮还会白发原声"
+    assert settings.saved, "没存盘——重启后又回到勾上"
+    said = [text for role, text in window.chat_view.calls if role == "system"]
+    assert said and "原声没有发出去" in said[0]
+    assert "unknown variant input_audio" in said[0], "没把端点的原话带上——用户要能自己查"

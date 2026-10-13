@@ -128,3 +128,13 @@ def test_the_two_turn_slots_are_independent() -> None:
     assert "没有工具可用" in both
     only_clarify = build_environment(now=datetime(2026, 10, 10, 15, 4), needs_clarification=True)
     assert "没有工具可用" not in only_clarify
+
+
+def test_the_speech_receipt_is_a_fresh_line_each_turn() -> None:
+    """播出回执进 L1 环境槽，**给的是那一行字本身**（格式由 `SpeechReceipt.describe` 管）；
+    空串时什么都不会加——那一轮本来就没出声这件事，不该在上下文里冒一行空话。"""
+    with_receipt = build_environment(speech_receipt="播出回执（23:41）：已播出「记得买牛奶。」")
+    without = build_environment()
+
+    assert "播出回执（23:41）" in with_receipt
+    assert "播出回执" not in without

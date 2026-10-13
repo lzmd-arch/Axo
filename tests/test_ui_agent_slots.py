@@ -35,6 +35,7 @@ from axo.agent.reminders import Alert, Occurrence, Reminder
 from axo.asr import Transcription
 from axo.llm.base import ChatMessage, ToolCall
 from axo.session.store import Message
+from axo.tts import SpeechResult
 from axo.ui import voice as voice_module
 from axo.ui.main_window import SPEECH_TIMEOUT_MS, MainWindow, display_rows
 from axo.ui.settings_store import ReminderSettings, SpeechSettings
@@ -176,11 +177,12 @@ class FakeVoice:
 
 
 class FakePlayer:
-    """``SpeechPlayer`` 的替身：只记"念了几段、停过几次"。"""
+    """``SpeechPlayer`` 的替身：只记"念了几段、停过几次、在不在念"。"""
 
     def __init__(self) -> None:
         self.played: list[bytes] = []
         self.stops = 0
+        self.playing = False  # 测试要判打断回执时自己拨成 True
 
     def speak(self, wav: bytes) -> str:
         self.played.append(wav)
@@ -251,6 +253,8 @@ class Stub(QObject):
     _speak_reply = MainWindow._speak_reply
     _on_reply_finished = MainWindow._on_reply_finished
     _on_tts_done = MainWindow._on_tts_done
+    _on_speech_played = MainWindow._on_speech_played
+    _take_speech_receipt = MainWindow._take_speech_receipt
     _track = MainWindow._track
 
     def __init__(
@@ -300,6 +304,8 @@ class Stub(QObject):
         self._tts_live = False
         self._tts_serial = 0
         self._spoken_reply = False
+        self._speech_receipt = None
+        self._speaking_text = ""
         self._voice_worker: Any = None
         self._voice_thread: Any = None
         #: ``_on_voice_done`` 会把识别结果交给 ``_on_submit``——这里换成一个记录器，
@@ -1471,3 +1477,58 @@ def test_a_spoken_user_line_is_marked_when_read_back() -> None:
     typed = Message(role="user", content="帮我记一下", spoken=False)
     assert display_rows([typed])[0]["meta"] == {}, "打字那句不该带小标"
     assert "spoken" not in typed.to_dict(), "假字段也写了——老行的逐字节不变就没了"
+
+
+# ── 播出回执：她说的那句出没出声，模型要知道 ────────────────────────────────
+#
+# 2026-10-13 模型自己提的需求（原话在提交信息里）：回执要**带时间戳**（分得出是哪一
+# 句）、**失败优先**（卡住的那次才要紧）、**别做太重**（一行够判断）。进下一轮环境槽、
+# 用完即清——不进逐字稿（它是关于播放的，不是对话）。
+
+
+def test_a_played_sentence_leaves_a_receipt_for_the_next_turn(qapp: Any) -> None:
+    """自然播完 → 回执 `ok`，**只在下一轮的环境槽里出现一次，然后清掉**。"""
+    stub = VoiceStub()
+    stub._speaking_text = "记得买牛奶。"
+    stub._speech_player.played.append(b"WAV")
+
+    stub._on_speech_played()
+
+    line = stub._take_speech_receipt()
+    assert "已播出" in line and "记得买牛奶" in line
+    assert ":" in line or "）" in line, "回执要带时刻——分不出是哪一句的回执没有用"
+    assert stub._take_speech_receipt() == "", "用完即清——同一条回执不许出现在每一轮"
+
+
+def test_a_failed_playback_says_the_reason(qapp: Any) -> None:
+    """合成失败/播放失败 → 回执带**原因**（顺利的回执用处有限，卡住的那次才要紧）。"""
+    stub = VoiceStub()
+    stub._speaking_text = "记得买牛奶。"
+    stub._tts_live = True
+    stub._tts_serial = 7
+
+    stub._on_tts_done(SpeechResult(reason="语音组件没连上（http://127.0.0.1:8800）"), 7)
+
+    line = stub._take_speech_receipt()
+    assert "没播成" in line
+    assert "语音组件没连上" in line
+
+
+def test_an_interruption_is_also_a_receipt(qapp: Any) -> None:
+    """打断也是「没播成」的一种——模型要能对上是哪一句没说完。"""
+    stub = VoiceStub()
+    stub._speaking_text = "她说的上一句。"
+    stub._speech_player.played.append(b"WAV")  # 占位：playing 判定看它
+    stub._speech_player.stop = lambda: None  # 不真停，保住 playing 供判定
+
+    class _Playing:
+        playing = True
+
+        def stop(self) -> None:
+            pass
+
+    stub._speech_player = _Playing()
+    stub._stop_speech(tell=False)
+
+    line = stub._take_speech_receipt()
+    assert "没播成" in line and "打断" in line

@@ -38,6 +38,7 @@ __all__ = [
     "DEFAULT_SPEECH_ENDPOINT",
     "SUPPORTED_SAMPLE_SUFFIXES",
     "SpeechBackend",
+    "SpeechReceipt",
     "SpeechResult",
     "Voice",
     "speech_payload",
@@ -66,6 +67,48 @@ class SpeechResult:
     @property
     def ok(self) -> bool:
         return bool(self.wav) and not self.reason
+
+
+@dataclass(frozen=True)
+class SpeechReceipt:
+    """**播出回执**：她说的那句话到底出没出声。**成功与失败都是它**（同族收条）。
+
+    为什么要有它（2026-10-13，模型自己提的）："我出声，但收不到任何回执，等于对着空的
+    说话，念错了也不知道"。三条要求照它的话做：
+
+    * **带时间戳**——只有「播完了」三个字分不出是这一句还是三分钟前那句；
+    * **失败优先**——顺利的回执用处有限，卡住的那次才是要紧的（否则"你那边一直没声，
+      两个人还都以为正常"）；
+    * **最小信号**——一行，能判断就行。
+
+    它**喂给模型**（进下一轮的 L1 环境槽，用完即清），不进逐字稿：逐字稿记的是对话
+    发生过什么，而这是一条关于**播放**的回执。
+    """
+
+    at: float
+    """播出结束（或失败）那一刻的 ``time.time()``。**完成时刻**不是开始时刻——回执
+    的语义是"这一句出没出声"。"""
+    text: str
+    """她说的那句（截到 :data:`RECEIPT_TEXT_CHARS`）。"""
+    ok: bool
+    reason: str = ""
+
+    def describe(self, *, at: str = "") -> str:
+        """渲染成上下文里的一行（``at`` 是 ``HH:MM`` 字符串，由调用方从 :attr:`at` 换）。"""
+        head = "播出回执（" + (at or "?") + "）："
+        quote = (
+            self.text
+            if len(self.text) <= RECEIPT_TEXT_CHARS
+            else self.text[:RECEIPT_TEXT_CHARS] + "…"
+        )
+        if self.ok:
+            return head + "已播出「" + quote + "」"
+        return head + "**没播成**「" + quote + "」——" + (self.reason or "原因不明")
+
+
+RECEIPT_TEXT_CHARS = 40
+"""回执里引多少个字。**够对应上是哪一句就行**——整句塞进上下文是浪费（那是模型自己
+写的，它有全文）。"""
 
 
 @dataclass(frozen=True)

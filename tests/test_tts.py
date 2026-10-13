@@ -17,6 +17,7 @@ import httpx
 
 from axo.llm.speech import RemoteSpeech
 from axo.tts import (
+    SpeechReceipt,
     SpeechResult,
     Voice,
     speech_payload,
@@ -158,3 +159,19 @@ def test_the_receipt_shape_matches_the_other_two() -> None:
     assert SpeechResult(wav=b"x").ok is True
     assert SpeechResult(reason="没成").ok is False
     assert SpeechResult().ok is False
+
+
+def test_the_receipt_is_a_one_line_signal_with_a_timestamp() -> None:
+    """回执渲染成**一行**：带时刻、失败带原因、正文截短——模型提的三条（"回执别做太重"）。"""
+    ok_line = SpeechReceipt(at=0.0, text="记得买牛奶。", ok=True).describe(at="23:41")
+    bad_line = SpeechReceipt(
+        at=0.0, text="记得买牛奶。", ok=False, reason="语音组件没连上"
+    ).describe(at="23:41")
+
+    assert ok_line == "播出回执（23:41）：已播出「记得买牛奶。」"
+    assert "**没播成**" in bad_line
+    assert "语音组件没连上" in bad_line, "失败必须带原因——顺利的回执用处有限，卡住的那次才要紧"
+    assert "23:41" in bad_line
+
+    long_text = SpeechReceipt(at=0.0, text="一" * 100, ok=True).describe(at="00:00")
+    assert len(long_text) < 80, "回执要最小——整句塞进上下文是浪费（模型自己有全文）"
