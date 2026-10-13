@@ -360,6 +360,7 @@ src/
     llm/              模型后端：Ollama（本机）+ OpenAI 兼容端点（云端，只做对话）
       base.py         ChatBackend / EmbeddingBackend 两个协议
       ollama.py       本机推理：NDJSON 流式
+      speech.py       语音组件调用端：贴 /v1/audio/speech（离线克隆 TTS 的独立程序）
       openai_compat.py 云端：SSE 流式 + 工具调用按 index 分片累加（**只实现对话**）
     session/          会话逐字稿、token 预算、上下文装配
       indicator.py    上下文指示灯的判定（纯函数，与界面无关）
@@ -385,6 +386,7 @@ src/
       window_place.py   把窗口放到光标所在那块屏（主窗口与记忆窗口共用）
       chat_view.py      网页对话区：QWebChannel 桥 + 外观三件套 + 人设卡片 + 确认卡片
       agent_worker.py   AgentWorker(QObject)：Qt 信号 ↔ 纯层的桥（gui 腿）
+      speech_player.py  SpeechPlayer（QAudioSink 直推 PCM）+ TtsWorker（合成，不 moveToThread）
       tray.py           系统托盘：程序化画的图标 + 三项菜单 + 一条气泡
       reminder_scheduler.py 单发 QTimer：到点了发一个 `Alert`（**不认识窗口，也不认识托盘**）
       consolidation_scheduler.py 单发 QTimer：周期到了发信号（与提醒**各一个**，不打架）
@@ -400,6 +402,9 @@ src/
     secrets.py        密钥加密：Windows DPAPI 的薄封装（**平台相关的东西集中在这一处**）
     autostart.py      开机自启：Windows 的 Run 键（同 `secrets.py`，平台相关的东西集中在一处）
     headless.py       登录时那一次：看一眼有没有到点的提醒，弹一条就退（**不 import Qt**）
+    asr.py            语音识别：一段 PCM → 一句话（**不 import Qt**；vosk 在函数内 import）
+    audio.py          音频形状：PCM↔WAV、时长、base64（stdlib；采集/预算/播放三家共用）
+    tts.py            语音合成的协议与音色扫描（**纯层**；httpx 调用端在 llm/speech.py）
     asr.py            语音识别：一段 PCM → 一句话（**不 import Qt**；vosk 在函数内 import）
 benchmarks/gold/      金标准语料（量具，不是数据集）
   memories.jsonl        200 条虚构记忆
@@ -447,6 +452,7 @@ tests/
   test_ui_elided_label.py 顶栏状态文字：省略号、样式表取色、以及**真顶栏到底给了它多少宽度**
   test_agent_trace.py  工具轨迹：参数取自逐字稿、配不上也留步、截断与 `result_chars`
   test_agent_handoff.py 通用握手槽：有界等待、token 身份（迟到的回答进不了下一次）、cancel 单向
+  test_speech_wire.py 出声那几处真的接上了（ast，核心腿）
   test_asr.py          语音识别（**vosk 是塞进 sys.modules 的假件**）：第一片才加载模型、
                     半采样接上下一片、三条失败各说一句话
   test_agent_proactive.py 她开口那一轮的提示词：只有一条 system、人格锚逐字带、身份那句话在正文前面

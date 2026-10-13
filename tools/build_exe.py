@@ -1262,6 +1262,7 @@ HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run）；
   做，声音不出去）：去 https://alphacephei.com/vosk/models 下
   vosk-model-small-cn-0.22.zip，解压到 %LOCALAPPDATA%\\axo\\models\\ 下面。
   没放的话，按下去会直接告诉你这一点。
+· **她会开口说话（TTS）。**声音是离线克隆的：数据目录 models/voices/<名字>/ 下放一段 10–30 秒的参考音（ref.wav）与它的逐字稿（ref.txt）。发声引擎是一个独立安装的组件（默认 http://127.0.0.1:8800）——没在跑时不出声，但会说一句原因。
 · "看一眼屏幕"要一个看得懂图片的模型：本机用 ollama pull minicpm-v:8b；
   云端的话去"设置 → 工具"勾上"当前模型看得见图"（比如 DeepSeek 的 deepseek-flash）。
   模型不支持时这个功能不会出现。

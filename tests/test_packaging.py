@@ -21,6 +21,9 @@ from pathlib import Path, PurePosixPath
 
 import pytest
 
+NL_CHAR = chr(10)
+QUOT = chr(34)
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _BUILD_TOOL = _REPO_ROOT / "tools" / "build_exe.py"
 
@@ -405,3 +408,24 @@ def test_the_license_files_inside_the_zip_have_distinct_names() -> None:
     assert arcs, "一份许可都没收到——这条判据在空转，先去查 _declared_frozen_set"
     duplicated = sorted({arc for arc in arcs if arcs.count(arc) > 1})
     assert duplicated == [], f"zip 里会重名的许可条目：{duplicated}。重名的会被后来的覆盖掉。"
+
+
+def test_torch_never_enters_this_repository() -> None:
+    """**PyTorch 不进本仓**（pyproject 里那条纪律）——语音那一族把它推给了独立组件。
+
+    克隆 TTS 与本地音频模型都在 torch 栈上，而它们以「自带依赖的独立程序」形态存在
+    （与 Ollama 同姿态）：Axo 只带调用端。这条断言钉的是那条纪律**没被顺手破掉**——
+    破掉的症状是产物暴涨几个 GB、许可表换血，而"加一个依赖"在某个 PR 里看着毫无代价。
+    """
+    # **剥掉 # 注释再找**：那条纪律的正文本身就写着「PyTorch 不进本仓」——
+    # 在注释里搜到它自己不算违规（第一版就这么误红的）。
+    body = NL_CHAR.join(
+        line
+        for line in (_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8").split(NL_CHAR)
+        if not line.strip().startswith("#")
+    ).lower()
+    for banned in ("torch", "f5-tts", "gpt-sovits"):
+        assert f"{QUOT}{banned}" not in body and f"{banned}>=" not in body, (
+            f"pyproject.toml 的依赖里出现了 {banned}——PyTorch 不进本仓（见那条纪律）；"
+            "语音引擎是独立组件，Axo 只带调用端"
+        )
