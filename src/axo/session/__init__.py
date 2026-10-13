@@ -28,7 +28,6 @@ from .assemble import (
     LayerReport,
     MemoryInjection,
     assemble,
-    layer_ceiling,
 )
 from .budget import CONVERSATION_BASE, PER_MESSAGE_OVERHEAD, TokenBudget, TokenMeter
 from .environment import build_environment
@@ -50,7 +49,6 @@ __all__ = [
     "TokenMeter",
     "assemble",
     "build_environment",
-    "layer_ceiling",
     "new_session_id",
     "summarize",
 ]

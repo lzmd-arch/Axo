@@ -16,9 +16,9 @@ from __future__ import annotations
 import pytest
 
 from axo.llm.base import ChatMessage, ToolCall
-from axo.session.assemble import Layer, layer_ceiling
 from axo.session.budget import (
     CONVERSATION_BASE,
+    DEFAULT_RESERVE_OUTPUT,
     GENERATION_PROMPT,
     IMAGE_TOKENS,
     PER_MESSAGE_OVERHEAD,
@@ -135,8 +135,15 @@ def test_the_three_layers_of_the_budget() -> None:
     """window → input_limit → usable，一层比一层紧，且方向不能反。"""
     budget = TokenBudget(window=16384, reserve_output=2048)
     assert budget.input_limit == 14336
-    assert budget.usable == int(14336 * (1 - UNDER_COUNT_TOLERANCE)) == 12902
-    assert budget.usable < budget.input_limit < budget.window
+    # **默认不再打那 10% 折扣**（那是一笔没人看得见的自设额度）。折扣还在，只是要显式要。
+    assert budget.usable == 14336
+    assert budget.tolerance == 0.0
+    assert (
+        TokenBudget(window=16384, reserve_output=2048, tolerance=UNDER_COUNT_TOLERANCE).usable
+        == 12902
+    )
+    # tolerance=0 时 usable **等于** input_limit：那道 10% 折扣已经拆掉了
+    assert budget.usable == budget.input_limit < budget.window
 
 
 def test_the_margin_covers_the_estimators_own_promise() -> None:
@@ -158,7 +165,11 @@ def test_the_margin_covers_the_estimators_own_promise() -> None:
 
 def test_the_tolerance_is_imported_not_duplicated() -> None:
     """容差与估计器的承诺是**同一个数**。两处各写一份就会漂开。"""
-    assert TokenBudget(window=4096).tolerance == UNDER_COUNT_TOLERANCE
+    # 默认值改成 0：以前那 10% 折扣是一笔没人看得见的自设额度（见 TokenBudget.tolerance）
+    assert TokenBudget(window=4096).tolerance == 0.0
+    assert (
+        TokenBudget(window=4096, tolerance=UNDER_COUNT_TOLERANCE).tolerance == UNDER_COUNT_TOLERANCE
+    )
 
 
 def test_the_reserve_is_real_only_if_the_request_gets_it() -> None:
@@ -168,7 +179,9 @@ def test_the_reserve_is_real_only_if_the_request_gets_it() -> None:
     ``max_tokens`` 为 ``None`` 时 Ollama 用同一个 ``num_ctx`` 生成，输出能一直涨到
     把输入挤掉，那时这个预留就只是账面上的。
     """
-    assert TokenBudget(window=16384).reserve_output > 0
+    # 默认不预留：只有 Ollama 那条链才需要（它的输出会挤掉输入）
+    assert TokenBudget(window=16384).reserve_output == 0
+    assert TokenBudget(window=16384, reserve_output=DEFAULT_RESERVE_OUTPUT).reserve_output > 0
 
 
 def test_a_window_that_leaves_no_input_is_rejected() -> None:
@@ -194,7 +207,9 @@ def test_the_ledger_record_is_complete() -> None:
     """账本里要能回答"这一轮为什么只注入了三条"，所以五层数都要记。"""
     record = TokenBudget(window=16384, reserve_output=2048).to_dict()
     assert set(record) == {"window", "reserve_output", "input_limit", "tolerance", "usable"}
-    assert record["usable"] < record["input_limit"]
+    # tolerance=0 时两者相等（折扣拆掉了）；记录里两个字段都留着，好让"这一轮为什么
+    # 只注入了三条"仍然可核对。
+    assert record["usable"] == record["input_limit"]
 
 
 # ── 图：先验常数与它的上限 ──────────────────────────────────────────────────
@@ -237,11 +252,12 @@ def test_one_image_never_eats_the_whole_tool_tail() -> None:
     """
     budget = TokenBudget(window=16384, reserve_output=2048)
 
-    ceiling = layer_ceiling(budget, Layer.TOOLS)
-
-    assert ceiling > IMAGE_TOKENS, f"一张图 {IMAGE_TOKENS} ≥ L5 额度 {ceiling}"
-    assert IMAGE_TOKENS / ceiling < 2 / 3, (
-        f"一张图吃掉 {IMAGE_TOKENS / ceiling:.0%} 的尾巴额度——正文就没地方放了"
+    # **份额拆掉之后没有"L5 额度"这回事了。** 以前这条断言要求一张图吃得下 L5 的
+    # 20% 份额还要给正文留地方；现在图与文字走同一套装箱规则，判据只剩一条：一张图
+    # 装得进窗口。装不进的那一刻是真的满了，不是配额用完了。
+    assert budget.usable > IMAGE_TOKENS, f"一张图 {IMAGE_TOKENS} ≥ 可用 {budget.usable}"
+    assert IMAGE_TOKENS / budget.usable < 2 / 3, (
+        f"一张图吃掉 {IMAGE_TOKENS / budget.usable:.0%} 的窗口——正文就没地方放了"
     )
 
 

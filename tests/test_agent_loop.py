@@ -111,6 +111,7 @@ def drive(
     store: MemoryStore,
     *,
     ceiling: int = ROOMY,
+    budget: TokenBudget | None = None,
     limits: LoopLimits = DEFAULT_LIMITS,
     answer: ApprovalDecision | None = ApprovalDecision.GRANT,
     messages: list[ChatMessage] | None = None,
@@ -123,7 +124,7 @@ def drive(
             registry=registry,
             ctx=ToolContext(store=store, session_id="S1", turn_seq=1),
             await_approval=lambda _request: answer,
-            budget=TokenBudget(window=8192),
+            budget=budget if budget is not None else TokenBudget(window=8192),
             meter=TokenMeter(),
             tools_ceiling=ceiling,
             limits=limits,
@@ -891,3 +892,24 @@ def test_a_tool_without_images_gets_no_carrier_message(store: MemoryStore) -> No
     users = [m for m in backend.requests[-1].messages if m.role == "user"]
     assert len(users) == 1, "没有图却还是捎了一条"
     assert users[0].images == ()
+
+
+def test_output_limits_ride_on_the_backend_quirk(store: MemoryStore) -> None:
+    """输出额度**只在那条会把输入挤掉的链上**才发。
+
+    云端（``reserve_output=0``）一个字都不传——payload 里干脆不出现这个字段，输出
+    长度走官方默认。Ollama 那条链才留一笔预留并真的传出去：不传的话它会拿同一个
+    ``num_ctx`` 生成，把输入挤掉，而挤掉的是最早的消息、也就是人格锚的位置。
+    """
+    registry = ToolRegistry([])
+    cases = (
+        ("云端不传", TokenBudget(window=8192), None),
+        ("Ollama 传预留量", TokenBudget(window=8192, reserve_output=2048), 2048),
+    )
+    for label, budget, expected in cases:
+        backend = ScriptedBackend(script=[[text_chunk("好。", done=True)]])
+        drive(backend, registry, store, budget=budget)
+        assert backend.requests, label
+        assert backend.requests[0].max_tokens == expected, (
+            f"{label}: {backend.requests[0].max_tokens}"
+        )

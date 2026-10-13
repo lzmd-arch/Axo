@@ -128,8 +128,8 @@ from ..paths import (
     reminders_path,
     sessions_dir,
 )
-from ..session.assemble import Assembly, Layer, layer_ceiling, stored_rows
-from ..session.budget import TokenBudget, TokenMeter
+from ..session.assemble import Assembly, stored_rows
+from ..session.budget import TokenBudget, TokenMeter, reserve_for
 from ..session.environment import build_environment
 from ..session.indicator import ContextState, context_state, format_context
 from ..session.store import Message, Session, SessionStore, new_session_id
@@ -235,24 +235,15 @@ SPEECH_TIMEOUT_MS = 20_000
 这个窗口了。
 
 **它与实测耗时贴得很近，这不是巧合也不是余量充足**：本机 ``qwen3-4b`` 开着思考时那一句
-要 3–15 秒（见 :data:`SPEECH_MAX_TOKENS`）。所以这个表不是"卡住了"的判据，而是
+要 3–15 秒（实测）。所以这个表不是"卡住了"的判据，而是
 "再等下去就该由程序说"的判据——真卡住的那种（后端读超时 300 秒）它当然也挡得住。
 """
 
-SPEECH_MAX_TOKENS = 512
-"""她那一句最多生成多少 token。**这个数是被"思考"顶上去的，不是话变长了。**
-
-2026-10-12 拿本机 ``qwen3-4b`` 实测：这个模型默认开着思考，而**思考走的是同一个额度**。
-给 160 时四次里四次把额度全用在思考上、正文一个字都不剩（界面看到的会是空回复 →
-降级）；给 512 之后六次里四次说出一句正常的话（``'晚安，记得做个好梦。'``），
-剩下的最坏一次 14.6 秒。1024 并没有更好（同样 5/6），只是把最坏耗时翻了一倍。
-
-**刻意不像 ``tools/smoke_agent.py`` 那样传 ``extra={"think": False}``。** 那确实快得多
-（0.2 秒、六次里四次说人话），但 ``think`` 是 Ollama 特有的键，而
-``llm/openai_compat.py`` 会把 ``extra`` 原样发进请求体顶层——云端后端未必认这个字段。
-更要紧的是：**这个程序里其它每一轮都没有关思考**，只在"她开口"这一轮关掉，等于让同一
-个模型在两条路上有两种推理行为，而那种差别只会在某次答非所问里露出来。
-"""
+# 以前这里有一个她那一轮自己的输出额度（512）。它已经被拆掉：自设额度正是这一
+# 批要消灭的东西。留下的是一条仍然成立的测量——**会思考的模型把思考也记进同一
+# 个额度**，2026-10-12 拿本机 qwen3-4b 实测：给 160 时四次里四次额度全花在思考
+# 上、正文一个字不剩（界面上是空回复 → 降级）；给 512 之后才说出正常的话。所以
+# 「额度设小一点」是错的方向，不设上限正好绕开它。
 
 _SPOKEN_TITLE = "语音说的"
 """说出来的那句 user 行的标题小字（回看用）。"""
@@ -1621,7 +1612,12 @@ class MainWindow(QMainWindow):
         self._append(Message(role="user", content=text, spoken=spoken))
         self.chat_view.append_message("user", text, {"title": _SPOKEN_TITLE} if spoken else None)
 
-        self._budget = TokenBudget(window=self._backend.context_window)
+        # 预留量**跟着后端走**：云端是 0（一个字都不传 ``max_tokens``），Ollama 那条
+        # 链才用 DEFAULT_RESERVE_OUTPUT——那是它的协议怪癖，不是我们的额度。
+        self._budget = TokenBudget(
+            window=self._backend.context_window,
+            reserve_output=reserve_for(self._backend),
+        )
         self._pending_text = text
         # **只在"这一轮真的要发出去"时落**：help/裸切换那些早退分支在上面就 return 了，
         # 不会把"说出来的"留到下一轮（下一轮进这里照样重写）。
@@ -1691,10 +1687,10 @@ class MainWindow(QMainWindow):
         # 去的是这一轮的对象本身，不是 self._recall_ledger 这个可变名字。**
         self.recall_updated.emit(ledger)
 
-        # ``max_tokens`` 必须等于装配器预留的那个数。不传的话 Ollama 会用同一个
-        # num_ctx 去生成——输出可以一直涨到把输入挤掉，而**挤掉的是最早的消息，
-        # 也就是人格锚的位置**。装配器算的是"输入能占多少"，只有把预留量真的发给
-        # 服务端，那个数才不是账面上的。
+        # ``max_tokens`` **只在 Ollama 那条链上发**（它的协议怪癖：不发就会拿同一个
+        # num_ctx 去生成，输出一直涨到把输入挤掉，而挤掉的是最早的消息、也就是人格
+        # 锚的位置）。云端发 ``None`` ——payload 里干脆不出现这个字段，输出长度走官方
+        # 默认，我们不设任何自设上限。
         #
         # 任务语域走另一条路：请求由工具循环**每一轮现拼**（它要在尾部追加工具
         # 消息、还要在到顶那轮把 ``tools`` 去掉），所以这里只把装配好的消息交给它。
@@ -1726,7 +1722,8 @@ class MainWindow(QMainWindow):
             self.chat_view.append_message("system", "这一轮没有可用的工具，按普通对话处理。")
 
         request = ChatRequest(
-            messages=list(assembly.messages), max_tokens=self._budget.reserve_output
+            messages=list(assembly.messages),
+            max_tokens=self._budget.reserve_output or None,
         )
         thread = QThread(self)
         worker = ChatWorker(self._backend, request)
@@ -1907,7 +1904,8 @@ class MainWindow(QMainWindow):
             ctx=ctx,
             budget=self._budget,
             meter=TokenMeter(),
-            tools_ceiling=layer_ceiling(self._budget, Layer.TOOLS),
+            # 工具尾巴的额度**不传**：循环自己算「装配完之后还剩多少」。份额拆掉
+            # 之后没有第二个数可传，而两个数一旦对不上，账本就废了。
         )
         worker.chunk.connect(self.chat_view.push_token)
         worker.finished.connect(self._on_reply_finished)
@@ -2344,7 +2342,13 @@ class MainWindow(QMainWindow):
                 persona=persona_texts(self._memory),
                 model_id=self._backend.model_id,
             ),
-            max_tokens=SPEECH_MAX_TOKENS,
+            # 这一轮**没有自己的额度**。以前它有自己的输出上限，是被"思考"
+            # 顶上去的：给 160 时四次里四次把额度全花在思考上、正文一个字不剩。现在
+            # 与其它轮同一条规则——云端一个字不传，本机只留协议需要的那个预留量。
+            # 与其它轮同一条规则：由 reserve_for 判，不读 self._budget——
+            # 这条路是「她主动开口」，测试的替身对象上没有那个字段，而规则本身
+            # 不该依赖「装配预算对象存在」。
+            max_tokens=reserve_for(self._backend) or None,
         )
         self._speak_alert = alert
         self._speak_live = True
@@ -2354,7 +2358,7 @@ class MainWindow(QMainWindow):
         # 把流式气泡的角色写死成了 ``assistant``，要在她的气泡里长字就得给那个方法加一个
         # 参数，那是契约变更——这一版明确不改 JS（见 ``ui/chat_view.py`` 的契约表与
         # :meth:`_on_speech_finished`）。代价是生成那十几秒屏幕上没有动静（实测 3–15 秒，
-        # 见 :data:`SPEECH_MAX_TOKENS`），换来的是零 JS 改动与一条不会认错角色的流。
+        # 实测过），换来的是零 JS 改动与一条不会认错角色的流。
         worker.finished.connect(self._on_speech_finished)
         worker.failed.connect(self._on_speech_failed)
         worker.finished.connect(thread.quit)

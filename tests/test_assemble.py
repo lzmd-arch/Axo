@@ -25,7 +25,6 @@ from axo.session.assemble import (
     _read_call,
     _scan_tool_history,
     assemble,
-    layer_ceiling,
     stored_rows,
 )
 from axo.session.budget import TokenBudget, TokenMeter
@@ -248,24 +247,22 @@ def test_the_oldest_history_is_dropped_first() -> None:
     assert "第 0 句" not in "".join(contents), "最老的那句先走"
 
 
-def test_under_pressure_the_dialogue_is_served_before_the_memories() -> None:
-    """分配顺序 = 优先级顺序。**只有池子被挤小之后才看得出来。**
+def test_when_the_pool_is_squeezed_memory_wins() -> None:
+    """池子被挤小时**先服务记忆**。
 
-    平时两层各自有额度、互不打扰（而且循环只花它需要的那么多，剩的留在池子里给下
-    一层）。一旦不可驱逐的部分把池子压到两层分额之和以下、需求又都超过上限，先服务
-    谁就决定了用户得到的是一个跟得上话的助手，还是一个记得很多却答非所问的助手。
-
-    **答案是前者**：记忆整层丢得起——它还在库里，下一轮还在；近处对话丢了就真没了。
+    **优先级与旧版相反。** 旧版把近处对话排在记忆之前，理由是"记忆丢得起、近处对话
+    丢了就真没了"；而用户要的是「无论哪一个对话都要能够使用完整的记忆」——记忆被
+    丢掉就是这一轮真的不知道，丢掉的旧对话还有 L4 摘要兜着。
     """
     budget = TokenBudget(window=16384, reserve_output=2048)
     anchor = "很啰嗦的人格锚。" * 1800
     rows = [msg("user", f"第 {i} 个问题。" * 60) for i in range(10)]
     memories = [memory(f"m{i}", f"第 {i} 条记忆。" * 60) for i in range(6)]
-    assert METER.text(anchor) > layer_ceiling(budget, Layer.RECALL), "前提：人格锚把池子压小了"
+    assert METER.text(anchor) > budget.usable / 2, "前提：人格锚把池子压小了"
 
     result = assemble(rows, current="问一句。", budget=budget, persona=[anchor], recalled=memories)
-    assert result.ledger.kept_messages > 0, (
-        "池子被挤小时先服务近处对话。分配顺序反过来（召回在前）的话这里会是 0 条，"
+    assert result.ledger.injected, (
+        "池子被挤小时先服务记忆。顺序反过来（近处对话在前）的话这里会是 0 条，"
         "而账本上看不出区别——它只会显示「这一轮没注入任何记忆」，指向完全错误的排查方向。"
     )
     assert result.ledger.over_budget == 0
@@ -336,27 +333,42 @@ def test_a_current_input_longer_than_the_window_is_sent_anyway_and_reported() ->
     assert "⚠" in result.ledger.render()
 
 
-def test_the_layer_ceiling_is_computable_before_the_recall_runs() -> None:
-    """``layer_ceiling`` 存在的理由：调用方要在**发起召回之前**知道 L2 有多少钱。
+def test_there_are_no_layer_shares_left() -> None:
+    """**没有份额这回事了。** 以前有一张 L2=0.25 / L3=0.50 / L5=0.20 的分配表。
 
-    否则 ``recall`` 按一个数选出 6 条、装配器按另一个数只放 4 条，账本上两边对
-    不上——而对不上就等于没有账本。
+    用户的要求是「除了官方的上下文限制之外，不要出现任何其他的预算、额度、上下文
+    限制」。这条断言守的是那个符号**不许回来**：装箱的唯一上限是窗口本身，谁先装谁
+    优先，前一层花剩多少后一层拿多少。
+    """
+    # **不能用 ``import axo.session.assemble as module``**：``axo.session.__init__``
+    # 把同名的函数 ``assemble`` 重导出成了 ``axo.session.assemble`` 这个属性，于是
+    # 那句话拿到的是函数而不是模块（第一次写就是这么炸的）。
+    import importlib
+
+    module = importlib.import_module("axo.session.assemble")
+    # 判据是**符号在不在**，不是源码里提没提它（注释里当然会提到"以前有这么个东西"）。
+    assert not hasattr(module, "layer_ceiling"), "layer_ceiling 回来了"
+    assert not hasattr(module, "_SHARES"), "_SHARES 回来了"
+    assert "layer_ceiling" not in module.__all__, "它又出现在导出表里了"
+
+
+def test_the_ceiling_column_shrinks_from_layer_to_layer() -> None:
+    """账本那一栏现在记的是「手上还剩多少」，不是「分到多少」。
+
+    随层递减是它唯一的形状：记忆先拿、拿完剩下的归近处对话、再剩下的归工具结果。
     """
     budget = TokenBudget(window=16384, reserve_output=2048)
-    assert layer_ceiling(budget, Layer.RECALL) == int(budget.usable * 0.25)
-    assert layer_ceiling(budget, Layer.RECENT) == int(budget.usable * 0.50)
-    # L5 从"流向 L4 的余量"里拿，不吃前两层：三项和 0.95，L4 拿剩下的加上各层余量。
-    assert layer_ceiling(budget, Layer.TOOLS) == int(budget.usable * 0.20)
-
-
-def test_layers_without_a_fixed_ceiling_say_so_instead_of_guessing() -> None:
-    """L4 的额度取决于前几层花了多少，预先算不出来。
-
-    这里显式报错而不是返回一个"大概是这么多"的数——那个数会让调用方以为它是硬的。
-    """
-    for layer in (Layer.SUMMARY, Layer.PERSONA, Layer.ENVIRONMENT):
-        with pytest.raises(ValueError, match="没有固定上限"):
-            layer_ceiling(ROOMY, layer)
+    result = assemble(
+        history(2),
+        current="问。",
+        budget=budget,
+        recalled=[memory("m1", "路由器在书房。")],
+    )
+    ceilings = [
+        result.ledger.layer(layer).ceiling for layer in (Layer.RECALL, Layer.RECENT, Layer.TOOLS)
+    ]
+    assert all(value is not None for value in ceilings), ceilings
+    assert ceilings[0] >= ceilings[1] >= ceilings[2], f"没有随层递减：{ceilings}"
 
 
 # ── 跨层不变量 ──────────────────────────────────────────────────────────────
@@ -750,8 +762,8 @@ def test_no_tool_rows_means_L5_is_empty_and_changes_nothing_else() -> None:
     result = assemble(history(), current="问。", budget=ROOMY)
     tools = result.ledger.layer(Layer.TOOLS)
     assert (tools.tokens, tools.count) == (0, 0)
-    assert layer_ceiling(ROOMY, Layer.RECALL) == int(ROOMY.usable * 0.25)
-    assert layer_ceiling(ROOMY, Layer.RECENT) == int(ROOMY.usable * 0.50)
+    # 别层该拿多少照旧——工具层为空时不该顺手改掉别人的账
+    assert result.ledger.layer(Layer.RECALL).count == 0
 
 
 def test_the_tool_declaration_cost_comes_off_the_pool_and_is_recorded() -> None:
@@ -933,14 +945,16 @@ def test_a_pair_never_leaves_an_orphan_behind_in_the_assembled_request() -> None
         *tool_round(2, result="第三条结果。" * 40),
         msg("assistant", "都查完了。"),
     ]
-    budget = TokenBudget(window=1600, reserve_output=200)
+    # 窗口收到「一对装得下、两对装不下」。份额拆掉之后工具层拿的是剩下的全部，
+    # 所以这条前提要靠窗口本身来造，不能再指望 0.20 那个份额。
+    budget = TokenBudget(window=700, reserve_output=200)
     price = sum(METER.message(row) for row in _scan_tool_history(rows)[0][-1])
-    ceiling = layer_ceiling(budget, Layer.TOOLS)
+
+    result = assemble(rows, current="好。", budget=budget)
+    ceiling = result.ledger.layer(Layer.TOOLS).ceiling or 0
     assert price <= ceiling < 2 * price, (
         f"额度没卡在一对与两对之间（一对 {price}，额度 {ceiling}），这条测试会变成空转"
     )
-
-    result = assemble(rows, current="好。", budget=budget)
     tools = result.ledger.layer(Layer.TOOLS)
     # 丢掉的对数只出现在 note 里（见 ``_ToolTail``：对与行分开记）
     assert "对装不下" in tools.note, result.ledger.render()

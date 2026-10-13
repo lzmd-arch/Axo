@@ -19,7 +19,7 @@
 ## 工具尾巴的额度：两条规则，缺一条就有一种静默失效
 
 工具结果进的是**同一个上下文窗口**，所以它能挤掉人格锚与用户刚说的话。上限由
-``tools_ceiling`` 给出（最终来自 ``layer_ceiling(budget, Layer.TOOLS)``）。
+``tools_ceiling`` 给出（默认是"装配完之后还剩多少"——份额已经拆掉了）。
 
 * **单条结果不许超过整个尾巴的额度**（超出就截断，并留痕）。少了这条，一次
   ``read_file``（上限 64 KiB，约两万 token）会**单独一条**就撑爆窗口——而服务端
@@ -334,7 +334,7 @@ def run_agent_loop(
     await_approval: Callable[[ApprovalRequest], ApprovalDecision | None],
     budget: TokenBudget,
     meter: TokenMeter,
-    tools_ceiling: int,
+    tools_ceiling: int | None = None,
     limits: LoopLimits = DEFAULT_LIMITS,
 ) -> Iterator[Event]:
     """跑一轮任务语域：可能要调几次工具，然后给出回答。
@@ -349,7 +349,8 @@ def run_agent_loop(
         budget: 装配预算。只用于取 ``reserve_output`` 传给 ``max_tokens``。
         meter: token 估计器。截断与驱逐都用它，**与装配器同一个**——两处用不同的
             算法算同一段文本，是这个项目里账对不上的唯一根因。
-        tools_ceiling: 工具尾巴的额度。
+        tools_ceiling: 工具尾巴的额度。**省略就按"装配完之后还剩多少"算**——
+            份额已经拆掉，没有第二个数可传；显式传是为了测试要钉住一个具体形状。
         limits: 循环边界。
 
     Yields:
@@ -362,6 +363,8 @@ def run_agent_loop(
     """
     # ``tail`` 会被驱逐，进下一次请求；记录不在这里——每产出一对就作为
     # :class:`MessagesAppended` 发出去，因为调用方可能中途停止消费（见模块文档）。
+    if tools_ceiling is None:
+        tools_ceiling = max(0, budget.usable - meter.messages(messages))
     tail: list[ChatMessage] = []
     pairs: list[tuple[int, int]] = []
     rounds = 0
@@ -382,12 +385,13 @@ def run_agent_loop(
         if wrap:
             turn.append(_WRAP_UP_NOTE)
 
-        # ``max_tokens`` 必须照传：不传就只是账面上的预留，Ollama 会用同一个
-        # num_ctx 生成，输出可以一直涨到把输入挤掉（见 ``session/budget.py``）。
+        # ``reserve_output`` 是 0 就**一个字都不传**（云端）：输出长度走官方默认，
+        # 我们不再设任何上限。非 0 只出现在 Ollama 那条链上——它不传 ``num_predict``
+        # 就会拿同一个 num_ctx 生成，把输入挤掉（见 ``session/budget.py``）。
         request = ChatRequest(
             messages=tuple(turn),
             tools=offered,
-            max_tokens=budget.reserve_output,
+            max_tokens=budget.reserve_output or None,
         )
 
         parts: list[str] = []
@@ -455,8 +459,8 @@ def run_agent_loop(
             # 带着图——那正是这一条链上最容易发生的一种编。
             images = outcome.images
             if images and IMAGE_TOKENS * len(images) >= tools_ceiling:
-                # 一张图自己就超过了这一份额度（只在小窗口上才会发生，见
-                # ``budget.IMAGE_TOKENS`` 那条"上限是硬的"）。**不静默丢**。
+                # 这一轮剩下的窗口装不下这张图（只在小窗口上才会发生）。**不静默丢**
+                # ——丢的条件是"窗口真的满了"，不是某一层的份额；份额已经拆掉了。
                 images = ()
                 clipped_by_budget = True
             else:

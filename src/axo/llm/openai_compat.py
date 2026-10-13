@@ -427,6 +427,9 @@ class OpenAICompatChatBackend:
     degraded_audio = False
 
     images_ride_on = "user"
+    #: **输出不挤输入**（Ollama 那条链相反）。所以云端不传 ``max_tokens``、
+    #: 也不给生成预留额度——见 :attr:`~axo.llm.ollama.OllamaChatBackend.output_squeezes_input`。
+    output_squeezes_input = False
     #: 原声也只挂 **user** 行（input_audio 分片）——同一个协议的另一半。
     audio_ride_on = "user"
 

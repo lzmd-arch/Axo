@@ -42,7 +42,7 @@ from ..memory.browse import PROBE_BUDGET_TOKENS, PROBE_CONFIG
 from ..memory.consolidation import newest_memory_id, read_last_run, run_consolidation
 from ..memory.persona import persona_texts
 from ..paths import graph_path
-from ..session.assemble import Layer, MemoryInjection, assemble, layer_ceiling
+from ..session.assemble import MemoryInjection, assemble
 from ..session.budget import TokenBudget, TokenMeter
 from ..session.store import Message
 
@@ -221,9 +221,9 @@ class AssemblyWorker(QObject):
         query_vector = self._query_vector(notes)
 
         # ── 召回 ────────────────────────────────────────────────────────────
-        # 额度用 ``layer_ceiling`` 而不是 ``budget.usable``：装配器会用同一个函数
-        # 算它的上限。两处各写一个数就会出现"召回说注入了 6 条、实际发出去 4 条"，
-        # 而账本对不上就等于没有账本。
+        # 额度给的是 ``usable``（窗口的全部），**不是某一层的份额**——份额已经拆掉
+        # 了。装不下由装配器按优先级丢，账本两处各说各的实话：召回说"选出 N 条"，
+        # 装配说"发出去 M 条、K 条没装下"。
         #
         # 排除本会话写下的记忆：它们的正文此刻就在逐字稿里，再注入一遍等于让模型
         # 同时看到"你刚才说的话"和"一条提醒你刚才说过那句话的记忆"。
@@ -233,7 +233,7 @@ class AssemblyWorker(QObject):
             ledger = recall(
                 self._store,
                 query_text=self._current,
-                budget_tokens=layer_ceiling(self._budget, Layer.RECALL),
+                budget_tokens=self._budget.usable,
                 query_vector=query_vector,
                 space_id="" if self._embedding is None else (self._embedding.space_id or ""),
                 config=self._config,
@@ -248,6 +248,7 @@ class AssemblyWorker(QObject):
                     content=item.content,
                     tokens=item.tokens,
                     explain=item.explain,
+                    score=item.scores.fused,
                     created_at=item.created_at,
                     span=item.span,
                     session_id=item.session_id,

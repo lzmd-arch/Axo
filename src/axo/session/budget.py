@@ -20,7 +20,7 @@ import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
-from memcore.tokens import UNDER_COUNT_TOLERANCE, estimate_tokens
+from memcore.tokens import estimate_tokens
 
 from ..audio import wav_seconds
 from ..llm.base import ChatMessage
@@ -75,11 +75,16 @@ CONVERSATION_BASE = PER_MESSAGE_OVERHEAD + GENERATION_PROMPT
 """
 
 DEFAULT_RESERVE_OUTPUT = 2048
-"""给生成留的额度。
+"""**Ollama 那条链**要给生成留的额度。云端不用它。
 
-**这个数必须真的传给请求**（``ChatRequest.max_tokens``），否则它只是账面上的
-预留：``max_tokens`` 为 ``None`` 时 Ollama 会用同一个 ``num_ctx`` 生成，输出可以
-一直涨到把输入挤掉。装配器负责把两者绑在一起。
+它不是我们的额度，是 Ollama 的协议怪癖：``max_tokens``/``num_predict`` 不传时，
+它拿同一个 ``num_ctx`` 生成，输出可以一直涨到把输入挤掉（见
+:func:`~axo.llm.ollama.OllamaChat`）。所以本机那条链必须把这个数真的传进请求，
+否则它只是账面上的预留。
+
+**云端一个字都不传**（``max_tokens=None``，payload 里干脆不出现这个字段），输出
+长度走官方默认——用户的要求是「除了官方的上下文限制之外，不要出现任何其他的
+预算、额度、上下文限制」。:attr:`TokenBudget.reserve_output` 因此默认是 0。
 """
 
 
@@ -115,11 +120,21 @@ IMAGE_TOKENS = 1536
 **偏保守**（同 :data:`PER_MESSAGE_OVERHEAD` 那句——包多算的代价是少注入一条记忆，包少算的
 代价是服务端静默截断最早的消息）。
 
-**上限是硬的。** 它必须明显小于 :func:`~axo.session.assemble.layer_ceiling` 给 L5 的额度
-（本机 ``num_ctx`` 16384 时约 2.8k），否则一张图会把整个工具尾巴挤掉——而"挤掉"在服务端
-那侧表现出来是**静默截断最早的消息**，正是装配器与循环两处文档反复点名的最坏形态。
-``tests/test_budget.py`` 有一条断言钉着这件事。
+**它只是装箱估算，不是丢弃门槛。** 以前图有一条"占满工具尾巴就整张丢掉"的硬规则
+（配套 :func:`~axo.session.assemble.layer_ceiling` 的份额）；份额拆掉之后，图与文字
+走同一套规则——装不下才丢，而装不下意味着窗口真的满了。丢图时仍然要说一句人话
+（见 ``agent/loop.py`` 的那条说明）：模型看到"这里本该有图"比看到一段空白好。
 """
+
+
+def reserve_for(backend: object) -> int:
+    """给这个后端留多少生成额度。**只有会把输入挤掉的那条链才留。**
+
+    云端返回 ``0``——调用方据此一个字都不传 ``max_tokens``。这个判断只写在这里一次：
+    两处各写一遍就会长出"她开口那一轮与其它轮规则不同"，而那种差别只会在某次答非
+    所问里露出来（同 :data:`~axo.ui.main_window.SPEECH` 那条老教训）。
+    """
+    return DEFAULT_RESERVE_OUTPUT if getattr(backend, "output_squeezes_input", False) else 0
 
 
 @dataclass(frozen=True)
@@ -221,8 +236,15 @@ class TokenBudget:
     """
 
     window: int
-    reserve_output: int = DEFAULT_RESERVE_OUTPUT
-    tolerance: float = UNDER_COUNT_TOLERANCE
+    reserve_output: int = 0
+    """给生成预留多少。**默认 0**——云端不预留、也不传 ``max_tokens``；只有 Ollama
+    那条链传 :data:`DEFAULT_RESERVE_OUTPUT`（那是它的协议怪癖，不是我们的额度）。"""
+
+    tolerance: float = 0.0
+    """估算误差的折扣。**默认 0**：以前取
+    :data:`~memcore.tokens.UNDER_COUNT_TOLERANCE`（0.10），等于把窗口的 10% 永远
+    留着不用——那是一笔没人看得见的自设额度。估算偏低时的兜底改成"装满后仍超额就
+    逐出最旧的历史并重试一次"（见装配器），让官方窗口成为唯一的上限。"""
 
     def __post_init__(self) -> None:
         if self.window <= 0:

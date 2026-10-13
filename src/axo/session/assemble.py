@@ -52,7 +52,6 @@ __all__ = [
     "LayerReport",
     "MemoryInjection",
     "assemble",
-    "layer_ceiling",
     "stored_rows",
 ]
 
@@ -94,43 +93,13 @@ _LAYER_LABELS: dict[Layer, str] = {
     Layer.TOOLS: "工具结果",
 }
 
-#: 按比例分配的三层。**L0/L1 不可驱逐，所以不能有上限**；**L4 拿剩下的全部**，
-#: 它的额度取决于前几层花了多少，预先算不出来（见 :func:`layer_ceiling`）。
+#: **没有份额了。** 以前这里有一张 L2=0.25 / L3=0.50 / L5=0.20 的分配表和一个
+#: :func:`layer_ceiling`，那是自设的额度——用户的要求是「除了官方的上下文限制之外，
+#: 不要出现任何其他的预算、额度、上下文限制」。现在装箱只有**一个**上限：窗口本身。
 #:
-#: 这些是**初值，不是标定值**——沿用 :class:`memcore.recall.RecallConfig` 的同一
-#: 条纪律：标定它们要等真实库上有数据可扫。P1.5 的 ``bench_recall.py`` 量的是
-#: **召回侧**（它跑到 ``recall()`` 返回为止，不进装配），所以它顺带给了这两个数
-#: 一个上界参照（L2 实际能塞进几条），但**量不到这两个比例本身对不对**——那需要
-#: 一份"哪些记忆真的帮上了忙"的标注，现在没有。
-#:
-#: ``TOOLS`` 的 0.20 是**从"流向 L4 的余量"里拿的**（三项和 0.95，剩 0.05 连同各层
-#: 用不完的余量流向 L4）。L2/L3 一个都没减：L5 是这一轮任务当下最新最相关的内容，
-#: L4 是最便宜、最可丢的压缩层。**这条取舍是选出来的，不是没想到。**
-#:
-#: 0.20 本身仍是先验。Step 0 探针量到的是**工具声明的固定开销**（3 个工具 = 净增
-#: 311 token/轮，七个约两倍），那笔账走 :attr:`AssemblyLedger.tools_tokens`，**不进
-#: 这个表**——声明在 ``ChatRequest.tools`` 里，不占 L5 的内容额度。L5 该分多少只能从
-#: "回放几轮工具结果有用"量出来，那要等真实用法上有工具轨迹。
-_SHARES: dict[Layer, float] = {Layer.RECALL: 0.25, Layer.RECENT: 0.50, Layer.TOOLS: 0.20}
-
-
-def layer_ceiling(budget: TokenBudget, layer: Layer) -> int:
-    """某一层的额度上限。
-
-    **调用方要在发起召回之前就能算出 L2 有多少钱。** 否则会出现：``recall`` 按一个
-    数选出 6 条，装配器按另一个数只放进去 4 条，账本上两边对不上——而账本对不上
-    就等于没有账本。
-
-    传 L4 进来会抛 :class:`ValueError`：摘要的额度是"前几层花完之后剩下的"，预先
-    算不出来。这里显式报错而不是返回一个看起来很合理的数，因为一个"大概是这么多"
-    的上限会让调用方以为它是硬的。
-    """
-    if layer not in _SHARES:
-        reason = (
-            "L0/L1 不可驱逐" if layer in (Layer.PERSONA, Layer.ENVIRONMENT) else "L4 拿剩下的全部"
-        )
-        raise ValueError(f"{layer.label}没有固定上限（{reason}），见 assemble 的分配顺序。")
-    return int(budget.usable * _SHARES[layer])
+#: 顺序仍然有意义（记忆 → 近处对话 → 工具结果 → 摘要），但那是**谁先拿**，不是
+#: **谁最多拿多少**。前一层用剩多少，后一层就拿多少；全部装得下时顺序完全不影响
+#: 结果——而云端 128k 的窗口装下全部记忆与整段对话是常态。
 
 
 @dataclass(frozen=True)
@@ -147,6 +116,10 @@ class MemoryInjection:
     content: str
     tokens: int
     explain: str
+    score: float = 0.0
+    """融合得分。**只在装不下时用来决定先丢谁**（从低到高丢）——它不参与排版，
+    上下文里的顺序是按时间的。"""
+
     created_at: float = 0.0
     """写下这条记忆的时刻。进上下文的那一行要带它——没有时间戳的原话只是一串
     没有先后的句子，而用户要的正是"模型能形成时间观念"。``<= 0`` 表示不知道，
@@ -172,7 +145,9 @@ class LayerReport:
     layer: Layer
     tokens: int
     ceiling: int | None = None
-    """这一层当时的额度上限。不可驱逐的层（L0/L1）记 ``None``。"""
+    """这一层装箱时**手上还剩多少**。不是分配给它的份额（份额已经拆掉了），而是
+    "前面几层花完之后剩下的全部"——所以它随层递减。不可驱逐的层（L0/L1）记
+    ``None``。"""
 
     count: int = 0
     """这一层装了几条（L5 数的是**行**，不是对）。摘要层恒为 0——它覆盖了多少条
@@ -704,13 +679,29 @@ def assemble(
         )
         pool = 0
 
-    # ── L3 近期对话（从最近往前收） ──────────────────────────────────────
-    # **分配顺序就是优先级顺序：近处对话在记忆之前。** 平时看不出来——两层各自有
-    # 额度、互不打扰，而且循环只花它需要的那么多，剩下的留在池子里给下一层。只有在
-    # 不可驱逐的部分（人格锚特别长，或用户这一轮说得特别多）把池子压到两层分额之和
-    # 以下、且需求超过上限时，先服务谁才变得可见——那时用户得到的是一个跟得上话的
-    # 助手，还是一个记得很多却答非所问的助手，就取决于这两段代码的先后。
-    # 答案是前者：记忆整层丢得起（它还在库里，下一轮还在），近处对话丢了就真没了。
+    # ── L2 记忆（全部、带时间；装不下按得分从低到高丢） ──────────────────────
+    # **没有份额。** 记忆以前被关在 usable 的 25% 里，那是自设的额度；现在它拿的是
+    # 扣掉不可驱逐部分之后剩下的全部，装得下几条是几条。装不下时按得分从低到高丢，
+    # 账本如实写「N 条没装下」——丢是**窗口真的满了**（官方限制），不是我们的配额。
+    #
+    # 装不下就**跳过它继续看下一条**，不退出循环：记忆是互相独立的条目，中间留个
+    # 洞无所谓，而"一条很长的记忆把后面所有短的一起挡在门外"代价更大。
+    # 账本那一栏记"这一层装箱时手上还剩多少"，所以要在这里取一次。
+    recall_ceiling = pool
+    injected: list[MemoryInjection] = []
+    for item in sorted(recalled, key=lambda entry: -entry.score):
+        trial = [*injected, item]
+        if meter.text(_render_recall(trial)) > pool:
+            continue
+        injected = trial
+    recall_cost = meter.text(_render_recall(injected))
+    pool -= recall_cost
+
+    # ── L3 近期对话（从最近往前收） ────────────────────────────────────
+    # 排在记忆之后。**这是与旧版相反的取舍**：旧版把近处对话排在记忆之前，理由是
+    # "记忆丢得起、近处对话丢了就真没了"；而用户要的是「无论哪一个对话都要能够使用
+    # 完整的记忆」，记忆被丢掉就是这一轮真的不知道。丢掉的旧对话不是没了——它们进
+    # L4 摘要，连续性还在。
     #
     # 这里**断掉就停，不跳过**——与 L2 相反。这一层是连续的对话，挖洞会让它读起来
     # 不再是一条序列（半句话在答一个已经不在上下文里的问题）。装不下的那些不是被
@@ -723,7 +714,7 @@ def assemble(
     # 同时记下切分点 ``cut``：保留段从 ``history`` 的哪一条开始。**不能用"保留了几
     # 条"反推**——``history`` 里可能有工具行被跳过，也可能有开头的助手消息被清掉，
     # 两种都会让反推出来的切分点往前漂，把本该保留的对话又压进摘要。
-    recent_ceiling = min(layer_ceiling(budget, Layer.RECENT), pool)
+    recent_ceiling = pool
     kept: list[tuple[int, ChatMessage]] = []
     recent_cost = 0
     for index in range(len(history) - 1, -1, -1):
@@ -749,33 +740,16 @@ def assemble(
     recent_cost = sum(meter.message(chat) for chat in kept_chat)
     pool -= recent_cost
 
-    # ── L2 记忆召回 ──────────────────────────────────────────────────────
-    # 装不下就**跳过它继续看下一条**，不退出循环：记忆是互相独立的条目，中间留个
-    # 洞无所谓，而"一条很长的记忆把后面所有短的一起挡在门外"代价更大。理由与
-    # :func:`memcore.recall._select` 里那条相同。
-    recall_ceiling = min(layer_ceiling(budget, Layer.RECALL), pool)
-    injected: list[MemoryInjection] = []
-    for item in recalled:
-        trial = [*injected, item]
-        if meter.text(_render_recall(trial)) > recall_ceiling:
-            continue
-        injected = trial
-    recall_cost = meter.text(_render_recall(injected))
-    pool -= recall_cost
-
-    # ── L5 工具结果（整对，从新到旧） ─────────────────────────────────────
-    # 排在 L2 之后、L4 之前：额度是从"流向 L4 的余量"里拿的（见 :data:`_SHARES`），
-    # 而**先装谁**决定了池子被压到两层分额之和以下时谁先被服务。工具结果是这一轮
-    # 任务当下最新最相关的东西，L4 是最便宜、最可丢的压缩层。这条取舍是选出来的，
-    # 不是没想到。
-    tools_ceiling = min(layer_ceiling(budget, Layer.TOOLS), pool)
+    # ── L5 工具结果（整对，从新到旧） ───────────────────────────────────
+    # 额度是**剩下的全部**：它不再占固定份额（旧版 0.20），也就不需要再解释"这 0.20
+    # 是从谁那儿拿的"。工具结果是这一轮任务的现场，自包含、当下最相关。
+    tools_ceiling = pool
     tool_tail = _collect_tool_tail(history, tools_ceiling, meter)
     pool -= tool_tail.tokens
 
-    # ── L4 历史摘要（拿剩下的全部） ──────────────────────────────────────
-    # 不给自己留固定比例：它的输入本来就是**装不下的那些**，近期对话省下来的钱
-    # 正好该用在多覆盖几轮历史上。这样 L4 的额度自动跟着 L2/L3 的实际花销走，
-    # 不需要第三个比例，也不会出现"这层没用完、那层不够用"。
+    # ── L4 历史摘要（拿剩下的全部） ─────────────────────────────────────
+    # **这不是额度，是"前面花剩下的"。** 它的输入本来就是装不下的那些，前面省下来
+    # 的钱正好该用在多覆盖几轮历史上。pool 归零时它就是空的——那是窗口真的满了。
     summary_ceiling = max(0, pool)
     # 工具行不进摘要（``_to_chat`` 对它们返回 ``None``）：它们要么在 L5 里原样回放，
     # 要么已经因为装不下而整对丢掉，压成一段散文两种都不沾。**这是取舍**——被丢掉的

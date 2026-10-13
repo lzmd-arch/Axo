@@ -377,6 +377,12 @@ class OllamaChatBackend:
     #: OpenAI 兼容那个后端声明的是 ``"user"``。
     images_ride_on = "tool"
 
+    #: **输出会挤掉输入。** ``num_predict`` 不传时，Ollama 拿同一个 ``num_ctx`` 生成，
+    #: 输出可以一直涨到把最早的消息（人格锚的位置）挤出窗口。所以这一条链要给生成留
+    #: 一笔预留（``session/budget.py`` 的 ``DEFAULT_RESERVE_OUTPUT``），并把它真的传进
+    #: 请求。云端没有这个怪癖，一个字都不传——这个属性就是那个分叉的判据。
+    output_squeezes_input = True
+
     """Ollama 上的一个对话模型。
 
     Attributes:
