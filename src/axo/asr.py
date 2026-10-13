@@ -33,6 +33,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from .audio import AudioClip
 from .paths import VOICE_MODEL_NAME, voice_model_dir
 
 __all__ = ["SAMPLE_RATE", "Recognizer", "Transcription", "recognize"]
@@ -62,6 +63,11 @@ class Transcription:
 
     text: str = ""
     reason: str = ""
+    audio: bytes = b""
+    """这一次采集的**原声**（WAV 字节）。**转写与音频是同一次采集的产物**，一起交出来
+    ——模型听得见原声时，原声与转写文字一起走（见 ``ChatMessage.audio``）；听不见时
+    音频随那一轮用完即弃，**不落盘**（与截图同姿态）。空 = 这一收成没有配音频
+    （``recognize`` 那种"已经有一段"的调用方也带上；纯失败路径上它是空的）。"""
 
     @property
     def ok(self) -> bool:
@@ -182,4 +188,8 @@ def recognize(
     """
     recognizer = Recognizer(sample_rate=sample_rate, model_dir=model_dir)
     recognizer.feed(pcm)
-    return recognizer.finish()
+    result = recognizer.finish()
+    # **转写与原声一起交**（见 ``Transcription.audio``）：调用方手里已有这段 PCM，
+    # 不用它的话，"模型听得见"那条路要再回采集层要一遍。
+    clip = AudioClip(pcm=pcm, sample_rate=sample_rate)
+    return Transcription(text=result.text, reason=result.reason, audio=clip.as_wav())

@@ -568,6 +568,11 @@ def _build_message(message: ChatMessage) -> dict[str, Any]:
 
     这两处不对称是**协议本身的**，所以它只能活在后端层。
     """
+    if message.audio and message.role != "user":
+        raise ChatBackendError(
+            f"这一条 {message.role} 消息带着原声，而 OpenAI 兼容协议只允许 user 消息带"
+            "（input_audio 分片）。原声是用户说的话，它本来就在 user 行上——挂错行是调用方的错。"
+        )
     if message.images and message.role != "user":
         # **明说，不静默丢。** 这个协议里只有 ``user`` 消息能带图（``content`` 要写成
         # 分片数组）；``system`` / ``assistant`` 带图会被 400 拒掉，``tool`` 行的
@@ -583,8 +588,9 @@ def _build_message(message: ChatMessage) -> dict[str, Any]:
             "见 agent/loop.py 里按 images_ride_on 分派的那一段。"
         )
 
-    if message.images:
-        # ``user`` 行：正文与图写成**分片数组**（DeepSeek 的文档里就是这个形状）。
+    if message.images or message.audio:
+        # ``user`` 行：正文与图/音频写成**分片数组**（DeepSeek 文档里的形状；音频的
+        # ``input_audio`` 是 OpenAI 那份）。
         # 正文为空时不补一个空的 text 分片——一个空 text 块有些端点会当成参数错。
         content: list[dict[str, Any]] = []
         if message.content:
@@ -592,6 +598,10 @@ def _build_message(message: ChatMessage) -> dict[str, Any]:
         content += [
             {"type": "image_url", "image_url": {"url": f"data:{_IMAGE_MIME};base64,{data}"}}
             for data in message.images
+        ]
+        content += [
+            {"type": "input_audio", "input_audio": {"data": data, "format": "wav"}}
+            for data in message.audio
         ]
         payload: dict[str, Any] = {"role": message.role, "content": content}
         # 图只挂在 user 行上，而 user 行不会有 tool_calls / tool_call_id——那两段

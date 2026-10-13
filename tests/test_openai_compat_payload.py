@@ -295,3 +295,32 @@ def test_the_backend_declares_where_its_images_ride() -> None:
     两边写反的症状是**400**（图挂在 tool 行上）或者一句"没有屏幕接口"（图根本没寄）。
     """
     assert OpenAICompatChatBackend.images_ride_on == "user"
+
+
+# ── 原声：user 行 input_audio 分片，别的角色抛 ─────────────────────────────
+#
+# 与 images 同族、同一纪律：**明说，不静默丢**。原声只可能在 user 行上（它就是用户
+# 说的话），挂错行是调用方的错。Ollama 那条路恒不收（官方 ChatMessage 无 audio 字段）。
+
+
+def test_audio_rides_as_an_input_audio_part() -> None:
+    """user 行带原声 → content 里是 ``input_audio`` 分片（OpenAI 那份形状），
+    **与图可以共存**（同一行里 text / image_url / input_audio 顺序给出）。"""
+    message = ChatMessage(role="user", content="（他说的）", images=("QQ==",), audio=("V0FW",))
+
+    blocks = _build_message(message)["content"]
+
+    kinds = [block["type"] for block in blocks]
+    assert kinds == ["text", "image_url", "input_audio"]
+    assert blocks[2]["input_audio"] == {"data": "V0FW", "format": "wav"}
+
+
+@pytest.mark.parametrize("role", ["system", "assistant", "tool"])
+def test_audio_on_any_other_role_is_refused(role: str) -> None:
+    """别的角色带原声 → **抛**（同 images 那条）。"""
+    message = ChatMessage(role=role, content="x", audio=("V0FW",), tool_call_id="c1")
+
+    with pytest.raises(ChatBackendError) as caught:
+        _build_message(message)
+
+    assert "input_audio" in str(caught.value) or "user" in str(caught.value)

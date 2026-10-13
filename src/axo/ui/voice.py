@@ -37,7 +37,8 @@ from typing import Protocol
 
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
-from ..asr import SAMPLE_RATE, Recognizer
+from ..asr import SAMPLE_RATE, Recognizer, Transcription
+from ..audio import AudioClip
 
 __all__ = ["MAX_SECONDS", "DecodeWorker", "SourceFactory", "VoiceRecorder"]
 
@@ -145,10 +146,18 @@ class DecodeWorker(QObject):
         self._queue: queue.Queue[bytes] = queue.Queue()
         self._stopping = threading.Event()
         self._discard = False
+        #: 这一遍的**原声**（按片攒）。转写与音频是同一次采集的产物（见
+        #: ``asr.Transcription.audio``），在同一个 ``run()`` 里攒完一起交出去。
+        self._pcm: list[bytes] = []
 
     @property
     def recognizer(self) -> Recognizer:
         return self._recognizer
+
+    def _recognizer_sample_rate(self) -> int:
+        """识别器用的采样率。**与采集侧同一个数**（``SAMPLE_RATE``）：音频要与文字
+        对得上，两边采样率不同的话，模型听到的是变调的你。"""
+        return SAMPLE_RATE
 
     def push(self, pcm: bytes) -> None:
         """一片音频。**任意线程**（内部是一把线程安全的队列）。"""
@@ -171,10 +180,13 @@ class DecodeWorker(QObject):
                 piece = self._queue.get(timeout=0.05)
             except queue.Empty:
                 continue
+            self._pcm.append(piece)
             self._recognizer.feed(piece)
         if self._discard:
             return
-        self.done.emit(self._recognizer.finish())
+        result = self._recognizer.finish()
+        clip = AudioClip(pcm=b"".join(self._pcm), sample_rate=self._recognizer_sample_rate())
+        self.done.emit(Transcription(text=result.text, reason=result.reason, audio=clip.as_wav()))
 
 
 def _qt_source_factory(sample_rate: int) -> SourceFactory:

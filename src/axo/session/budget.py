@@ -15,12 +15,14 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 from memcore.tokens import UNDER_COUNT_TOLERANCE, estimate_tokens
 
+from ..audio import wav_seconds
 from ..llm.base import ChatMessage
 
 __all__ = [
@@ -150,6 +152,16 @@ class TokenMeter:
             # 而那与 base64 长度不是线性的（PNG 的压缩率取决于画面内容）。用字节数
             # 折算会得到一个"文字多一点的截图反而更便宜"的结论。
             total += IMAGE_TOKENS * len(message.images)
+        for data in message.audio:
+            # 音频**按秒算**（先验的每秒常数，见 :data:`AUDIO_TOKENS_PER_SECOND`）：
+            # 一秒与三十秒差三十倍，按段算会把正常对话的预算算飞。秒数从 WAV 头读，
+            # 读不出来按回落值（估，不是罚）。
+            seconds = None
+            try:
+                seconds = wav_seconds(base64.b64decode(data))
+            except (ValueError, TypeError):
+                seconds = None
+            total += int(AUDIO_TOKENS_PER_SECOND * (seconds or AUDIO_SECONDS_FALLBACK))
         return total
 
     def tool_calls(self, calls: Iterable[object]) -> int:

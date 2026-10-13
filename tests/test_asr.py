@@ -272,3 +272,19 @@ def test_the_module_imports_without_vosk(monkeypatch: pytest.MonkeyPatch) -> Non
     assert asr.SAMPLE_RATE == 16000
     assert callable(asr.recognize)
     assert Recognizer(model_dir=Path("nope")).problem, "库没装，却什么原因都不给"
+
+
+def test_the_recording_comes_back_with_the_text(
+    monkeypatch: pytest.MonkeyPatch, model_dir: Path
+) -> None:
+    """转写与**原声**是同一次采集的产物（``Transcription.audio``）：模型听得见原声时
+    两条一起走；听不见时那一轮用完即弃、不落盘。"""
+    _install(monkeypatch, FakeVosk(text="该睡了"))
+
+    result = recognize(bytes([1, 2]) * 80, model_dir=model_dir)
+
+    from axo.audio import decode_wav
+
+    clip = decode_wav(result.audio)
+    assert clip is not None
+    assert clip.pcm == bytes([1, 2]) * 80, "原声没带全——模型听到的会是半句话"

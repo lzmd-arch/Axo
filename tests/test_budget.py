@@ -243,3 +243,39 @@ def test_one_image_never_eats_the_whole_tool_tail() -> None:
     assert IMAGE_TOKENS / ceiling < 2 / 3, (
         f"一张图吃掉 {IMAGE_TOKENS / ceiling:.0%} 的尾巴额度——正文就没地方放了"
     )
+
+
+def test_audio_is_metered_by_seconds_not_by_clip() -> None:
+    """音频**按秒**扣（先验的每秒常数）：一秒与三十秒差三十倍，按段算会把预算算飞。
+    秒数从 WAV 头读；读不出来按回落值（估，不是罚）。"""
+    import base64
+
+    from axo.audio import AudioClip
+    from axo.session.budget import (
+        AUDIO_SECONDS_FALLBACK,
+        AUDIO_TOKENS_PER_SECOND,
+        TokenMeter,
+    )
+
+    meter = TokenMeter()
+    plain = meter.message(ChatMessage(role="user", content="你好"))
+    one_second = meter.message(
+        ChatMessage(role="user", content="你好", audio=(AudioClip(pcm=bytes(32000)).as_base64(),))
+    )
+    ten_seconds = meter.message(
+        ChatMessage(
+            role="user",
+            content="你好",
+            audio=(AudioClip(pcm=bytes(320000)).as_base64(),),
+        )
+    )
+
+    assert one_second - plain == AUDIO_TOKENS_PER_SECOND
+    assert ten_seconds - plain == AUDIO_TOKENS_PER_SECOND * 10
+
+    broken = meter.message(
+        ChatMessage(role="user", content="你好", audio=(base64.b64encode(b"not a wav").decode(),))
+    )
+    assert broken - plain == int(AUDIO_TOKENS_PER_SECOND * AUDIO_SECONDS_FALLBACK), (
+        "读不出秒数时该按回落值算，而不是 0（预算 0 = 服务端静默截断最早的消息）"
+    )

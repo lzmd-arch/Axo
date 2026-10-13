@@ -483,6 +483,14 @@ def _build_message(message: ChatMessage) -> dict[str, Any]:
     ``index``**——实测把不带 ``index`` 的版本回灌给它，它照样把工具结果与那次调用
     配上了。``index`` 是它输出时的内部编号，回灌时带上等于把内部编号当成了协议。
     """
+    if message.audio:
+        # **明说，不静默丢**。Ollama 的 ChatMessage 只有 ``images``、没有 ``audio``
+        # （官方 OpenAI 规格实测，2026-10-13）——丢掉它的话模型会收到一条"用户说了话"
+        # 却听不见声音的记录。走到这里说明能力门没拦住（那边对 Ollama 恒为假）。
+        raise ChatBackendError(
+            "这条消息带着原声，而 Ollama 的接口收不了音频（只有 images 字段）。"
+            "这一轮该走转写文字那条路——能力门见 MainWindow._model_can_hear。"
+        )
     payload: dict[str, Any] = {"role": message.role, "content": message.content}
     if message.name:
         payload["name"] = message.name

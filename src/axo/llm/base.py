@@ -128,6 +128,27 @@ class ChatMessage:
     name: str | None = None
     tool_calls: tuple[ToolCall, ...] = ()
     tool_call_id: str | None = None
+    audio: tuple[str, ...] = ()
+    """随这条消息一起送出去的**原声**，base64 的 **WAV**（不带 ``data:`` 前缀）。
+
+    来源只有一个：用户**说**出来的那一轮（语音输入），而模型听得见图那类"看得见"不算
+    ——听得见原声是单独一格能力。**只活在当前这一轮**（不落逐字稿，与截图同姿态）：
+    说话的那句逐字稿里只有文字（``Message.spoken`` 标了它是说出来的）。
+
+    **哪个角色能带**：只有 ``user``——原声本来就是用户说的话（图挂在 tool 行才需要
+    另起一条捎带的 user 消息，音频不需要）。OpenAI 兼容协议对 user 行的写法是
+    content 分片 ``{"type":"input_audio", "input_audio":{"data":…,"format":"wav"}}``；
+    别的角色带音频**抛**（同 ``images`` 那条：明说，不静默丢）。
+
+    **Ollama 恒不收**：官方 OpenAPI 的 ChatMessage 只有 ``images`` 字段、无 ``audio``
+    （2026-10-13 实测），所以那条路见到音频直接抛——能力门在更上面就把原声换成转写
+    文字了（见 ``MainWindow._model_can_hear``）。
+
+    后端用约定属性 ``audio_ride_on``（``"user"`` / 缺省=不收）声明收不收，读的一侧
+    ``getattr(backend, "audio_ride_on", None)``——理由同 ``images_ride_on``：协议是
+    ``@runtime_checkable`` 的，加成员等于要求每个假后端都长它。
+    """
+
     images: tuple[str, ...] = ()
     """随这条消息一起送出去的图，**base64 字符串**（不带 ``data:`` 前缀）。
 

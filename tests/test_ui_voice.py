@@ -190,7 +190,14 @@ def test_the_worker_feeds_everything_then_hands_back_one_result(qapp: Any) -> No
 
     assert recognizer.audio == ONE + TWO
     assert recognizer.finished == 1
-    assert got == [Transcription(text="把明天下午的会记一下")]
+    assert len(got) == 1
+    assert (got[0].text, got[0].reason) == ("把明天下午的会记一下", "")
+    # **原声与转写是同一次采集的产物**（2026-10-13 起）：收成里带的 WAV 要真的
+    # 解得回那两片 PCM——少带了音频的话，"模型听得见"那条路拿不到东西。
+    from axo.audio import decode_wav
+
+    clip = decode_wav(got[0].audio)
+    assert clip is not None and clip.pcm == ONE + TWO
 
 
 def test_a_discarded_pass_produces_no_result(qapp: Any) -> None:

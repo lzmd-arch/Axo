@@ -434,3 +434,17 @@ def test_nameless_call_is_skipped_not_fatal() -> None:
 def test_absent_or_non_list_tool_calls_yield_empty(message: dict) -> None:
     """纯文本回复（没有 ``tool_calls`` 键，或它是个怪值）返回空元组，不抛。"""
     assert _parse_tool_calls(message) == ()
+
+
+def test_ollama_refuses_audio_with_a_sentence() -> None:
+    """Ollama 收不了音频（官方 ChatMessage 只有 ``images``）——**抛一句指向正确的路**，
+    不静默丢：丢掉的话模型会收到"用户说了话"却听不见声音的记录。"""
+    import pytest
+
+    from axo.llm.base import ChatBackendError
+    from axo.llm.ollama import _build_message
+
+    with pytest.raises(ChatBackendError) as caught:
+        _build_message(ChatMessage(role="user", content="你好", audio=("V0FW",)))
+
+    assert "images" in str(caught.value) or "音频" in str(caught.value)
