@@ -75,13 +75,19 @@ __all__ = [
     "run_seed_for",
 ]
 
-#: 四个决策名。取值与 :class:`~memcore.types.ConsolidationEvent` 的 docstring 同一套，
+#: 五个决策名。取值与 :class:`~memcore.types.ConsolidationEvent` 的 docstring 同一套，
 #: 写成一列常量是因为它们要被**比对**（``--replay`` 逐条比、报告里分类计数），
 #: 而散在代码里的字符串字面量拼错一个字母不会报错，只会让某一类决策永远数不到。
 REINFORCE = "reinforce"
 SLEEP_CONFUSION = "sleep_confusion"
 SLEEP_REPLAY_MISS = "sleep_replay_miss"
 SKIP = "skip"
+MERGE = "merge"
+"""碎条目归并成一条派生条目。**只增不改**：写出的是新的一行，原句一字不动。
+
+回放那三个决策改的都是 ``reinforce_count``，这一条**什么旧账都不改**——它只是
+把散着的几句合成一条带时间的记录。所以它也不该出现在回放的比对里：回放比的是
+同一个 ``run_seed`` 重跑会不会得到同一批 decision，而归并的判据里没有随机成分。"""
 
 BASE_SEED = 0
 """整轮的基准种子。**常量而不是随机数**。

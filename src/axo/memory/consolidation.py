@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,6 +41,7 @@ from memcore.consolidation import (
     BASE_SEED,
     DEFAULT_DROP,
     MAX_CLUSTER,
+    MERGE,
     REINFORCE,
     RunReport,
     append_events,
@@ -47,7 +49,11 @@ from memcore.consolidation import (
     consolidate,
 )
 from memcore.graph import GraphIndex
+from memcore.ids import new_ulid
+from memcore.merge import FragmentGroup, group_fragments, render_group
+from memcore.sdr import encode_lexical
 from memcore.store import MemoryStore
+from memcore.types import MemoryItem, MemoryKind
 
 from ..paths import consolidation_events_path, consolidation_last_path, snapshot_dir
 
@@ -143,6 +149,10 @@ class ConsolidationRun:
     reinforced: int
     """真的 ``+1`` 了的条数，= ``len(report.reinforced)``。"""
 
+    merged: tuple[MemoryItem, ...]
+    """归并出来的派生条目。它们是**新增的行**，不改任何既有行——见
+    :func:`write_merges`。"""
+
     snapshot: Path | None
     """拍下来的快照；``None`` 表示这一轮没拍（没东西要改，或调用方关掉了）。"""
 
@@ -199,8 +209,11 @@ def run_consolidation(
             f"然后报一串「这是 bug」。所以这里拒绝，而不是覆盖或追加。"
         )
 
+    # 归并的**规划**排在快照之前，**写**排在快照之后——见 plan_merges 的注释。
+    planned_merges = plan_merges(items)
+
     snapshot_path: Path | None = None
-    if snapshot and report.reinforced:
+    if snapshot and (report.reinforced or planned_merges):
         # 空转的一轮（一条都没加固）不拍：整库复制是几百 MB 的写，而它保护的那次
         # 修改根本不存在。**判断用的是 `reinforced` 而不是"跑完没有"**——只有
         # 认出自己才会写库，串扰与跳过都只进事件。
@@ -220,6 +233,17 @@ def run_consolidation(
         )
         written += append_events(cluster_event_rows(report, index), events_path)
 
+    merges = write_merges(
+        store,
+        planned_merges,
+        events_path=events_path,
+        run_id=report.run_id,
+        at=at,
+        run_seed=report.run_seed,
+        seq_from=written,
+    )
+    written += merges.events_written
+
     # ``last.json`` 排在**所有写之后**，而且**空轮也写**（见模块文档第 3 条）。
     # ``newest_id`` 在这里现问一次库，不用上面那份 ``items``：那一份是这一轮**开始时**
     # 读的，而这一轮可能跑了几分钟——期间写进来的新记忆才是"下次该不该跑"要看的。
@@ -230,7 +254,111 @@ def run_consolidation(
         events_path=events_path,
         events_written=written,
         reinforced=len(report.reinforced),
+        merged=merges.created,
         snapshot=snapshot_path,
+    )
+
+
+def plan_merges(items: Sequence[MemoryItem]) -> list[FragmentGroup]:
+    """这一轮该并哪几组。**纯读不写。**
+
+    拆成规划与写入两步，是为了让快照落在**任何写之前**：归并也是改库（虽然只增
+    不改），而这一层的纪律是"没有退路的批量写不许发生"。
+
+    已经并过的组不再并：跑第二遍会读到派生条目，而它带的 ``derived_from`` 正是
+    上一遍那几条原句的 id。
+    """
+    covered = _covered_fragments(items)
+    return [group for group in group_fragments(items) if frozenset(group.memory_ids) not in covered]
+
+
+@dataclass(frozen=True)
+class MergeResult:
+    """归并这一遍的产出。"""
+
+    created: tuple[MemoryItem, ...]
+    events_written: int
+
+
+def write_merges(
+    store: MemoryStore,
+    groups: Sequence[FragmentGroup],
+    *,
+    events_path: Path,
+    run_id: str,
+    at: float,
+    run_seed: int,
+    seq_from: int = 0,
+) -> MergeResult:
+    """把规划好的组写成派生条目 + 事件行。**只增不改**：只调 ``store.add``。
+
+    逐组「写一条 + 记一行」放在同一次迭代里，理由与逐簇那条一样：中途挂掉留下的是
+    一个对得上账的前缀。**绝不进 ``transform``**——那是改既有行的唯一入口，而用户的
+    约束是「已有的记忆不允许被你改动」。
+    """
+    created: list[MemoryItem] = []
+    written = 0
+    for offset, group in enumerate(groups):
+        derived = _derived_item(group)
+        store.add(derived)
+        created.append(derived)
+        written += append_events(
+            (
+                {
+                    "run_id": run_id,
+                    "run_seed": run_seed,
+                    "seq": seq_from + offset,
+                    "memory_id": derived.memory_id,
+                    "decision": MERGE,
+                    "at": at,
+                    "epoch": 0,
+                    "jaccard": None,
+                    "confused_with": None,
+                    "detail": {
+                        "derived_from": list(group.memory_ids),
+                        "count": len(group),
+                    },
+                },
+            ),
+            events_path,
+        )
+    return MergeResult(created=tuple(created), events_written=written)
+
+
+def _covered_fragments(items: Sequence[MemoryItem]) -> set[frozenset[str]]:
+    """已经并过的那几组原句 id。用来保证跑第二遍不重复造条目。"""
+    covered: set[frozenset[str]] = set()
+    for item in items:
+        if not item.meta.get("derived"):
+            continue
+        raw = item.meta.get("derived_from")
+        if isinstance(raw, (list, tuple)):
+            covered.add(frozenset(str(each) for each in raw))
+    return covered
+
+
+def _derived_item(group: FragmentGroup) -> MemoryItem:
+    """造一条派生条目。**原句一个字都不动**，所以它只是新的一行。
+
+    ``kind`` 取原句共同的那一个，不一致就退到 FACT——派生条目不发明新的语义类别。
+    ``tier`` 取最早那条的：它代表的就是那一场，不该比它的第一条活得更短。
+    """
+    rendered = render_group(group)
+    kinds = {item.kind for item in group.items}
+    return MemoryItem(
+        memory_id=new_ulid(),
+        kind=group.items[0].kind if len(kinds) == 1 else MemoryKind.FACT,
+        tier=group.items[0].tier,
+        content=rendered,
+        taint=group.items[0].taint,
+        created_at=group.start,
+        lex_sdr=encode_lexical(rendered),
+        session_id=group.session_id,
+        meta={
+            "derived": True,
+            "derived_from": list(group.memory_ids),
+            "span": [group.start, group.end],
+        },
     )
 
 
