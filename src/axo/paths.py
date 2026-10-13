@@ -44,6 +44,7 @@ __all__ = [
     "reminders_fired_path",
     "reminders_path",
     "voice_model_dir",
+    "voices_dir",
     "sessions_dir",
     "set_data_root",
     "snapshot_dir",
@@ -349,3 +350,13 @@ def voice_model_dir() -> Path:
     "目录在、模型不在"与"什么都没有"变成两种要分开处理的状态。
     """
     return data_dir() / "models" / VOICE_MODEL_NAME
+
+
+def voices_dir() -> Path:
+    """她的**音色**放在哪儿：``models/voices/`` 下一个目录一个音色（零样本克隆的参考音）。
+
+    与 :func:`voice_model_dir` 完全同姿态：**在数据根底下**（跟着搬迁走，代价是多搬
+    几十 MB）、**不创建**（音色还没放是常态）。一个音色目录里要有参考音文件与它自己的
+    逐字稿（``ref.txt``）——引擎零样本克隆两样都要，见 :func:`axo.tts.voices_in`。
+    """
+    return data_dir() / "models" / "voices"

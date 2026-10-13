@@ -134,6 +134,12 @@ _PURE_LAYERS = (
     # 语音识别。**vosk 是函数内 import**，所以"没装那个 extra 也能 import 本模块"是
     # 一条可断言的事实——而那正是核心腿能在没有模型、没有 audio 的机器上跑它的前提。
     "axo/asr.py",
+    # 音频形状（PCM/WAV 的来回与秒数）。采集、预算、播放三家共用同一种格式，
+    # 编解码只此一处——纯 stdlib，所以"它自己不碰 Qt/网络"是可断言的事实。
+    "axo/audio.py",
+    # 语音合成的协议与形状（httpx 客户端在 ``llm/speech.py``，它进不了这里——
+    # 上面 ``_PURE_FORBIDDEN`` 对函数内 import 同样认账，这条纪律比拆两个模块硬）。
+    "axo/tts.py",
     "axo/session",
     "axo/ui/color.py",
     "axo/ui/theme.py",

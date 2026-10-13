@@ -350,6 +350,48 @@ def test_cloud_vision_roundtrip() -> None:
         ), f"{stored!r} 被读成了真值"
 
 
+def test_speech_settings_defaults_are_the_product_stance() -> None:
+    """语音输出的默认：**出声开**、音量 80、没选音色、组件地址是 localhost。
+
+    ``enabled`` 默认开是有分量的一条：做这一批的全部理由就是"让她开口"，而且它只在
+    两类时刻响（用户说话那一轮的回复、到点那句）——打字问一句不响。与
+    ``speak_on_alert`` 默认开是同一个理由：到点了不出声，这个功能就等于不存在。
+    """
+
+    defaults = SettingsStore(FakeBackend()).load_voice()
+
+    assert defaults.enabled is True
+    assert defaults.volume == 80
+    assert defaults.voice == ""
+    assert defaults.base_url.startswith("http://127.0.0.1")
+
+
+def test_speech_settings_roundtrip_and_clamp() -> None:
+    """往返；**音量夹回 0–100**（设置可以被手改，读的一侧不假设它一定合法）；
+    bool 走 ``_as_bool``（注册表里 ``"false"`` 是真值的陷阱）。"""
+    from axo.ui.settings_store import SpeechSettings
+
+    store = SettingsStore(FakeBackend())
+    original = SpeechSettings(enabled=False, volume=30, voice="she", base_url="http://pc:9000")
+    store.save_voice(original)
+    assert store.load_voice() == original
+
+    clamped = SettingsStore(FakeBackend({"speech/volume": 900}))
+    assert clamped.load_voice().volume == 100
+    broken = SettingsStore(FakeBackend({"speech/volume": "响"}))
+    assert broken.load_voice().volume == 80, "读不出来的音量回落默认，而不是炸"
+    assert SettingsStore(FakeBackend({"speech/enabled": "false"})).load_voice().enabled is False
+
+
+def test_audio_in_is_off_by_default() -> None:
+    """「当前模型听得见原声」默认关——勾上是一次**用户声明**（云端/兼容端点问不到
+    能力），不是我们的猜测。默认开的话，转写文字那条兜底路会被悄悄换掉。"""
+    assert SettingsStore(FakeBackend()).load_tools().audio_in is False
+    store = SettingsStore(FakeBackend())
+    store.save_tools(ToolSettings(audio_in=True))
+    assert store.load_tools().audio_in is True
+
+
 def test_read_roots_are_stored_as_strings() -> None:
     """写进去的是字符串，不是 ``Path``——``QSettings`` 存不下 ``Path``，它会写成一个
     读不回来的东西。"""

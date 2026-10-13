@@ -27,6 +27,7 @@ from typing import Protocol
 
 from ..paths import wallpapers_dir
 from ..secrets import protect, unprotect
+from ..tts import DEFAULT_SPEECH_ENDPOINT
 from .theme import (
     CUSTOM_PRESET,
     DEFAULT_THEME,
@@ -75,6 +76,12 @@ _K_API_KEY = "backend/api_key"
 
 _K_READ_ROOTS = "tools/read_roots"
 _K_CLOUD_VISION = "tools/cloud_vision"
+_K_AUDIO_IN = "tools/audio_in"
+
+_K_SPEECH_ENABLED = "speech/enabled"
+_K_SPEECH_VOLUME = "speech/volume"
+_K_SPEECH_VOICE = "speech/voice"
+_K_SPEECH_BASE_URL = "speech/base_url"
 
 _K_TASK_MEMORY = "memory/task_memory"
 _K_GRAPH_CHANNEL = "memory/graph_channel"
@@ -199,6 +206,44 @@ class ToolSettings:
 
     read_roots: tuple[Path, ...] = ()
     cloud_vision: bool = False
+    audio_in: bool = False
+    """**当前模型听得见原声吗**——由用户声明，与 :attr:`cloud_vision` 同一族。
+
+        本机 Ollama 恒为假（协议不收音频，实测）；OpenAI 兼容那条路问不到能力，
+        所以判断只能来自用户这一格。勾上 = 语音那一轮**原声直进模型**（连同转写
+        文字一起）；不勾 = 转写文字发出去（现状）。默认关：勾上是一次声明，不是
+        我们的猜测。
+        """
+
+
+@dataclass(frozen=True)
+class SpeechSettings:
+    """语音输出（她开口）的设置。**与提醒那两个开关正交**，别混：
+
+    * ``reminders/speak_on_alert`` 管的是"到点**要不要由她生成**一句话"（那句进不进对话区）；
+    * 这一族管的是"她的话**出不出声**"。
+
+    两个都开 = 到点那句念出来；只开前者 = 那句只出字；只开后者 = 语音回合她开口回答。
+    混成一个开关的话，"关掉朗读"会把提醒那条接缝一起关掉——而它们该各自有逃生口。
+
+    Attributes:
+        enabled: 出不出声。**默认开**：做这一整批的理由就是"让她开口"，而且它只在
+            两类时刻响（用户**说话**那一轮的回复、到点那句），打字问一句不响。
+            每次响是可预期的，那就该默认开——"到点了不出声，这个功能就等于不存在"
+            （``ReminderSettings.speak_on_alert`` 默认开是同一个理由）。
+        volume: 0–100。**应用级**（不是每次朗读级）：音量是这台机器的事，不是这条
+            消息的事；做成每次级的话，"她当时多大声"会变成一条无从判断的历史事实。
+        voice: 音色名（``models/voices/`` 下的目录名）。空串 = 组件自己的默认音色。
+            **用户自己选**（设计里那条"要不要让用户选声音"的待决：要——「她」的声音是
+            这个产品的脸之一，而 ``getVoices()`` 那种系统清单在不同机器上差得远，
+            自己放参考音才可预期）。
+        base_url: 语音组件（离线克隆 TTS 那个独立程序）的根地址。
+    """
+
+    enabled: bool = True
+    volume: int = 80
+    voice: str = ""
+    base_url: str = DEFAULT_SPEECH_ENDPOINT
 
 
 @dataclass(frozen=True)
@@ -396,6 +441,7 @@ class SettingsStore:
         return ToolSettings(
             read_roots=_as_path_list(self._backend.value(_K_READ_ROOTS, [])),
             cloud_vision=_as_bool(self._backend.value(_K_CLOUD_VISION, False)),
+            audio_in=_as_bool(self._backend.value(_K_AUDIO_IN, False)),
         )
 
     def save_tools(self, settings: ToolSettings) -> None:
@@ -403,6 +449,32 @@ class SettingsStore:
         平台（见 :func:`_as_path_list`），所以读取侧不依赖写入侧。"""
         self._backend.setValue(_K_READ_ROOTS, [str(root) for root in settings.read_roots])
         self._backend.setValue(_K_CLOUD_VISION, settings.cloud_vision)
+        self._backend.setValue(_K_AUDIO_IN, settings.audio_in)
+
+    # ── 语音输出（她开口） ──────────────────────────────────────────────────
+
+    def load_voice(self) -> SpeechSettings:
+        """读出语音输出设置。bool 走 :func:`_as_bool`（注册表里 ``"false"`` 是真值的
+        陷阱，同记忆那两格）；**音量夹回 0–100**——设置可以被手改，读的一侧不假设。"""
+        volume = self._backend.value(_K_SPEECH_VOLUME, 80)
+        try:
+            volume = max(0, min(100, int(volume)))
+        except (TypeError, ValueError):
+            volume = 80
+        base_url = self._text(_K_SPEECH_BASE_URL) or DEFAULT_SPEECH_ENDPOINT
+        return SpeechSettings(
+            enabled=_as_bool(self._backend.value(_K_SPEECH_ENABLED, True)),
+            volume=volume,
+            voice=self._text(_K_SPEECH_VOICE),
+            base_url=base_url,
+        )
+
+    def save_voice(self, settings: SpeechSettings) -> None:
+        """写回。"""
+        self._backend.setValue(_K_SPEECH_ENABLED, settings.enabled)
+        self._backend.setValue(_K_SPEECH_VOLUME, settings.volume)
+        self._backend.setValue(_K_SPEECH_VOICE, settings.voice)
+        self._backend.setValue(_K_SPEECH_BASE_URL, settings.base_url)
 
     # ── 记忆 ────────────────────────────────────────────────────────────────
 
