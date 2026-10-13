@@ -33,6 +33,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -315,6 +316,20 @@ def render_memory_detail(
         lines.append(
             f"遗忘记录：原层级 {tier_label(record.previous_tier)} · 于 {format_ts(record.at)}"
         )
+    if item.meta.get("derived"):
+        # **整理条目**要说清它是谁的合并视图。用户的要求是「已有的记忆不允许被改动」，
+        # 所以原句永远在库里——这一行让人对得出来：它由哪几条派生、覆盖哪段时间。
+        who = [str(each) for each in item.meta.get("derived_from") or ()]
+        span = item.meta.get("span")
+        head = f"整理产物 · 由 {len(who)} 条原句归并"
+        if isinstance(span, (list, tuple)) and len(span) == 2:
+            # 脏的区间就只报条数，不编时间（f-string 先求值，抛了 head 不会被改半截）
+            with contextlib.suppress(TypeError, ValueError):
+                head += f" · {format_ts(float(span[0]))} – {format_ts(float(span[1]))}"
+        lines.append(head)
+        for memory_id in who:
+            lines.append(f"  · {memory_id}")
+        lines.append("原句一字不动地留在库里——这条只是它们的合并视图，正文末尾附着逐字原话。")
     if item.meta:
         # meta 对 memcore 是不透明的，这里也**不做解释**，只把键列出来。里面的
         # 东西（工具轨迹、归因快照）由写它的那一层负责说明。

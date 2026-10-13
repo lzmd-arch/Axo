@@ -1214,3 +1214,22 @@ def test_fragments_from_different_sessions_stay_apart() -> None:
 
     assert system.count("· [") == 2
     assert "原话：" not in system
+
+
+def test_every_memory_gets_in_when_the_window_has_room() -> None:
+    """库里 N 条 → 上下文里 N 条全在。**这是「完整记忆」的落点。**
+
+    以前一次最多 8 条、还挤在 usable 的 25% 隔间里——「能回想起的记忆少」就死在那两处。
+    现在条数只受窗口约束；窗口装得下就一条都不丢。
+    """
+    memories = [
+        memory(f"m{index}", f"盐度探头第 {index} 次标定的读数各不相同。", created_at=WHEN + index)
+        for index in range(20)
+    ]
+
+    result = assemble(history(), current="问。", budget=ROOMY, recalled=memories)
+
+    assert len(result.ledger.injected) == 20, f"只进了 {len(result.ledger.injected)} 条"
+    system = system_of(result)
+    for index in range(20):
+        assert f"盐度探头第 {index} 次标定" in system, f"第 {index} 条没进上下文"

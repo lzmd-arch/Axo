@@ -867,3 +867,41 @@ def test_rows_are_empty_without_a_graph_or_for_an_unknown_node() -> None:
 
     assert association_rows("focus", graph=None, lookup=lookup_from(summary)) == ()
     assert association_rows("不在图里", graph=graph, lookup=lookup_from(summary)) == ()
+
+
+def test_detail_marks_a_derived_entry_and_names_its_fragments() -> None:
+    """整理条目要能被认出来，并列出它由哪几条派生。
+
+    用户的约束是「已有的记忆不允许被改动」，所以原句永远在库里——这一行让人对得出来：
+    这条是合并视图，不是新事实。
+    """
+    item = make_item(
+        "感冒那位回来了；还带了杯奶茶。",
+        meta={"derived": True, "derived_from": ["01A", "01B"], "span": [NOW, NOW + 180]},
+    )
+
+    text = render_memory_detail(item, now=NOW)
+
+    assert "整理产物" in text
+    assert "由 2 条原句归并" in text
+    assert "01A" in text and "01B" in text
+
+
+def test_a_plain_item_is_not_labelled_as_derived() -> None:
+    item = make_item("路由器在书房。")
+
+    text = render_memory_detail(item, now=NOW)
+
+    assert "整理产物" not in text
+
+
+def test_a_dirty_span_still_says_how_many_fragments() -> None:
+    """区间是脏的就只报条数，不编时间——编出来的时间会被当事实读。"""
+    item = make_item(
+        "并出来的一条。",
+        meta={"derived": True, "derived_from": ["01A"], "span": "显然是坏的"},
+    )
+
+    text = render_memory_detail(item, now=NOW)
+
+    assert "由 1 条原句归并" in text
