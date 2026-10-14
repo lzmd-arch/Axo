@@ -1233,3 +1233,16 @@ def test_every_memory_gets_in_when_the_window_has_room() -> None:
     system = system_of(result)
     for index in range(20):
         assert f"盐度探头第 {index} 次标定" in system, f"第 {index} 条没进上下文"
+
+
+def test_the_ledger_does_not_say_it_kept_zero_for_generation() -> None:
+    """云端（不预留）时账本写「输出走后端默认」，不是「留 0 给生成」。
+
+    「留 0」读着像 bug，而实际是"我们不设任何输出上限"——两件事差得很远，而账本是
+    用户判断"这一轮为什么这样"的唯一入口。
+    """
+    cloud = TokenBudget(window=16384, reserve_output=0)
+    local = TokenBudget(window=16384, reserve_output=2048)
+
+    assert "输出走后端默认" in assemble(history(1), current="问。", budget=cloud).ledger.render()
+    assert "留 2048 给生成" in assemble(history(1), current="问。", budget=local).ledger.render()

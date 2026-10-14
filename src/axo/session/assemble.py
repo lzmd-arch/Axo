@@ -211,9 +211,13 @@ class AssemblyLedger:
         字符宽度——中文占两格，Python 的 ``ljust`` 不知道这件事，所以这里自己按
         显示宽度补齐。
         """
+        # 云端不预留（``reserve_output`` 为 0），那时**不写"留 0 给生成"**——那句话读着
+        # 像 bug，而实际是"输出长度走后端默认、我们不设上限"，两件事差得很远。
+        reserve = self.budget.reserve_output
+        keep = f"，留 {reserve} 给生成" if reserve else "，输出走后端默认"
         lines = [
             f"装配账本 · 估算 {self.total_tokens} / {self.budget.usable} token"
-            f"（窗口 {self.budget.window}，留 {self.budget.reserve_output} 给生成）",
+            f"（窗口 {self.budget.window}{keep}）",
             "─" * 34,
         ]
         for report in self.layers:
