@@ -41,6 +41,7 @@ from .theme import (
 __all__ = [
     "BackendSettings",
     "MemorySettings",
+    "ProactiveSettings",
     "ReminderSettings",
     "SETTINGS_APP",
     "SETTINGS_ORG",
@@ -93,6 +94,14 @@ _K_CONSOLIDATION_INTERVAL_S = "memory/consolidation_interval_s"
 _K_WAKE_ON_ALERT = "reminders/wake_on_alert"
 _K_SPEAK_ON_ALERT = "reminders/speak_on_alert"
 _K_AUTOSTART = "reminders/autostart"
+
+#: **主动搭话**那一族的四个键。与提醒分开：提醒管的是"到点那一刻"，这一族管的是
+#: "她自己找上来"——两件事的边界数也不是一回事。
+_K_PROACTIVE_ENABLED = "proactive/enabled"
+_K_PROACTIVE_MIN_GAP = "proactive/min_gap_minutes"
+_K_PROACTIVE_MAX_PER_DAY = "proactive/max_per_day"
+_K_PROACTIVE_QUIET_FROM = "proactive/quiet_from"
+_K_PROACTIVE_QUIET_TO = "proactive/quiet_to"
 
 #: **这台机器**级别的两个键。与上面四族分开，因为它们不是"某一块功能怎么跑"，
 #: 而是"程序自己住哪、用户看过说明没有"。
@@ -295,6 +304,31 @@ class MemorySettings:
     graph_channel: bool = False
     consolidation_enabled: bool = True
     consolidation_interval_s: int = 86_400
+
+
+@dataclass(frozen=True)
+class ProactiveSettings:
+    """主动搭话：**她自己找上来的三个边界数**，外加一个总开关。
+
+    默认值照抄 :mod:`axo.agent.proactive_chat` 里那一组（那里是判定的唯一实现，这里是
+    落盘的那一份）——**两处必须一致**，写歪一处的症状是"设置页显示 20 分钟，判定按
+    别的数走"，而界面上一点异常都看不出来。
+
+    Attributes:
+        enabled: 总开关。**默认开**——它是这一批的主体，默认关等于没做。先例是
+            :attr:`ReminderSettings.speak_on_alert`："会自己动"的开关默认开，但必须
+            留一个能关掉它的地方（慢、吵、或者就是不想要）。
+        min_gap_minutes: 静多久才算静下来。20 分钟：比一轮对话长，比一顿饭短。
+        max_per_day: 一天最多主动开口几次。``None`` = 不限，``0`` = 一次都不来。
+        quiet_from / quiet_to: 免打扰时段的起止（本地小时数）。默认 23 → 8。
+            **两者相等表示这一闸关掉**，不是"全天静默"。
+    """
+
+    enabled: bool = True
+    min_gap_minutes: int = 20
+    max_per_day: int | None = 3
+    quiet_from: int = 23
+    quiet_to: int = 8
 
 
 @dataclass(frozen=True)
@@ -523,6 +557,32 @@ class SettingsStore:
             autostart=_as_bool(self._backend.value(_K_AUTOSTART, False), False),
         )
 
+    def load_proactive(self) -> ProactiveSettings:
+        """读出主动搭话的设置。
+
+        **五个默认值在这里再写一遍**，与 dataclass 的字段默认保持一致（同
+        :meth:`load_reminders` 那条注释：三处默认值少写一处，症状是"新装好的程序里
+        那个框没勾上"，而界面上看不出来）。
+        """
+        return ProactiveSettings(
+            enabled=_as_bool(self._backend.value(_K_PROACTIVE_ENABLED, True), True),
+            min_gap_minutes=_as_int(self._backend.value(_K_PROACTIVE_MIN_GAP, 20), 20),
+            max_per_day=_as_optional_int(self._backend.value(_K_PROACTIVE_MAX_PER_DAY, 3), 3),
+            quiet_from=_as_int(self._backend.value(_K_PROACTIVE_QUIET_FROM, 23), 23),
+            quiet_to=_as_int(self._backend.value(_K_PROACTIVE_QUIET_TO, 8), 8),
+        )
+
+    def save_proactive(self, settings: ProactiveSettings) -> None:
+        """写回。``max_per_day`` 为 ``None`` 时写空串——那个空串就是"不限"。"""
+        self._backend.setValue(_K_PROACTIVE_ENABLED, bool(settings.enabled))
+        self._backend.setValue(_K_PROACTIVE_MIN_GAP, int(settings.min_gap_minutes))
+        self._backend.setValue(
+            _K_PROACTIVE_MAX_PER_DAY,
+            "" if settings.max_per_day is None else int(settings.max_per_day),
+        )
+        self._backend.setValue(_K_PROACTIVE_QUIET_FROM, int(settings.quiet_from))
+        self._backend.setValue(_K_PROACTIVE_QUIET_TO, int(settings.quiet_to))
+
     def save_reminders(self, settings: ReminderSettings) -> None:
         """写回。存真 bool，读取侧仍然按 :func:`_as_bool` 收一遍（同记忆那一节）。"""
         self._backend.setValue(_K_WAKE_ON_ALERT, bool(settings.wake_on_alert))
@@ -610,6 +670,18 @@ def _as_int(value: object, default: int) -> int:
         except ValueError:
             return default
     return default
+
+
+def _as_optional_int(value: object, default: int | None) -> int | None:
+    """把读回来的东西收成"整数或空"。
+
+    **空串就是 None**，而 ``None`` 在这里是一个**合法取值**（``max_per_day`` 的
+    "不限"）。与 :func:`_as_int` 分开写，是因为后者会把空串收成 0——于是"不限"变成
+    了"一次都不来"，而这一对正是这条设置里最容易搞反的。
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    return _as_int(value, 0 if default is None else default)
 
 
 def _is_absolute_anywhere(text: str) -> bool:

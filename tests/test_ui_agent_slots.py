@@ -23,6 +23,8 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Callable
+from datetime import date, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -31,6 +33,7 @@ from PySide6.QtCore import QCoreApplication, QEvent, QObject
 
 from axo import autostart
 from axo.agent.gate import APPROVAL_TIMEOUT_S
+from axo.agent.proactive_chat import Material
 from axo.agent.reminders import Alert, Occurrence, Reminder
 from axo.asr import Transcription
 from axo.llm.base import ChatMessage, ToolCall
@@ -38,7 +41,8 @@ from axo.session.store import Message
 from axo.tts import SpeechResult
 from axo.ui import voice as voice_module
 from axo.ui.main_window import SPEECH_TIMEOUT_MS, MainWindow, display_rows
-from axo.ui.settings_store import ReminderSettings, SpeechSettings
+from axo.ui.proactive_scheduler import ProactiveScheduler
+from axo.ui.settings_store import ProactiveSettings, ReminderSettings, SpeechSettings
 from memcore.store import MemoryStore
 
 pytestmark = pytest.mark.gui
@@ -217,6 +221,16 @@ class FakeSpeechWorker:
         self.stops += 1
 
 
+class FakeSession:
+    """一个会话的替身。**只有主动搭话用得上它**：``_last_activity`` 看两样东西——
+    最后一条 ``user`` 行的时刻、以及它的 id（用来排掉"本会话刚说过的"那条记忆）。
+    """
+
+    def __init__(self, session_id: str = "S-now", messages: list[Any] | None = None) -> None:
+        self.session_id = session_id
+        self.messages = list(messages or [])
+
+
 class Stub(QObject):
     """那些槽，以及它们碰得到的东西。
 
@@ -256,6 +270,12 @@ class Stub(QObject):
     _on_speech_played = MainWindow._on_speech_played
     _take_speech_receipt = MainWindow._take_speech_receipt
     _track = MainWindow._track
+    # ── 主动搭话那一档（她先开口的另一条路）──
+    _on_proactive_tick = MainWindow._on_proactive_tick
+    _roll_over_if_new_day = MainWindow._roll_over_if_new_day
+    _last_activity = MainWindow._last_activity
+    _pick_material = MainWindow._pick_material
+    _start_proactive_speech = MainWindow._start_proactive_speech
 
     def __init__(
         self,
@@ -289,6 +309,20 @@ class Stub(QObject):
         self._live_threads: list[Any] = []
         #: 提醒那两个开关（设置 → 提醒）。默认那一份 = 两个都开，与真程序一致。
         self._reminder_settings = ReminderSettings()
+        # ── 主动搭话那一档 ──
+        #: 会话替身。``_last_activity`` 与"本会话的不当话头"两条都读它。
+        self._session = FakeSession()
+        #: 主动搭话的设置。**默认把免打扰关掉**（两个数相等）——否则这几条测试在
+        #: 23:00 之后跑就会红，而红的原因与它们要验的东西毫无关系。
+        self._proactive_settings = ProactiveSettings(quiet_from=0, quiet_to=0)
+        #: 她这一轮拿的是哪个话头（与 ``_speak_alert`` 互斥，两种"她先开口"共用收尾）。
+        self._speak_material: Material | None = None
+        #: 她上一次开口（提醒与主动都算）。她说话也算"有动静"。
+        self._last_speech_at: datetime | None = None
+        #: 今天主动开口几次、用掉哪些话头，以及那个用来跨天清零的日期。
+        self._spoken_today = 0
+        self._used_materials: list[str] = []
+        self._proactive_day: date | None = None
         self._settings_store = FakeSettingsStore()
         #: 设置窗口（可能还没开）。``_on_reminders_changed`` 往它上面回填结果那一行。
         self._settings_dialog: Any = None
@@ -1532,3 +1566,337 @@ def test_an_interruption_is_also_a_receipt(qapp: Any) -> None:
 
     line = stub._take_speech_receipt()
     assert "没播成" in line and "打断" in line
+
+
+# ── 主动搭话：她先开口的另一条路 ────────────────────────────────────────────
+
+
+def _memory_item(
+    memory_id: str = "mA",
+    content: str = "感冒那位回来了。",
+    *,
+    minutes_ago: float = 60.0,
+    session: str = "S-then",
+) -> Any:
+    """一条可当话头的记忆。默认写在**别的会话**里（本会话的要被排掉，见下）。"""
+    from memcore.sdr import encode_lexical
+    from memcore.types import MemoryItem, MemoryKind, Tier
+
+    return MemoryItem(
+        memory_id=memory_id,
+        kind=MemoryKind.FACT,
+        tier=Tier.LONGTERM,
+        content=content,
+        created_at=time.time() - minutes_ago * 60,
+        session_id=session,
+        lex_sdr=encode_lexical(content),
+    )
+
+
+def _idle_since(stub: Stub, minutes: float) -> None:
+    """把"他最后说话"摆到 N 分钟前（主动搭话只看这一条与 ``_last_speech_at``）。"""
+    stub._session.messages = [
+        Message(role="user", content="帮我看看笔记", at=time.time() - minutes * 60)
+    ]
+
+
+def _proactive_stub(qapp: Any, **script: Any) -> tuple[Stub, ScriptedBackend]:
+    """一个能主动开口的替身：有后端、有库、他静了 25 分钟、库里有话头。"""
+    backend = ScriptedBackend(
+        script=script.pop("script", [[text_chunk("你上次说的那把扳手，借到了吗？", done=True)]]),
+        **script,
+    )
+    stub = Stub(streaming=False, backend=backend, memory=MemoryStore(":memory:"))
+    _idle_since(stub, 25)
+    stub._memory.add(_memory_item())
+    return stub, backend
+
+
+def test_she_speaks_proactively_when_everything_is_ready(qapp: Any) -> None:
+    """条件齐了：她拿一条旧记忆起头，进逐字稿、画进对话区、**念出声**。
+
+    与提醒那条的三处不同都在这条断言里：回看小标是「她主动说的」（不是「提醒」）、
+    **不叫醒窗口**、计数与去重在决定开口那一刻就落下。
+    """
+    stub, backend = _proactive_stub(qapp)
+
+    stub._on_proactive_tick()
+
+    assert _wait_until(qapp, lambda: not stub._live_threads), "那一轮没跑完"
+    assert backend.calls == 1
+    _kind, role, text, meta = stub.chat_view.calls[-1]
+    assert role == "proactive"
+    assert meta == {"title": "她主动说的"}
+    assert len(stub.stored) == 1
+    line = stub.stored[0]
+    assert (line.role, line.proactive) == ("assistant", True)
+    assert stub.remembered == [], "她主动说的那句进了记忆库"
+    assert stub._tray.messages == [], "主动搭话不该动托盘气泡（那是提醒那条通道）"
+    # 计数与去重**在决定开口那一刻**就落下：一个连不上模型的后端不该被每分钟敲一次。
+    assert (stub._spoken_today, stub._used_materials) == (1, ["mA"])
+
+
+def test_the_material_rides_in_the_user_line(qapp: Any) -> None:
+    """素材进的是 ``user`` 侧的事件行，而不是 system —— 理由见 `agent/proactive.py`。"""
+    stub, backend = _proactive_stub(qapp)
+
+    stub._on_proactive_tick()
+
+    assert _wait_until(qapp, lambda: not stub._live_threads)
+    request = backend.requests[0]
+    assert [row.role for row in request.messages] == ["system", "user"]
+    assert "你记得这件事" in request.messages[1].content
+    assert "感冒那位回来了。" in request.messages[1].content
+    assert request.messages[0].content.count("你记得这件事") == 0
+
+
+def test_she_never_starts_when_the_switch_is_off(qapp: Any) -> None:
+    stub, backend = _proactive_stub(qapp)
+    stub._proactive_settings = ProactiveSettings(enabled=False, quiet_from=0, quiet_to=0)
+
+    stub._on_proactive_tick()
+
+    assert backend.calls == 0
+    assert stub.stored == [] and stub._speak_material is None
+
+
+def test_quiet_hours_keep_her_quiet_every_hour_of_the_day(qapp: Any) -> None:
+    """免打扰那一闸的**接线**：把时段设成"整天"（0 → 24），她一次都不开口。
+
+    墙上时钟无关：纯层那张表已经逐格钉过边界，这里要证的只是"设置真的传到了判定里"。
+    """
+    stub, backend = _proactive_stub(qapp)
+    stub._proactive_settings = ProactiveSettings(quiet_from=0, quiet_to=24)
+
+    stub._on_proactive_tick()
+
+    assert backend.calls == 0
+
+
+def test_a_recent_message_keeps_her_quiet(qapp: Any) -> None:
+    stub, backend = _proactive_stub(qapp)
+    _idle_since(stub, 5)
+
+    stub._on_proactive_tick()
+
+    assert backend.calls == 0
+
+
+def test_her_own_speech_resets_the_idle_clock(qapp: Any) -> None:
+    """她刚说完一句，**"他静下来了"就不成立**——否则那是唠叨的形状。"""
+    stub, backend = _proactive_stub(qapp)
+    stub._last_speech_at = datetime.now()
+
+    stub._on_proactive_tick()
+
+    assert backend.calls == 0
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("_backend", None), ("_streaming", True), ("_speak_live", True)],
+    ids=["没有后端", "他正问到一半", "她已经在说"],
+)
+def test_the_machine_gates_keep_her_quiet(qapp: Any, field: str, value: Any) -> None:
+    """这三条不是"时机"问题，是"这一轮做不成"——同一个 tick 里现问。"""
+    stub, backend = _proactive_stub(qapp)
+    setattr(stub, field, value)
+
+    stub._on_proactive_tick()
+
+    assert backend.calls == 0
+    assert stub.stored == [] and stub._speak_material is None
+
+
+def test_without_a_material_she_stays_quiet(qapp: Any) -> None:
+    """一条候选都没有 → **不开口**，不硬找一个话头。"""
+    backend = ScriptedBackend(script=[[text_chunk("好。", done=True)]])
+    stub = Stub(streaming=False, backend=backend, memory=MemoryStore(":memory:"))
+    _idle_since(stub, 25)
+
+    stub._on_proactive_tick()
+
+    assert backend.calls == 0
+
+
+def test_what_she_said_this_session_is_not_a_topic(qapp: Any) -> None:
+    """本会话写下的不当话头——"刚说过"不是"她还记得"。"""
+    backend = ScriptedBackend(script=[[text_chunk("好。", done=True)]])
+    stub = Stub(streaming=False, backend=backend, memory=MemoryStore(":memory:"))
+    _idle_since(stub, 25)
+    stub._memory.add(_memory_item(session=stub._session.session_id))
+
+    stub._on_proactive_tick()
+
+    assert backend.calls == 0
+
+
+def test_a_failed_proactive_speech_says_nothing_at_all(qapp: Any) -> None:
+    """**没有降级。** 提醒那条失败时由程序代念；主动搭话没有那样的正文。
+
+    由程序说一句"我想跟你说话"是荒谬的，所以失败之后**一个字都不该出现**——不是
+    不重试，是整件事就这么过去了。
+    """
+    stub, backend = _proactive_stub(qapp, script=[[]], raise_at=0)
+
+    stub._on_proactive_tick()
+
+    assert _wait_until(qapp, lambda: not stub._live_threads)
+    assert backend.calls == 1, "失败之后又试了一次"
+    assert stub.stored == []
+    assert all(call[1] != "system" for call in stub.chat_view.calls), "程序替她开口了"
+
+
+def test_an_empty_proactive_reply_also_says_nothing(qapp: Any) -> None:
+    stub, _backend = _proactive_stub(qapp, script=[[text_chunk("   ", done=True)]])
+
+    stub._on_proactive_tick()
+
+    assert _wait_until(qapp, lambda: not stub._live_threads)
+    assert stub.stored == []
+    assert all(call[1] != "system" for call in stub.chat_view.calls)
+
+
+def test_a_late_proactive_result_is_dropped_like_any_other(qapp: Any) -> None:
+    """让路之后迟到的结果不许落地——主动与提醒共用同一条收尾，所以这条也要成立。"""
+    stub, _backend = _proactive_stub(qapp)
+    stub._on_proactive_tick()
+    assert _wait_until(qapp, lambda: not stub._live_threads)
+    before = len(stub.stored)
+
+    stub._speak_live = False  # 让路
+    stub._on_speech_finished("迟到的一句。", {})
+
+    assert len(stub.stored) == before
+
+
+def test_the_day_counter_rolls_over(qapp: Any) -> None:
+    stub = Stub(streaming=False, backend=object(), memory=MemoryStore(":memory:"))
+    stub._proactive_day = date(2026, 10, 14)
+    stub._spoken_today = 3
+    stub._used_materials = ["a", "b"]
+
+    stub._roll_over_if_new_day(datetime(2026, 10, 15, 9, 0))
+
+    assert stub._proactive_day == date(2026, 10, 15)
+    assert (stub._spoken_today, stub._used_materials) == (0, [])
+
+
+def test_the_timeout_does_not_make_the_program_speak_for_her(qapp: Any) -> None:
+    """超时那条分支：提醒会降级成程序说，主动搭话不会。"""
+    stub = Stub(streaming=False, backend=object(), memory=MemoryStore(":memory:"))
+    worker = FakeSpeechWorker()
+    stub._speak_worker = worker
+    stub._speak_live = True
+    stub._speak_material = Material("mA", "感冒那位回来了。", time.time())
+
+    stub._time_out_speech()
+
+    assert worker.stops == 1
+    assert all(call[1] != "system" for call in stub.chat_view.calls)
+    assert stub._speak_material is None and stub._speak_alert is None
+
+
+# ── 节拍器 ─────────────────────────────────────────────────────────────────
+
+
+def test_the_scheduler_ticks_and_stops(qapp: Any) -> None:
+    scheduler = ProactiveScheduler(tick_ms=1)
+    seen: list[int] = []
+    scheduler.tick.connect(lambda: seen.append(1))
+
+    assert not scheduler.running
+    scheduler.start()
+    assert scheduler.running
+    scheduler.start()  # 幂等：重复起不会把周期重启一遍
+    assert _wait_until(qapp, lambda: len(seen) >= 2), "表没走"
+
+    scheduler.stop()
+    scheduler.stop()  # 幂等
+    assert not scheduler.running
+
+
+def test_the_tick_carries_no_payload(qapp: Any) -> None:
+    """载荷为空：判定与取材都不在节拍器里，所以它只有"时间到了"这一件事可说。
+
+    用 ``lambda *args`` 接：它什么都收得下，于是"收到几个"成了一个能断言的事实。
+    """
+    scheduler = ProactiveScheduler(tick_ms=1)
+    seen: list[tuple[Any, ...]] = []
+    scheduler.tick.connect(lambda *args: seen.append(args))
+
+    scheduler.start()
+    assert _wait_until(qapp, lambda: bool(seen)), "表没走"
+    scheduler.stop()
+
+    assert seen and all(args == () for args in seen), f"信号带了载荷：{seen[:2]}"
+
+
+# ── 接线守卫（AST） ────────────────────────────────────────────────────────
+
+
+def _attribute_calls(name: str) -> set[str]:
+    """``MainWindow`` 某个方法里**代码上**出现过的 ``self.xxx`` 名字。
+
+    **走 AST 而不是在源码文本里搜字符串**：文档字符串里解释"这里为什么不调
+    ``_tell_reminder``"是应该的，而它不该让守卫变红——第一次写这条守卫就是这么红的。
+    """
+    import ast
+    import importlib
+
+    module = importlib.import_module("axo.ui.main_window")
+    source = Path(module.__file__).read_text(encoding="utf-8")
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return {child.attr for child in ast.walk(node) if isinstance(child, ast.Attribute)}
+    raise AssertionError(f"没找到 MainWindow.{name}")
+
+
+def test_the_proactive_path_has_no_fallback_by_construction() -> None:
+    """**没有降级是设计，不是漏写。**
+
+    提醒那条说不出来时由程序代念（``_tell_reminder``）——那条气泡的正文本来就是提醒。
+    主动搭话没有那样的正文，所以从取话头到起那一轮，整条路上不许出现 ``_tell_reminder``。
+    这条守卫盯的是"谁调它"：纯层全绿不等于接线在，而接线在也不等于**只**接了该接的。
+    """
+    for name in ("_on_proactive_tick", "_start_proactive_speech"):
+        assert "_tell_reminder" not in _attribute_calls(name), f"{name} 里出现了降级"
+
+
+def test_she_really_is_read_aloud_on_this_path_too() -> None:
+    """出声那条接线的守卫：主动搭话与提醒共用收尾，而收尾里确实调了 ``_speak_reply``。
+
+    "用户说话她才开口"那条规则说的是**打字回合不念**；她主动开口属于"开口"。
+    """
+    assert "_speak_reply" in _attribute_calls("_on_speech_finished")
+
+
+def test_the_table_is_actually_started_and_stopped() -> None:
+    """**表起没起**是一条静默失效的接线：不起，她一次都不会主动开口，而界面上没有任何
+    异常（连日志都没有）。
+
+    这一层测试碰不到真的 ``__init__``（构造 ``MainWindow`` 会连 Ollama、起线程、加载
+    WebEngine，见本文件开头那段），所以退一步钉源码：构造、起、停三处都在。
+    """
+    import ast
+    import importlib
+
+    module = importlib.import_module("axo.ui.main_window")
+    source = Path(module.__file__).read_text(encoding="utf-8")
+    window = next(
+        node
+        for node in ast.parse(source).body
+        if isinstance(node, ast.ClassDef) and node.name == "MainWindow"
+    )
+    # **只取 MainWindow 自己的**：``ast.walk`` 会把嵌套类里同名的 ``__init__`` 也收进来，
+    # 而它后访问到、会把真的那一份盖掉——那种守卫会在某次重构之后悄悄失效。
+    bodies = {
+        node.name: ast.get_source_segment(source, node) or ""
+        for node in window.body
+        if isinstance(node, ast.FunctionDef)
+    }
+
+    assert "ProactiveScheduler(" in bodies["__init__"], "没建那块表"
+    assert "self._proactive.tick.connect(" in bodies["__init__"], "建了但没接 tick"
+    assert "self._proactive.start()" in bodies["__init__"], "建了但没起表"
+    assert "self._proactive.stop()" in bodies["_shutdown"], "收尾没停表"

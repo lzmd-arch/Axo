@@ -37,7 +37,7 @@ import sys
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -71,6 +71,13 @@ from .. import autostart
 from ..agent.catalog import default_tools
 from ..agent.gate import APPROVAL_TIMEOUT_S
 from ..agent.proactive import build_reminder_messages
+from ..agent.proactive_chat import (
+    DEFAULT_WINDOW_DAYS,
+    Material,
+    build_proactive_messages,
+    pick_material,
+    should_speak,
+)
 from ..agent.reminders import Alert, CancelledStore, FiredStore, ReminderStore
 from ..agent.router import (
     HELP_TEXT,
@@ -152,6 +159,7 @@ from .memory_worker import (
     render_recall_detail,
 )
 from .onboarding import OnboardingWizard
+from .proactive_scheduler import ProactiveScheduler
 from .relaunch import restart_application
 from .reminder_scheduler import ReminderScheduler
 from .screen import grab as capture_screen
@@ -161,6 +169,7 @@ from .settings_store import (
     PROVIDER_OLLAMA,
     BackendSettings,
     MemorySettings,
+    ProactiveSettings,
     ReminderSettings,
     SettingsStore,
     ToolSettings,
@@ -249,6 +258,8 @@ _SPOKEN_TITLE = "语音说的"
 """说出来的那句 user 行的标题小字（回看用）。"""
 
 _PROACTIVE_TITLE = "提醒"
+#: 主动搭话那一轮的回看小标。与上面那个分开：提醒是"到点了"，这一条是"她自己找上来的"。
+_PROACTIVE_CHAT_TITLE = "她主动说的"
 """她主动开口那条气泡的标题（网页侧渲染成气泡上方那行小字）。
 
 **必须是常量，而且只能有这一处。** 回看那一路（:func:`display_rows`）手上只有逐字稿
@@ -472,6 +483,7 @@ class MainWindow(QMainWindow):
         #: **每次到点现读这一个成员，不把它塞进调度器**：勾选框改完要在下一次到点就生效，
         #: 而调度器（与它的那三本账）压根不该知道"用户想不想被打扰"。
         self._reminder_settings: ReminderSettings = self._settings_store.load_reminders()
+        self._proactive_settings: ProactiveSettings = self._settings_store.load_proactive()
         # **自启那条值的自愈。** 程序换过位置之后（用户把 exe 挪了、或者换了安装目录），
         # 注册表里那一行还指着旧路径，而症状是"登录时什么都没发生"——离改动已经过去
         # 几周。所以开着这一项就启动时对一次表。
@@ -612,6 +624,12 @@ class MainWindow(QMainWindow):
         )
         self._scheduler.fired.connect(self._on_reminder_fired)
 
+        #: 主动搭话的节拍器。**判定不在这里**——它只发"该问一次了"，事实与判定分别在
+        #: :meth:`_on_proactive_tick` 与纯层（见 ``ui/proactive_scheduler.py`` 的模块文档：
+        #: 为什么是固定 60 秒而不是"睡到下一个时刻"）。
+        self._proactive = ProactiveScheduler(parent=self)
+        self._proactive.tick.connect(self._on_proactive_tick)
+
         #: 「到点由她开口」那一轮。**它是一次请求，但不是一轮对话**：没有 user 行、
         #: 不进记忆库、不动 ``_streaming``、也不锁输入框（逐条见
         #: :meth:`_on_speech_finished`）。两个线程成员由 :meth:`_track` 按
@@ -625,6 +643,17 @@ class MainWindow(QMainWindow):
         self._speak_live = False
         #: 她这一轮说的是**哪一条**。降级那一路要靠它把提醒补出来。
         self._speak_alert: Alert | None = None
+        #: 她这一轮拿的是**哪个话头**（主动搭话那条路）。与 ``_speak_alert`` 互斥，
+        #: 两种"她先开口"共用同一条收尾——靠这两个字段判断该不该补一句话。
+        self._speak_material: Material | None = None
+        #: 她上一次开口是什么时候。**提醒与主动都算**：她刚说完一句，二十秒后再来一句
+        #: 是骚扰，二十分钟后再来一句同样不是"他静下来了"（见 :meth:`_last_activity`）。
+        self._last_speech_at: datetime | None = None
+        #: 今天主动开口了几次、用掉了哪些话头。跨天在
+        #: :meth:`_roll_over_if_new_day` 里清零。
+        self._spoken_today = 0
+        self._used_materials: list[str] = []
+        self._proactive_day: date | None = None
         #: 等她开口的表。**单发**，而且只在真有那一轮时才转（理由见
         #: :data:`SPEECH_TIMEOUT_MS`）。放在这里、不放进 :meth:`_track`：它管的是
         #: "等多久算太久"，与线程那一对的生命周期不是同一件事。
@@ -774,6 +803,9 @@ class MainWindow(QMainWindow):
         # 顺序上还有一条：它排在 ``_shutdown`` 有可能被触发的一切之后，于是"还没有
         # 调度器"这个中间态不存在（``aboutToQuit`` 在上面就接好了）。
         self._scheduler.start()
+        # 主动搭话那块表排在它后面：它的 tick 不同步发信号（那边 ``start()`` 会同步
+        # 把错过的收掉，所以有那个顺序约束），这里没有。
+        self._proactive.start()
 
         # **接管周期巩固。** 排在这里没有提醒那条的时序约束（``start()`` 不同步发
         # 信号），所以它其实可以更早；放在一起是让"这个程序里有两块表"这件事只有
@@ -2345,9 +2377,6 @@ class MainWindow(QMainWindow):
             # 这一轮**没有自己的额度**。以前它有自己的输出上限，是被"思考"
             # 顶上去的：给 160 时四次里四次把额度全花在思考上、正文一个字不剩。现在
             # 与其它轮同一条规则——云端一个字不传，本机只留协议需要的那个预留量。
-            # 与其它轮同一条规则：由 reserve_for 判，不读 self._budget——
-            # 这条路是「她主动开口」，测试的替身对象上没有那个字段，而规则本身
-            # 不该依赖「装配预算对象存在」。
             max_tokens=reserve_for(self._backend) or None,
         )
         self._speak_alert = alert
@@ -2367,8 +2396,127 @@ class MainWindow(QMainWindow):
         self._speak_timeout.start(SPEECH_TIMEOUT_MS)
         thread.start()
 
-    def _retire_speech(self) -> Alert | None:
-        """让这一轮**作废**，返回她说的是哪一条（没在说就 ``None``）。
+    # ── 主动搭话：她先开口的另一条路 ──────────────────────────────────────
+
+    @Slot()
+    def _on_proactive_tick(self) -> None:
+        """节拍器问了一次：现在够格让她主动开口吗？
+
+        **与提醒那条最大的不同：这一路没有降级。** 提醒说不出来时由程序代念
+        （:meth:`_tell_reminder`）——那条气泡的正文本来就是提醒。主动搭话没有那样的
+        正文：由程序说一句"我想跟你说话"是荒谬的。开不了口就什么都不发生，**沉默是
+        唯一正确的退化**。
+
+        两类"不该"分开写：纯层的 :func:`~axo.agent.proactive_chat.should_speak` 管
+        "现在是不是时机"（返回原因，逐格可测），下面那几个闸管"这一轮做不做得成"
+        （没有后端、他正问到一半、她已经在说）。后者不记数也不重试——下一次 tick
+        再问一遍就是重试。
+        """
+        settings = self._proactive_settings
+        if not settings.enabled:
+            return
+        now = datetime.now()
+        self._roll_over_if_new_day(now)
+        if self._backend is None or self._streaming or self._speak_live:
+            return
+        reason = should_speak(
+            now=now,
+            last_activity=self._last_activity(),
+            spoken_today=self._spoken_today,
+            min_gap_minutes=settings.min_gap_minutes,
+            max_per_day=settings.max_per_day,
+            quiet_from=settings.quiet_from,
+            quiet_to=settings.quiet_to,
+        )
+        if reason is not None:
+            return
+        material = self._pick_material(now)
+        if material is None:
+            return
+        self._start_proactive_speech(material)
+
+    def _roll_over_if_new_day(self, now: datetime) -> None:
+        """跨天就把"今天来过几次""今天用过哪些话头"清零。
+
+        用**本地日期**（同 L1 环境槽那个时钟）。重启也清零——那意味着一天里最多多
+        打扰几次，而不是少打扰；这一版不为它做持久化。
+        """
+        today = now.date()
+        if self._proactive_day != today:
+            self._proactive_day = today
+            self._spoken_today = 0
+            self._used_materials.clear()
+
+    def _last_activity(self) -> datetime | None:
+        """最近一次"有动静"是什么时候。**没有就返回 ``None``**（那就不开口）。
+
+        两个来源取靠后的：**他最后说那句话**（会话里最后一条 ``user`` 行）与**她上一次
+        开口**（提醒与主动都算）。她自己的话也算有动静，是刻意的：否则一条提醒刚说完
+        二十分钟她又来搭话——那正是唠叨的形状。
+        """
+        moments: list[datetime] = []
+        if self._last_speech_at is not None:
+            moments.append(self._last_speech_at)
+        for message in reversed(self._session.messages):
+            if message.role == "user":
+                moments.append(datetime.fromtimestamp(message.at))
+                break
+        return max(moments) if moments else None
+
+    def _pick_material(self, now: datetime) -> Material | None:
+        """从最近几天的记忆里挑一条当话头。
+
+        **按时间取一段，不是取全库**：:meth:`MemoryStore.items_created_between` 只回
+        那个窗口里的行，所以这件事的代价与库有多大无关。六条排除规则在纯层里。
+        """
+        horizon = now - timedelta(days=DEFAULT_WINDOW_DAYS)
+        items = self._memory.items_created_between(horizon.timestamp(), now.timestamp())
+        return pick_material(
+            items,
+            now=now,
+            session_id=self._session.session_id,
+            used=self._used_materials,
+        )
+
+    def _start_proactive_speech(self, material: Material) -> None:
+        """主动搭话那一轮：**与 :meth:`_start_reminder_speech` 同一套线程与收尾**。
+
+        三处不同：
+
+        * 提示词走 :func:`build_proactive_messages`（素材是"你记得的一件事"）。
+        * **不叫醒窗口。** 提醒的 :meth:`_wake_up` 是"现在就要知道"那条通道；主动搭话
+          不是——把窗口从别的窗口底下翻上来，只为了一句寒暄，代价太大。
+        * **计数与去重在这里就落下**，不是等她说完：一个连不上模型的后端会被每分钟
+          敲一次，而"今天来过了"这件事在决定开口那一刻就已经成立。
+        """
+        assert self._backend is not None, "调用方已经查过后端在不在"
+        request = ChatRequest(
+            messages=build_proactive_messages(
+                material=material,
+                # 人格锚**原样带**，与其它每一轮同一个函数。
+                persona=persona_texts(self._memory),
+                model_id=self._backend.model_id,
+            ),
+            # 与其它轮同一条规则：由 reserve_for 判（云端一个字都不传）。
+            max_tokens=reserve_for(self._backend) or None,
+        )
+        self._speak_material = material
+        self._speak_live = True
+        self._spoken_today += 1
+        self._used_materials.append(material.memory_id)
+        thread = QThread(self)
+        worker = ChatWorker(self._backend, request)
+        # **不接 ``chunk``**，理由同提醒那条（见 :meth:`_start_reminder_speech`）。
+        worker.finished.connect(self._on_speech_finished)
+        worker.failed.connect(self._on_speech_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        self._track(thread, worker, what="主动开口线程", slot="speak")
+        self._speak_timeout.start(SPEECH_TIMEOUT_MS)
+        thread.start()
+
+    def _retire_speech(self) -> Alert | Material | None:
+        """让这一轮**作废**，返回她说的是哪一条/哪个话头（没在说就 ``None``）。
 
         **这里不许把 ``_speak_worker`` 置空，一个引用都不许丢。** 这不是洁癖，是实测
         换来的：那个对象的所有权在 Python 手上（``ChatWorker`` 构造时没有父对象），而
@@ -2389,9 +2537,12 @@ class MainWindow(QMainWindow):
         """
         self._speak_timeout.stop()
         self._speak_live = False
-        alert = self._speak_alert
+        payload: Alert | Material | None = self._speak_alert
+        if payload is None:
+            payload = self._speak_material
         self._speak_alert = None
-        return alert
+        self._speak_material = None
+        return payload
 
     @Slot(str, dict)
     def _on_speech_finished(self, text: str, statistics: dict[str, Any]) -> None:
@@ -2415,13 +2566,15 @@ class MainWindow(QMainWindow):
             # 两个条件缺一不可：**光比对象认不出"被让掉"**——让路那两条路刻意不丢
             # 引用（见 :meth:`_retire_speech`），所以那一次发回来的还是同一个 worker。
             return
-        alert = self._retire_speech()
+        payload = self._retire_speech()
         if not text.strip():
             # **空回复不是"她说了句空话"，是这一次开口没发生。** 模型偶尔只吐空白
             # （整段被 think 吃掉、或者被 max_tokens 卡在第一个 token 上），那时最要紧
             # 的仍然是"这条提醒别消失"。
-            if alert is not None:
-                self._tell_reminder(alert, note="模型这次没有说出话来")
+            if isinstance(payload, Alert):
+                self._tell_reminder(payload, note="模型这次没有说出话来")
+            # 主动搭话**没有降级**：说不出就什么都不发生——由程序说一句"我想跟你说话"
+            # 是荒谬的。沉默是唯一正确的退化。
             return
         self._append(
             Message(
@@ -2433,7 +2586,10 @@ class MainWindow(QMainWindow):
                 completion_tokens=statistics.get("completion_tokens"),
             )
         )
-        self.chat_view.append_message("proactive", text, {"title": _PROACTIVE_TITLE})
+        # 她开口了就算"有动静"（提醒与主动都算，理由见 :meth:`_last_activity`）。
+        self._last_speech_at = datetime.now()
+        title = _PROACTIVE_CHAT_TITLE if isinstance(payload, Material) else _PROACTIVE_TITLE
+        self.chat_view.append_message("proactive", text, {"title": title})
         # **提醒句也念**：「到点由她开口」这条接缝的本意就是开口（C4 那一版只有文字，
         # 是因为当时还没有 TTS）。它与 ``speak_on_alert`` 正交：那个开关管"要不要由她
         # 生成"，这个管"出不出声"。
@@ -2448,11 +2604,12 @@ class MainWindow(QMainWindow):
         """
         if self.sender() is not self._speak_worker:
             return
-        alert = self._retire_speech()
-        if alert is not None:
+        payload = self._retire_speech()
+        if isinstance(payload, Alert):
             # 失败**要说出来**（同 :meth:`_remember` 那条纪律），但说在提醒下面一行：
             # 这条气泡的正文是那条提醒，不是模型的错误。
-            self._tell_reminder(alert, note=f"模型没能开口：{detail}")
+            self._tell_reminder(payload, note=f"模型没能开口：{detail}")
+        # 主动搭话那一轮失败了就什么都没有：没有正文可补，也不该让程序替她开口。
 
     @Slot()
     def _time_out_speech(self) -> None:
@@ -2465,9 +2622,9 @@ class MainWindow(QMainWindow):
         if self._speak_worker is None:
             return  # 已经不在说了（finished 刚回来，或者用户抢先开了口）
         self._speak_worker.stop()
-        alert = self._retire_speech()
-        if alert is not None:
-            self._tell_reminder(alert, note="等了二十秒还没说完")
+        payload = self._retire_speech()
+        if isinstance(payload, Alert):
+            self._tell_reminder(payload, note="等了二十秒还没说完")
 
     @Slot()
     def _take_speech_receipt(self) -> str:
@@ -3890,6 +4047,8 @@ class MainWindow(QMainWindow):
         # **停表。** 收尾之后才响的一枪没有任何东西接得住（窗口已经关了、托盘图标
         # 也摘了），而它会在这里多留一个还活着的 QTimer。
         self._scheduler.stop()
+        # **停主动那块表。** 同一条理由，而且它比另外两块都轻：停了就只是不再问。
+        self._proactive.stop()
         # **停第二块表。** 与上面同一条理由：收尾之后才响的一枪没有东西接得住，而
         # 它（比提醒那条更坏）会去起一个**写库**的线程——那个线程在解释器收尾时
         # 还在跑，就是下一次 ``0xC0000409``。
