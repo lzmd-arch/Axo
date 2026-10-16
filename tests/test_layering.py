@@ -140,6 +140,10 @@ _PURE_LAYERS = (
     # 语音合成的协议与形状（httpx 客户端在 ``llm/speech.py``，它进不了这里——
     # 上面 ``_PURE_FORBIDDEN`` 对函数内 import 同样认账，这条纪律比拆两个模块硬）。
     "axo/tts.py",
+    # 表情包目录的扫描（一个文件一个表情包）。**与 tts.py 同一条理由**：它只读目录、
+    # 只认后缀，所以"它自己不碰 Qt/网络"是可断言的事实——而它要出现在工具描述里，
+    # 那段文本错了是"她以为有一张其实没有"。
+    "axo/stickers.py",
     "axo/session",
     "axo/ui/color.py",
     "axo/ui/theme.py",

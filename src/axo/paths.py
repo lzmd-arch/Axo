@@ -352,6 +352,15 @@ def voice_model_dir() -> Path:
     return data_dir() / "models" / VOICE_MODEL_NAME
 
 
+def stickers_dir() -> Path:
+    """她的**表情包**放在哪儿：数据根下一个 ``stickers/``，一个文件一个表情包。
+
+    与 :func:`voices_dir` 完全同姿态：**在数据根底下**（跟着搬迁走）、**不创建**（还没
+    放是常态）。名字就是文件名去掉扩展名，判据与扫描在 :mod:`axo.stickers` 一处。
+    """
+    return data_dir() / "stickers"
+
+
 def voices_dir() -> Path:
     """她的**音色**放在哪儿：``models/voices/`` 下一个目录一个音色（零样本克隆的参考音）。
 
