@@ -349,6 +349,42 @@ uv run python -m axo.ui.app
 
 这几条路各自在防什么、那张真值表长什么样，见 [agent.md](docs/agent.md) 的「托盘与定时触发」与「她主动开口」。
 
+## 插件
+
+**一个插件 = 插件目录下的一个子目录**：里面放一个 `plugin.py`，那个文件里写一个
+`tools()` 函数，返回你想要的工具。
+
+```
+<数据目录>/plugins/天气/plugin.py
+```
+
+```python
+class WeatherTool:
+    spec = ToolSpec(
+        name="weather",
+        description="查今天的天气。用户问天气时用它。",
+        parameters={"type": "object", "properties": {}},
+    )
+    requires_approval = False
+
+    def run(self, arguments, ctx):
+        return "晴，18 度。"
+
+
+def tools():
+    return [WeatherTool()]
+```
+
+`ToolSpec` 与 `Tool` 就是内置工具用的那两个（`from axo.agent.tools import ToolSpec, ToolOutcome`），所以插件工具与内置工具**同一套闸门**：`requires_approval = True` 的
+工具每次调用都会问你。**改完不用重启**——工具表每一轮现读一遍插件目录。
+
+> **先说清权限。** 装一个插件，就是**让那段代码用你的权限跑在你的程序里**。程序里那些
+> "只读目录""过闸门"的约束**一条都挡不住插件里的代码**（它与主程序同一个进程）。所以
+> 只放你自己写的、或者你信得过的插件——这件事与"装一个浏览器扩展"是同一件。
+
+装不上的插件**不会让程序打不开**：它会在对话区说一句为什么（同一个问题只说一次）。
+撞名、没有 `tools()`、import 时报错、返回的不是工具——每一种都只影响它自己。
+
 ## 数据放在哪
 
 默认 `%LOCALAPPDATA%\axo\`。**刻意不放在仓库目录里**——否则
@@ -358,6 +394,7 @@ uv run python -m axo.ui.app
 壁纸、提醒**一起搬过去**（先复制、逐文件校验，通过之后才改用新位置），然后重启一次
 生效。那一页也能「打开文件夹」直接跳到记忆所在的地方。**语音模型（`models/`）也跟着
 数据根走**——好处是"这个程序的东西都在一个文件夹里"这条不破，代价是搬迁时多搬 42 MB。
+**插件（`plugins/`）也在那儿**：一个子目录一个插件，见上面「插件」那一节。
 **表情包（`stickers/`）同样在那儿**：一个文件一个，**文件名（去掉扩展名）就是她嘴里的那个名字**
 ——你往里丢一张 `开心.png`，她就多了一个叫「开心」的表情包，下一轮就能发。
 
