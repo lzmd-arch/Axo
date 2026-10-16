@@ -352,6 +352,15 @@ def voice_model_dir() -> Path:
     return data_dir() / "models" / VOICE_MODEL_NAME
 
 
+def plugins_dir() -> Path:
+    """**插件**放在哪儿：数据根下一个 ``plugins/``，一个子目录一个插件。
+
+    与 :func:`stickers_dir`、:func:`voices_dir` 同姿态：**在数据根底下**（跟着搬迁走）、
+    **不创建**（还没放是常态）。一个插件的形状见 :mod:`axo.plugins`。
+    """
+    return data_dir() / "plugins"
+
+
 def stickers_dir() -> Path:
     """她的**表情包**放在哪儿：数据根下一个 ``stickers/``，一个文件一个表情包。
 
