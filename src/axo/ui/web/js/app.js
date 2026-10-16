@@ -533,12 +533,54 @@
     });
   }
 
+  /* 拖进来的文件。**只认 file: 开头的 URI**——拖一段网页上的图片进来时
+     dataTransfer 里是 http(s) 地址，而那条路是一条我们不该去取的网络请求。
+
+     **两处 preventDefault 缺一不可**：dragover 不拦就没有 drop 事件；drop 不拦的话
+     浏览器会直接**导航到那个文件**（整个对话区变成一张图或者一段纯文本，而用户以为
+     程序坏了）。 */
+  function hasFiles(event) {
+    var transfer = event.dataTransfer;
+    if (!transfer || !transfer.types) { return false; }
+    for (var i = 0; i < transfer.types.length; i++) {
+      if (transfer.types[i] === "Files") { return true; }
+    }
+    return false;
+  }
+
+  function installDrop() {
+    var zone = document.body;
+    zone.addEventListener("dragover", function (event) {
+      if (!hasFiles(event)) { return; }
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+    });
+    zone.addEventListener("drop", function (event) {
+      // 拖一段**文字**进来照旧走默认行为（插进输入框），只有文件才归我们管。
+      if (!hasFiles(event)) { return; }
+      event.preventDefault();
+      var list = event.dataTransfer.getData("text/uri-list") || "";
+      // 不用正则：这个文件里一条反斜杠都不想要（它要经过好几层拼装才落到盘上）。
+      // 换行与回车都用字符码取，跨平台也对。
+      var lines = list.split(String.fromCharCode(10));
+      var uris = [];
+      for (var i = 0; i < lines.length; i++) {
+        var one = lines[i].replace(String.fromCharCode(13), "").trim();
+        if (!one || one.charAt(0) === "#") { continue; }
+        if (one.slice(0, 5).toLowerCase() !== "file:") { continue; }
+        uris.push(one);
+      }
+      if (uris.length) { window.bridge.attach_files(uris); }
+    });
+  }
   document.addEventListener("DOMContentLoaded", function () {
     autosize();
     connect();
+    installDrop();
   });
   if (document.readyState !== "loading") {
     autosize();
     connect();
+    installDrop();
   }
 })();

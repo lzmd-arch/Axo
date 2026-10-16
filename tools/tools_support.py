@@ -37,6 +37,7 @@ class RecordingChatView(QWidget):
     persona_answered = Signal(str)
     tool_confirm_decided = Signal(str, bool)
     voice_toggled = Signal()
+    files_dropped = Signal(list)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)

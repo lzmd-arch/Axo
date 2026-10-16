@@ -278,6 +278,7 @@ class Stub(QObject):
     _start_proactive_speech = MainWindow._start_proactive_speech
     _show_sticker = MainWindow._show_sticker
     # ── 拖进来的文件 ──
+    _on_files_dropped = MainWindow._on_files_dropped
     _on_attach_files = MainWindow._on_attach_files
     _attach_pending_images = MainWindow._attach_pending_images
 
@@ -2074,3 +2075,25 @@ def test_a_backend_that_hangs_images_elsewhere_says_it_is_us_not_them(qapp: Any)
     text = stub.chat_view.calls[-1][2]
     assert "还没接过去" in text
     assert "不支持" not in text
+
+
+def test_a_file_uri_becomes_a_path_and_walks_the_same_door(qapp: Any, tmp_path: Path) -> None:
+    """网页送来的是 ``file:`` URI，主窗口解成路径——**下游只有一条路**（_on_attach_files）。"""
+    note = tmp_path / "笔记.md"
+    note.write_text("路由器在书房。", encoding="utf-8")
+    stub = _drop_stub(qapp)
+
+    stub._on_files_dropped([note.as_uri()])
+
+    assert [item.name for item in stub._pending_attachments] == ["笔记.md"]
+
+
+def test_a_uri_that_is_not_a_file_is_dropped_here_too(qapp: Any) -> None:
+    """网页那边滤过一道，这里是第二道——**桥是公开给网页的**，而"只信网页送来的
+    东西"这条纪律在别处也写着（拖一段网页上的图片进来，URI 里是一个 http 地址）。"""
+    stub = _drop_stub(qapp)
+
+    stub._on_files_dropped(["https://example.com/a.png", "javascript:alert(1)"])
+
+    assert stub._pending_attachments == ()
+    assert "读不了" in stub.chat_view.calls[-1][2]

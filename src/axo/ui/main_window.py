@@ -40,6 +40,8 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequence
@@ -1215,6 +1217,8 @@ class MainWindow(QMainWindow):
         self.chat_view.message_submitted.connect(self._on_submit)
         self.chat_view.persona_answered.connect(self._on_persona_answered)
         self.chat_view.voice_toggled.connect(self._on_voice_toggled)
+        # 拖进来的文件走**与打字同一条路**的下游（`_on_attach_files`），只是入口在网页那边。
+        self.chat_view.files_dropped.connect(self._on_files_dropped)
         self.chat_view.tool_confirm_decided.connect(self._on_tool_confirm)
         self.model_combo.currentIndexChanged.connect(self._on_model_changed)
         self.refresh_button.clicked.connect(self._refresh_models)
@@ -1962,6 +1966,24 @@ class MainWindow(QMainWindow):
                 "**原声没有发出去**（这一轮发的是转写文字）。\n\n" + where + "。",
             )
         return assembly, False
+
+    @Slot(list)
+    def _on_files_dropped(self, uris: list) -> None:
+        """网页拖进来的 ``file://`` URL：**解成路径再交给同一入口**。
+
+        解码只在这里做一次（``url2pathname`` 管盘符与百分号编码）——网页那边不做，
+        因为"一个路径长什么样"是这台机器的事。
+
+        **非 ``file:`` 的一律丢掉**：网页已经滤过一道，这里是第二道。两道不是重复：
+        桥是公开给网页的，而"只信网页送来的东西"这条纪律在别处也写着。
+        """
+        paths = []
+        for uri in uris:
+            parsed = urlparse(str(uri))
+            if parsed.scheme != "file":
+                continue
+            paths.append(url2pathname(parsed.path))
+        self._on_attach_files(paths)
 
     @Slot(list)
     def _on_attach_files(self, paths: list) -> None:

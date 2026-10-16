@@ -14,6 +14,7 @@ JS 与 Python 的契约（两边都是**只增不改**，否则旧前端会静�
                     window.bridge.answer_persona(text)               首启人设卡片的答案；"" = 不写
                     window.bridge.tool_confirm(call_id, granted)     确认卡片上的一次点击
                     window.bridge.voice_toggle()                     麦克风按钮：开始/结束听
+                    window.bridge.attach_files(uris)                 拖进来的文件：file:// URL 的列表
     Python → JS     window.ChatHost.appendMessage(role, text, meta)   role: user|assistant|system|tool|proactive
                                                                       meta: {title?, footer?, image?}
                     window.ChatHost.pushToken(text)                  流式增量
@@ -147,6 +148,17 @@ class WebBridge(QObject):
     这里只保证"一次点击 = 一次信号"，把 ``call_id`` 原样带过去由调用方比对。
     """
 
+    files_dropped = Signal(list)
+    """拖进来的文件：``file://`` URL 的列表。
+
+    **这里不转成路径。** URI 的解码（百分号编码、盘符）在 Python 那边做一次就够，
+    而这个信号只负责把"网页收到了什么"原样传出来——理由与 :meth:`voice_toggle`
+    那句一样：这一层不做判断。
+
+    **只会有 ``file:`` 开头的**：网页那边把别的协议滤掉了（拖一段网页上的图片进来
+    时，``dataTransfer`` 里是 http(s) 地址，而那条路是一条我们不该去取的网络请求）。
+    """
+
     voice_toggled = Signal()
     """麦克风按钮被按了一下。:class:`ChatView` 把它原样转发出去。
 
@@ -178,6 +190,12 @@ class WebBridge(QObject):
         ``MainWindow._on_submit``，与打字完全同一条。
         """
         self.voice_toggled.emit()
+
+    @Slot(list)
+    def attach_files(self, uris: list) -> None:
+        """网页拖进来了一批文件。**只发信号，不判断。**"""
+        if uris:
+            self.files_dropped.emit([str(one) for one in uris])
 
     @Slot(str, bool)
     def tool_confirm(self, call_id: str, granted: bool) -> None:
@@ -219,6 +237,10 @@ class ChatView(QWidget):
     voice_toggled = Signal()
     """麦克风按钮被按了一下。**主窗口据此开始/结束录音**（见 ``ui/voice.py``）。"""
 
+    files_dropped = Signal(list)
+    """拖进来一批文件（``file://`` URL）。**与桥那个同名但不是一个对象**——
+    理由见 :attr:`WebBridge.voice_toggled` 那条注释：少声明一次，构造就会炸。"""
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._bridge = WebBridge(self)
@@ -226,6 +248,7 @@ class ChatView(QWidget):
         self._bridge.persona_answered.connect(self.persona_answered)
         self._bridge.tool_confirm_decided.connect(self.tool_confirm_decided)
         self._bridge.voice_toggled.connect(self.voice_toggled)
+        self._bridge.files_dropped.connect(self.files_dropped)
 
         #: 外观三件套的**当前值**。存下来是为了在 ``loadFinished`` 之后重推：
         #: 网页是异步加载的，构造期那次推送落在空页面上。不缓存的话就只能等
