@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -281,6 +281,9 @@ class Stub(QObject):
     _on_files_dropped = MainWindow._on_files_dropped
     _on_attach_files = MainWindow._on_attach_files
     _attach_pending_images = MainWindow._attach_pending_images
+    # ── 插件 ──
+    _tools = MainWindow._tools
+    _report_plugin_issues = MainWindow._report_plugin_issues
 
     def __init__(
         self,
@@ -2097,3 +2100,82 @@ def test_a_uri_that_is_not_a_file_is_dropped_here_too(qapp: Any) -> None:
 
     assert stub._pending_attachments == ()
     assert "读不了" in stub.chat_view.calls[-1][2]
+
+
+# ── 插件 ────────────────────────────────────────────────────────────────────
+
+
+def test_a_broken_plugin_is_told_once_not_every_round(qapp: Any) -> None:
+    """装不上的插件要说一句（否则用户只能自己猜），但**同一个错只说一次**。
+
+    ``_tools()`` 每轮重建，所以每轮都会看到同一个错——每轮都说一遍是噪音，而噪音的
+    结局是用户开始忽略这一整类消息（同提醒那条"通知风暴"的教训）。
+    """
+    from axo.plugins import PluginIssue
+
+    stub = Stub(streaming=False, backend=object(), memory=MemoryStore(":memory:"))
+    stub._plugin_issues = set()
+
+    stub._report_plugin_issues([PluginIssue("坏的", "RuntimeError: boom")])
+
+    assert "坏的" in stub.chat_view.calls[-1][2]
+    told = len(stub.chat_view.calls)
+    stub._report_plugin_issues([PluginIssue("坏的", "RuntimeError: boom")])
+    assert len(stub.chat_view.calls) == told, "同一句话被说了第二遍"
+
+
+def test_a_new_plugin_problem_is_still_told(qapp: Any) -> None:
+    """记住的是「说过什么」，不是「说过了没有」——新出现的问题照样要报。"""
+    from axo.plugins import PluginIssue
+
+    stub = Stub(streaming=False, backend=object(), memory=MemoryStore(":memory:"))
+    stub._plugin_issues = {"坏的：RuntimeError: boom"}
+
+    stub._report_plugin_issues(
+        [PluginIssue("坏的", "RuntimeError: boom"), PluginIssue("新的", "没有 plugin.py")]
+    )
+
+    text = stub.chat_view.calls[-1][2]
+    assert "新的" in text and "坏的" not in text
+
+
+def test_the_tool_table_asks_the_plugin_loader(qapp: Any, monkeypatch: Any) -> None:
+    """**接线守卫**：工具表真的去插件目录装了一趟，并且收下了它给的工具。
+
+    纯层全绿不等于接线在——这条纪律在这一批里已经应验过两次。所以这里不验"插件能不能
+    装"（那是 ``tests/test_plugins.py`` 的事），只验**它问过没有、收没收下**：替掉加载器，
+    看它被调用的参数与结果去了哪。
+    """
+    from types import SimpleNamespace
+
+    import axo.ui.main_window as window_module
+    from axo.plugins import PluginLoad
+
+    seen: list[tuple[Any, tuple[str, ...]]] = []
+    plugin_tool = SimpleNamespace(
+        spec=SimpleNamespace(name="weather", description="d", parameters={}),
+        requires_approval=False,
+        run=lambda *_: None,
+    )
+
+    def fake_load(root: Any, *, taken: Sequence[str] = ()) -> PluginLoad:
+        seen.append((root, tuple(taken)))
+        return PluginLoad(tools=(plugin_tool,), issues=())
+
+    monkeypatch.setattr(window_module, "load_plugins", fake_load)
+    monkeypatch.setattr(window_module, "plugins_dir", lambda: Path("插件目录"))
+    monkeypatch.setattr(window_module, "stickers_dir", lambda: Path("没有表情包"))
+
+    stub = Stub(streaming=False, backend=object(), memory=MemoryStore(":memory:"))
+    stub._read_roots = ()
+    stub._plugin_issues = set()
+    stub._model_can_see = lambda: False  # type: ignore[method-assign]
+
+    registry = stub._tools()
+
+    assert len(seen) == 1, "工具表没去装插件"
+    root, taken = seen[0]
+    assert str(root) == "插件目录"
+    assert "get_time" in taken, "内置工具的名字要先占上——撞名的插件工具会被挡掉"
+    assert "weather" in [spec.name for spec in registry.specs()]
+    assert stub.chat_view.calls == [], "装上了就不该报问题"

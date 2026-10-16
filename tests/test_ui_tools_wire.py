@@ -54,6 +54,9 @@ def _window(**fields: object) -> SimpleNamespace:
     """
     base: dict[str, object] = {
         "_read_roots": (),
+        # 插件那一趟的结果只是一句提示（见 MainWindow._report_plugin_issues）。
+        # 替身这里收下不作声：这些用例验的是"哪些工具进了表"，不是"怎么报问题"。
+        "_report_plugin_issues": lambda *_: None,
         "model_combo": _combo(""),
         "_model_caps": {},
         # 后端那一份：**默认本机**。``_model_can_see`` 现在先问"是不是云端"——云端

@@ -133,12 +133,14 @@ from ..paths import (
     data_root_source,
     default_data_dir,
     memory_db_path,
+    plugins_dir,
     reminders_cancelled_path,
     reminders_fired_path,
     reminders_path,
     sessions_dir,
     stickers_dir,
 )
+from ..plugins import PluginIssue, load_plugins
 from ..session.assemble import Assembly, stored_rows
 from ..session.budget import TokenBudget, TokenMeter, reserve_for
 from ..session.environment import build_environment
@@ -765,6 +767,8 @@ class MainWindow(QMainWindow):
         #: 这一轮要贴到 user 行上的图（``data:`` URI）。与 ``_pending_audio`` 同姿态：
         #: **发完即清**（原图不落逐字稿，逐字稿里只有一行名字）。
         self._pending_images: tuple[str, ...] = ()
+        #: 已经报过的插件问题（同一句话只说一次，见 :meth:`_report_plugin_issues`）。
+        self._plugin_issues: set[str] = set()
         #: **播出回执**（``tts.SpeechReceipt``）：她说的那句出没出声。**下一轮进
         #: 环境槽后即清**——它是一条关于「刚说那句」的信号，不是常驻状态。
         self._speech_receipt: Any = None
@@ -1878,14 +1882,36 @@ class MainWindow(QMainWindow):
         其余工具在登记上不分条件——要不要用户点头是工具自己的 ``requires_approval``，
         闸门读那一处，这里不重复判断。
         """
-        return ToolRegistry(
-            default_tools(
-                read_root=self._read_roots,
-                vision=self._model_can_see(),
-                # **每轮现扫**：用户往 ``stickers/`` 里丢一张图，下一轮她就用得上。
-                # 目录是空的就返回空元组，工具随之不登记。
-                stickers=stickers_in(stickers_dir()),
-            )
+        builtin = default_tools(
+            read_root=self._read_roots,
+            vision=self._model_can_see(),
+            # **每轮现扫**：用户往 ``stickers/`` 里丢一张图，下一轮她就用得上。
+            # 目录是空的就返回空元组，工具随之不登记。
+            stickers=stickers_in(stickers_dir()),
+        )
+        # 插件同理每轮现读（改一个插件不必重启），而 ``taken`` 把内置那些名字先占上：
+        # **撞名的插件工具会被挡掉并记一条**——两个同名工具会让模型看到一份自相矛盾的
+        # 工具表，而它没法自己发现这件事。
+        loaded = load_plugins(plugins_dir(), taken=[tool.spec.name for tool in builtin])
+        self._report_plugin_issues(loaded.issues)
+        return ToolRegistry([*builtin, *loaded.tools])
+
+    def _report_plugin_issues(self, issues: Sequence[PluginIssue]) -> None:
+        """插件装不上时**说一句**（每个会话只说一次）。
+
+        不说的话症状是"我明明放了插件，她怎么不知道有这个东西"——而那条路要靠用户自己
+        猜。说一次而不是每轮都说：``_tools()`` 每轮重建，而同一个插件的同一个错会在每一轮
+        重复出现（那是噪音，不是信息）。**说过的内容会记住**，所以新出现的问题照样会报。
+        """
+        fresh = [
+            issue.describe() for issue in issues if issue.describe() not in self._plugin_issues
+        ]
+        if not fresh:
+            return
+        self._plugin_issues.update(fresh)
+        self.chat_view.append_message(
+            "system",
+            "**有插件没装上：**\n\n" + "\n".join("· " + one for one in fresh),
         )
 
     def _model_can_see(self) -> bool:

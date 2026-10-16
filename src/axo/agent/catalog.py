@@ -969,6 +969,7 @@ def default_tools(
     read_root: Sequence[Path] = (),
     vision: bool = False,
     stickers: Sequence[Sticker] = (),
+    plugins: Sequence[Tool] = (),
 ) -> tuple[Tool, ...]:
     """十个工具。
 
@@ -977,7 +978,9 @@ def default_tools(
     * ``read_file`` 要有可读目录。这不只是安全考虑，也是一笔实用账：工具声明每一轮
       都要重发（Step 0 实测三个工具约 311 token/轮），把一个注定会失败的工具有效地
       告诉模型"你可以读文件"，只会换来它去试一次然后被拒。
-    * ``look_at_screen`` 要**当前的模型看得见图**（``vision``）。同一条账，而且多一层：
+    * ``look_at_screen`` 要**当前的模型看得见图**（``vision``）。
+    插件的工具由 ``plugins`` 传进来（装在插件目录里的那些，见 :mod:`axo.plugins`）
+    ——**它们与内置工具同一套闸门**，这一层不为它们额外加权限判断。同一条账，而且多一层：
       模型看不见图时登记它，除了白烧一段 prompt，还会**弹一张注定白点的确认卡片**——
       用户点完头才发现什么都不会发生。``vision`` 由调用方从后端报的 ``capabilities``
       里算（见 ``ui/main_window.py`` 的 ``_tools()``）；**问不到能力时不登记**：
@@ -1006,4 +1009,7 @@ def default_tools(
         *((LookAtScreenTool(),) if vision else ()),
         # 没有表情包就不登记它——同 ``read_file`` 与 ``look_at_screen`` 那条账。
         *((SendStickerTool(stickers),) if stickers else ()),
+        # **插件一律追加在最后。** 它们由 ``axo.plugins`` 从插件目录装上来，装不上
+        # 的那些不在这里（各自记了一句人话，见 `MainWindow._tools`）。
+        *plugins,
     )
