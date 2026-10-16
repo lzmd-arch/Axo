@@ -51,6 +51,11 @@ pack = ["pyinstaller>=6.0"]
 # （约 42 MB）不进仓也不进包，由用户解压到数据根下的 `models/`（见 `axo/asr.py` 的
 # 模块文档与 README「从源码跑」那一节）。
 voice = ["vosk>=0.3.45"]
+# 用户拖进来的文件。**只有 PDF 需要它**：文本类与图片都是 stdlib 就能读的，而 PDF
+# 里抽文字绕不开一个解析器。选 pypdf 是因为它纯 Python、BSD-3-Clause、体积小——
+# 与 torch 那一族不同，它进得了产物（`axo/attachments.py` 里是**函数内 import**，
+# 所以没装这个 extra 的环境照样 import 得了那个模块，只是 PDF 那一条会说读不了）。
+files = ["pypdf>=5.1,<7"]
 
 [dependency-groups]
 dev = [

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from axo.attachments import (
     IMAGE_SUFFIXES,
     MAX_TEXT_CHARS,
@@ -147,3 +149,68 @@ def test_a_pdf_without_a_parser_says_so_instead_of_lying(tmp_path: Path) -> None
 def test_the_two_suffix_sets_do_not_overlap() -> None:
     """一个后缀只能属于一族。重叠的话判类型就成了看谁先写——而那种顺序没人会去核。"""
     assert not set(TEXT_SUFFIXES) & set(IMAGE_SUFFIXES)
+
+
+def _minimal_pdf(text: str) -> bytes:
+    """一份**最小的合法 PDF**：一页、一行字。
+
+    手搓而不是引一个测试用的 PDF 生成库：这份夹具要证的是"pypdf 能读到这句话"，
+    而不是"我们会不会写 PDF"。代价是 xref 那张表的偏移要算对——**pypdf 认不出
+    ``startxref`` 时直接抛 ``PdfReadError``**（第一版手搓时就是这么红的：少了那张表，
+    它连"这是一份能读的 PDF"都不认）。
+    """
+    stream = f"BT /F1 18 Tf 20 100 Td ({text}) Tj ET".encode()
+    objects = [
+        b"<</Type/Catalog/Pages 2 0 R>>",
+        b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+        b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 200]/Contents 4 0 R"
+        b"/Resources<</Font<</F1 5 0 R>>>>>>",
+        b"<</Length " + str(len(stream)).encode() + b">>stream\n" + stream + b"\nendstream",
+        b"<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>",
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets: list[int] = []
+    for index, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += f"{index} 0 obj".encode() + body + b"endobj\n"
+    xref_at = len(out)
+    out += f"xref\n0 {len(objects) + 1}\n".encode()
+    out += b"0000000000 65535 f \n"
+    for offset in offsets:
+        out += f"{offset:010d} 00000 n \n".encode()
+    out += f"trailer<</Root 1 0 R/Size {len(objects) + 1}>>\n".encode()
+    out += f"startxref\n{xref_at}\n%%EOF\n".encode()
+    return bytes(out)
+
+
+def _has_pdf_parser() -> bool:
+    import importlib.util
+
+    return importlib.util.find_spec("pypdf") is not None
+
+
+@pytest.mark.skipif(not _has_pdf_parser(), reason="没装 PDF 解析器（files extra）")
+def test_a_real_pdf_gives_its_text(tmp_path: Path) -> None:
+    """装了解析器时**真的抽得到字**——不装时那条"说读不了"的断言才不是唯一的覆盖。"""
+    path = tmp_path / "文档.pdf"
+    path.write_bytes(_minimal_pdf("Router is in the study"))
+
+    body = body_of(attachment_for(path))  # type: ignore[arg-type]
+
+    assert "Router is in the study" in body
+    assert "文档.pdf" in body
+
+
+@pytest.mark.skipif(not _has_pdf_parser(), reason="没装 PDF 解析器（files extra）")
+def test_a_pdf_with_no_text_layer_says_it_is_likely_a_scan(tmp_path: Path) -> None:
+    """**一页没有文字层的 PDF**（扫描件就是这种）要说清是"没有可抽取的文字"。
+
+    与"读不出来"是两件事：那个文件本身是好的，只是里面全是图——不说清的话模型会
+    以为文件是空的，然后开始编里面写了什么。
+    """
+    path = tmp_path / "扫描件.pdf"
+    path.write_bytes(_minimal_pdf(""))
+
+    body = body_of(attachment_for(path))  # type: ignore[arg-type]
+
+    assert "扫描件" in body or "没有可抽取的文字" in body

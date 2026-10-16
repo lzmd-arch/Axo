@@ -39,6 +39,7 @@
 | idna | 3.20 | BSD-3-Clause |
 | numpy | 2.5.3 | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 |
 | packaging | 26.3 | Apache-2.0 OR BSD-2-Clause |
+| pypdf | 6.20.1 | BSD-3-Clause |
 | pytest | 9.1.1 | MIT |
 | requests | 2.34.2 | Apache-2.0 |
 | setuptools | 84.0.0 | MIT |
