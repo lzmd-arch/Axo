@@ -25,7 +25,7 @@ from typing import Any
 
 __all__ = ["Message", "Session", "SessionStore", "new_session_id"]
 
-_SCHEMA = 4
+_SCHEMA = 5
 """逐字稿的格式版本。
 
 **1 → 2 只是多了三个可选字段**（``tool_calls`` / ``tool_call_id`` / ``tool_name``），
@@ -164,6 +164,22 @@ class Message:
     消息"，而模型对它的解释没有任何约束。role 仍然是 ``assistant``：她说的就是她说的。
     """
 
+    image: str = ""
+    """这一行附着一张图（**相对数据根的路径**，空串表示没有）。
+
+    来源：她发的一张表情包（工具的 ``preview``，见
+    :attr:`~axo.agent.tools.ToolOutcome.preview`）。**它不是给模型看的**：图不进
+    上下文，模型只知道"我发过一张"（那件事在工具行里）；进上下文的是这一行的
+    ``content``，而贴纸那一行的正文是空的——空正文的行由
+    :func:`~axo.session.assemble._to_chat` 挡在 L3 外面。
+
+    **存相对路径**：数据根会搬家（``ui/data_move.py``），而逐字稿不该因此失效。
+    显示时由 ``ui/main_window.py`` 的 :func:`_sticker_uri` 还原成 ``file:`` URL。
+
+    **非空才写**（同 ``proactive`` 与 ``spoken``）：老行逐字节不变，schema 4 → 5
+    不需要任何迁移。
+    """
+
     @property
     def title_hint(self) -> str:
         """用这条消息给会话起标题（取第一条用户消息）。"""
@@ -193,6 +209,8 @@ class Message:
         # 同一条"非空才写"：老行（``proactive`` 为假）逐字节不变。
         if self.proactive:
             payload["proactive"] = True
+        if self.image:
+            payload["image"] = self.image
         return payload
 
     @classmethod
@@ -210,6 +228,7 @@ class Message:
             no_replay=_optional_str(payload.get("no_replay")),
             proactive=bool(payload.get("proactive", False)),
             spoken=bool(payload.get("spoken", False)),
+            image=str(payload.get("image", "")),
         )
 
 

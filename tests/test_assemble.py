@@ -1246,3 +1246,19 @@ def test_the_ledger_does_not_say_it_kept_zero_for_generation() -> None:
 
     assert "输出走后端默认" in assemble(history(1), current="问。", budget=cloud).ledger.render()
     assert "留 2048 给生成" in assemble(history(1), current="问。", budget=local).ledger.render()
+
+
+def test_a_row_without_any_text_never_reaches_the_model() -> None:
+    """**没有正文的行不进 L3。** 表情包那一行就是这种：它是一张图，正文是空的。
+
+    图是给**用户**看的（它压根不进上下文），所以这一行对模型来说没有任何东西。
+    留着它的后果是请求里多一条空消息——而多数服务端会为此拒掉整个请求，症状离
+    原因很远。
+    """
+    from axo.session.assemble import _to_chat
+
+    sticker = Message(role="assistant", content="", image="stickers/开心.png")
+
+    assert _to_chat(sticker) is None
+    # 有正文的那一行照旧进（图只是搭在它上面）
+    assert _to_chat(Message(role="assistant", content="看这个", image="x")).content == "看这个"

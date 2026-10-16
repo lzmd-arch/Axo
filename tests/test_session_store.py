@@ -47,11 +47,11 @@ def test_append_creates_header_then_messages(store: SessionStore) -> None:
     # 首行之后每行一条，追加写——不是每轮重写整个文件
     lines = store._path(session.session_id).read_text(encoding="utf-8").splitlines()
     assert len(lines) == 3
-    # 写死 4 而不是引用 ``_SCHEMA``：这条测试要在**改版本号时红一次**，逼人停下来
+    # 写死 5 而不是引用 ``_SCHEMA``：这条测试要在**改版本号时红一次**，逼人停下来
     # 想清楚"旧文件还读得回来吗"。引用常量的话它就永远绿，等于没有这条测试。
-    # （2 → 3 那次它确实红了，下面那一节"schema 1/2 → 3"就是当场补的；3 → 4
-    # 那次也红了，补的是下面那一节"3 → 4"。）
-    assert json.loads(lines[0])["schema"] == 4
+    # （2 → 3 那次它确实红了，下面那一节"schema 1/2 → 3"就是当场补的；3 → 4 那次
+    # 也红了，补的是"3 → 4"；4 → 5 那次同样红了，补的是"schema 4 → 5"。）
+    assert json.loads(lines[0])["schema"] == 5
     assert json.loads(lines[1])["content"] == "第一条"
     assert json.loads(lines[2])["content"] == "第二条"
 
@@ -450,3 +450,36 @@ def test_a_bad_tool_calls_shape_degrades_to_nothing() -> None:
         }
     )
     assert kept.tool_calls == ({"id": "c1", "name": "n"},)
+
+
+# ── schema 4 → 5：她发的那张图 ──────────────────────────────────────────────
+#
+# 与上面两节同形：老行不动、老读者读得回来。这一节补的是那个新字段的**默认方向**——
+# 缺键必须是「没有图」，否则整份历史会一夜之间多出一张名叫 None 的图。
+
+
+def test_an_image_row_lands_and_reads_back(store: SessionStore) -> None:
+    """贴纸那一行落地并读回；**同一份文件里普通行一个键都不多**。
+
+    ``image`` 存的是**相对数据根的路径**：数据根会搬家，而逐字稿不该因此失效。
+    """
+    session = store.load(new_session_id())
+    store.append(session, Message(role="assistant", content="", image="stickers/开心.png"))
+    store.append(session, Message(role="assistant", content="普通回答"))
+
+    reloaded = store.load(session.session_id)
+
+    assert reloaded.messages[0].image == "stickers/开心.png"
+    assert reloaded.messages[0].content == ""
+    raw = (store.root / f"{session.session_id}.jsonl").read_text(encoding="utf-8").splitlines()
+    assert json.loads(raw[1])["image"] == "stickers/开心.png"
+    assert "image" not in json.loads(raw[2])
+    assert "image" not in Message(role="assistant", content="普通回答").to_dict()
+
+
+def test_a_row_without_the_image_key_is_text() -> None:
+    """缺键 → 空串（不是 None、也不是"有一张名叫 None 的图"）。
+
+    schema-5 之前的每一行都没有这个键，而它们全都该照旧渲染成纯文字。
+    """
+    assert Message.from_dict({"role": "assistant", "content": "老的回答"}).image == ""

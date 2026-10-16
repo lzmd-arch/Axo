@@ -276,6 +276,7 @@ class Stub(QObject):
     _last_activity = MainWindow._last_activity
     _pick_material = MainWindow._pick_material
     _start_proactive_speech = MainWindow._start_proactive_speech
+    _show_sticker = MainWindow._show_sticker
 
     def __init__(
         self,
@@ -1900,3 +1901,57 @@ def test_the_table_is_actually_started_and_stopped() -> None:
     assert "self._proactive.tick.connect(" in bodies["__init__"], "建了但没接 tick"
     assert "self._proactive.start()" in bodies["__init__"], "建了但没起表"
     assert "self._proactive.stop()" in bodies["_shutdown"], "收尾没停表"
+
+
+# ── 表情包：她发的那张图 ────────────────────────────────────────────────────
+
+
+def test_a_sticker_lands_as_her_own_row(qapp: Any, tmp_path: Path) -> None:
+    """她发一张表情包：落成**她自己的一行**，不是一张工具卡片。
+
+    工具卡片的标题会写着「工具结果 · send_sticker」，而用户看到的是一张图挂在一个
+    技术名词下面——而那张图是她说的话，不是她查到的结果。
+    """
+    picture = tmp_path / "开心.png"
+    picture.write_bytes(bytes([137, 80, 78, 71]))
+    stub = Stub(streaming=False, backend=object(), memory=MemoryStore(":memory:"))
+
+    stub._on_tool_finished({"name": "send_sticker", "ok": True, "preview": str(picture)})
+
+    _kind, role, text, meta = stub.chat_view.calls[-1]
+    assert role == "assistant"
+    assert text == ""
+    assert meta["image"].startswith("file:") and meta["image"].endswith(".png")
+    assert len(stub.stored) == 1
+    assert stub.stored[0].content == ""
+    assert stub.stored[0].image.endswith("开心.png")
+
+
+def test_a_normal_tool_result_is_not_treated_as_a_sticker(qapp: Any) -> None:
+    """``preview`` 为空时照旧画工具卡片——这条判据是"有没有那张图"，不是工具名。"""
+    stub = Stub(streaming=False, backend=object(), memory=MemoryStore(":memory:"))
+
+    stub._on_tool_finished({"name": "send_sticker", "ok": True, "content": "已发送。"})
+
+    _kind, role, _text, meta = stub.chat_view.calls[-1]
+    assert role == "tool"
+    assert "image" not in meta
+    assert stub.stored == []
+
+
+def test_display_rows_hands_the_image_to_the_web_view() -> None:
+    """回看时那一行带的是 ``file:`` URL——与当时看到的是同一张。
+
+    逐字稿里存的是**相对数据根的路径**，所以这里要能看到它被还原成一个绝对 URL。
+    """
+    rows = display_rows([Message(role="assistant", content="", image="stickers/开心.png")])
+
+    assert rows[0]["meta"]["image"].startswith("file:")
+    assert rows[0]["meta"]["image"].endswith(".png")
+
+
+def test_display_rows_leaves_a_text_row_alone() -> None:
+    """没有图的行**一个键都不多**——老历史的长相不变。"""
+    rows = display_rows([Message(role="assistant", content="好。")])
+
+    assert rows[0]["meta"] == {}

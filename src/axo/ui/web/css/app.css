@@ -728,3 +728,13 @@ body.busy .msg-assistant:last-child .msg-body::after {
   background: color-mix(in srgb, var(--fg) 30%, transparent);
   background-clip: content-box;
 }
+
+/* 气泡里的一张图（表情包）。**尺寸封顶**：一张 4000px 的截图当成表情包会把整个
+   对话流挤成一列图片，而它本来只是随口贴的一张小玩意。 */
+.msg-image {
+  display: block;
+  margin-top: 6px;
+  max-width: 180px;
+  max-height: 180px;
+  border-radius: 8px;
+}

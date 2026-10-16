@@ -15,6 +15,7 @@ JS 与 Python 的契约（两边都是**只增不改**，否则旧前端会静�
                     window.bridge.tool_confirm(call_id, granted)     确认卡片上的一次点击
                     window.bridge.voice_toggle()                     麦克风按钮：开始/结束听
     Python → JS     window.ChatHost.appendMessage(role, text, meta)   role: user|assistant|system|tool|proactive
+                                                                      meta: {title?, footer?, image?}
                     window.ChatHost.pushToken(text)                  流式增量
                     window.ChatHost.endMessage()                     一片回复结束
                     window.ChatHost.setBusy(busy)                    生成中
@@ -28,6 +29,14 @@ JS 与 Python 的契约（两边都是**只增不改**，否则旧前端会静�
                     window.ChatHost.setVoiceState(state)             "" | listening | recognizing
                     window.ChatHost.appendToolConfirm(call_id, name, summary, meta)
                     window.ChatHost.resolveToolConfirm(call_id, granted, accepted)
+
+**``meta`` 目前三个键**：``title``（气泡上方那行小字）、``footer``（下方那行）、
+``image``（气泡里的一张图，值是 ``file:`` URL）。加键**不需要动 JS 那一侧的判断**
+（多一个键它照旧渲染），但要在上面那张表里写上——理由与下一条一字不差。
+
+**``image`` 只从 ``meta`` 来，不从正文的 Markdown 来。** 图上哪儿是 Python 说了算
+（表情包目录是本地扫出来的），而「从文本里认图片」等于把「去哪儿加载」交给了模型：
+那是一次可以对外发起的请求。
 
 **这份清单漏过一次 ``setWallpaper``**（加它的时候没同步），于是那个方法在两侧之间
 没有任何书面的存在证明。补全它不只是文档洁癖：这张表是"改哪边要动哪边"的唯一索引，

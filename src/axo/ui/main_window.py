@@ -370,6 +370,10 @@ def display_rows(messages: Sequence[Message]) -> list[dict[str, Any]]:
             # 他说出来的那句。**只加标题小字**（网页渲染 ``meta.title`` 那行本来就有），
             # 零 JS 改动——回看与当时的图要一样，变的只有这一行小字。
             meta["title"] = _SPOKEN_TITLE
+        if message.image:
+            # 她发的那张图。**网页那侧读 ``meta.image``**（见 ``ui/chat_view.py`` 的
+            # 契约表）——回看与当时看到的是同一张。
+            meta["image"] = _sticker_uri(message.image)
         if message.proactive:
             # 她主动开口那一句。**只把角色名换掉**，其余（正文、标题）与当时屏幕上
             # 那一条逐字段相同——网页那边按 role 拼类名（``msg-proactive``），于是
@@ -391,6 +395,30 @@ def display_rows(messages: Sequence[Message]) -> list[dict[str, Any]]:
                 meta["title"] = f"工具结果 · {name}"
         rows.append({"role": role, "text": text, "meta": meta})
     return rows
+
+
+def _sticker_stored_path(path: str) -> str:
+    """绝对路径 → **相对数据根的路径**（存进逐字稿的那一格）。
+
+    换成相对是刻意的：数据根会搬家（``ui/data_move.py`` 把整棵树复制过去），而逐字稿
+    不该因此失效。换不了（图在数据根之外）就**原样存绝对路径**——那种情况下搬迁之后
+    这一行会失效，但"存一个指向别人机器的相对路径"更糟：它会指到一个碰巧存在的文件。
+    """
+    try:
+        return Path(path).resolve().relative_to(data_dir().resolve()).as_posix()
+    except ValueError:
+        return path
+
+
+def _sticker_uri(stored: str) -> str:
+    """逐字稿里那一格 → 网页能显示的 ``file:`` URL。
+
+    **相对路径按当前数据根还原**——所以数据根搬完家，回看里的图照样出得来。
+    """
+    path = Path(stored)
+    if not path.is_absolute():
+        path = data_dir() / path
+    return path.resolve().as_uri()
 
 
 def _details_hint() -> str:
@@ -2250,6 +2278,12 @@ class MainWindow(QMainWindow):
         真正该看的那句失败原因挤走。
         """
         name = payload.get("name") or "工具"
+        if payload.get("preview"):
+            # 她发了一张图：**它是她说的话，不是工具结果。** 放进工具卡片的话，回看
+            # 时它挂在一个技术名词下面（「工具结果 · send_sticker」），而用户看到的
+            # 就是一张莫名其妙的图。
+            self._show_sticker(str(payload["preview"]))
+            return
         if payload.get("denied"):
             title = f"已拒绝 · {name}"
         elif payload.get("ok"):
@@ -2312,6 +2346,21 @@ class MainWindow(QMainWindow):
             self._tell_reminder(alert)
             return
         self._start_reminder_speech(alert)
+
+    def _show_sticker(self, path: str) -> None:
+        """她发了一张表情包：落成**她自己的一行**。
+
+        与 :meth:`_tell_reminder` 那条系统气泡不是一回事：那张图是她说的，不是程序
+        告诉她一件事。所以 role 是 ``assistant``（网页那侧拼出她的配色），逐字稿里也
+        是一条助手行。
+
+        **它不动 ``_streaming``、不锁输入框**（同 :meth:`_on_speech_finished` 那条
+        立论）：她贴了张图，用户照样能打字。
+        """
+        stored = _sticker_stored_path(path)
+        self.chat_view.end_message()
+        self.chat_view.append_message("assistant", "", {"image": _sticker_uri(stored)})
+        self._append(Message(role="assistant", content="", image=stored))
 
     def _tell_reminder(self, alert: Alert, *, note: str = "") -> None:
         """**由程序**把这条提醒说出来——她没能开口时的落点。

@@ -359,10 +359,15 @@ def _to_chat(message: Message) -> ChatMessage | None:
       为止的，跟着跟着就可能把它俩拆开。
     * **本版本不认识的角色**：跳过而不是抛。存储层出现一行新东西，不该让整个装配
       失败、进而让界面卡在"生成中"。
+    * **没有正文的行**：它没有任何东西给模型。表情包那一行就是这种——它是一张图，
+      而图是给**用户**看的（见 :attr:`~axo.agent.tools.ToolOutcome.preview`），不进
+      上下文。留着它的后果是请求里多一条空消息，而多数服务端会为此拒掉整个请求。
     """
     if message.role == "assistant" and message.tool_calls:
         return None
     if message.role not in _ROLES:
+        return None
+    if not message.content.strip():
         return None
     return ChatMessage(role=message.role, content=message.content)  # type: ignore[arg-type]
 

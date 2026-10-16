@@ -76,6 +76,18 @@
     body.innerHTML = window.MiniMarkdown.render(text || "");
     wrap.appendChild(body);
 
+    /* 她发的一张图（表情包）。**只认 meta.image 这个键**，不给正文里的 Markdown
+       开图片语法：图的来源是本地目录（Python 那边扫出来的），而不是模型写的一串
+       地址——从文本里认图片等于让模型能指定「去加载哪个 URL」，而那是一次可以对
+       外发起的请求。 */
+    if (meta && meta.image) {
+      var picture = document.createElement("img");
+      picture.className = "msg-image";
+      picture.src = meta.image;
+      picture.alt = "";
+      wrap.appendChild(picture);
+    }
+
     if (meta && meta.footer) {
       var footer = document.createElement("div");
       footer.className = "msg-footer";
