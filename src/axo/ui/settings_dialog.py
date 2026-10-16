@@ -75,6 +75,7 @@ from .settings_store import (
     PROVIDER_OLLAMA,
     BackendSettings,
     MemorySettings,
+    ProactiveSettings,
     ReminderSettings,
     SpeechSettings,
     ToolSettings,
@@ -1531,6 +1532,153 @@ class ReminderPage(QWidget):
         self.changed.emit(self.current())
 
 
+class ProactivePage(QWidget):
+    """主动搭话页：**她自己找上来的那几个边界数**。
+
+    与提醒页的分工：那一页管"到点那一刻"（你定过时间的），这一页管"你静下来了"（没人
+    定过时间）。两件事都会让她开口，但触发与边界完全不同——混在一页里的话，"她一天
+    最多来几次"就变成一个要读两处才说得清的问题。
+
+    形状与提醒页同一套：**边改边生效**（勾选框与数字框，没有"应用"可等），底部
+    「撤销修改」兜着（:meth:`revert`）。
+    """
+
+    changed = Signal(object)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(16, 16, 16, 16)
+        outer.setSpacing(10)
+
+        #: 「撤销修改」回到的那一份。:meth:`set_state` 会覆盖它。
+        self._snapshot = ProactiveSettings()
+        self._syncing = False
+
+        outer.addWidget(_section("她主动找你说话"))
+        # **初值从 dataclass 那一份来**，不在这里再抄一遍 True（同提醒页那条注释：
+        # 抄的话"默认是开"就有了两个真源，而它们迟早会在某一版里分叉）。
+        self.enabled_box = QCheckBox("静下来一阵子之后，她会自己来找你说话", self)
+        self.enabled_box.setObjectName("proactiveEnabledBox")
+        self.enabled_box.setChecked(self._snapshot.enabled)
+        self.enabled_box.toggled.connect(self._on_changed)
+        outer.addWidget(self.enabled_box)
+        outer.addWidget(
+            _hint(
+                "**不会在启动时来一句**：只有你确实安静了一阵子她才开口。"
+                "拿什么说？最近几天里的一条记忆——她记得的那件事。"
+            )
+        )
+        outer.addWidget(
+            _hint(
+                "她开口的时候**会念出声**（只要「语音」那一页的朗读开关是开的）。"
+                "提醒到点那句话是另一条路，由「提醒」那一页管。"
+            )
+        )
+
+        outer.addSpacing(6)
+        outer.addWidget(_section("打扰的边界"))
+        gap_row = QHBoxLayout()
+        gap_row.addWidget(QLabel("安静够", self))
+        self.gap_spin = QSpinBox(self)
+        self.gap_spin.setObjectName("proactiveGapSpin")
+        self.gap_spin.setRange(1, 24 * 60)
+        self.gap_spin.setSuffix(" 分钟")
+        self.gap_spin.setValue(self._snapshot.min_gap_minutes)
+        self.gap_spin.valueChanged.connect(self._on_changed)
+        gap_row.addWidget(self.gap_spin)
+        gap_row.addWidget(QLabel("才开口", self))
+        gap_row.addStretch(1)
+        outer.addLayout(gap_row)
+
+        # **「不限」是一个勾选框，不是一个数。** 用一个 0 去表示它的话，0 就同时意味着
+        # "不限"与"一次都不来"两件相反的事——而纯层里 0 的语义正是后者。
+        limit_row = QHBoxLayout()
+        self.limit_box = QCheckBox("每天最多", self)
+        self.limit_box.setObjectName("proactiveLimitBox")
+        self.limit_box.setChecked(self._snapshot.max_per_day is not None)
+        self.limit_box.toggled.connect(self._on_limit_toggled)
+        limit_row.addWidget(self.limit_box)
+        self.per_day_spin = QSpinBox(self)
+        self.per_day_spin.setObjectName("proactivePerDaySpin")
+        self.per_day_spin.setRange(1, 50)
+        self.per_day_spin.setSuffix(" 次")
+        self.per_day_spin.setValue(self._snapshot.max_per_day or 3)
+        self.per_day_spin.setEnabled(self.limit_box.isChecked())
+        self.per_day_spin.valueChanged.connect(self._on_changed)
+        limit_row.addWidget(self.per_day_spin)
+        limit_row.addStretch(1)
+        outer.addLayout(limit_row)
+
+        quiet_row = QHBoxLayout()
+        quiet_row.addWidget(QLabel("免打扰", self))
+        self.quiet_from_spin = QSpinBox(self)
+        self.quiet_from_spin.setObjectName("proactiveQuietFromSpin")
+        self.quiet_from_spin.setRange(0, 23)
+        self.quiet_from_spin.setSuffix(" 点")
+        self.quiet_from_spin.setValue(self._snapshot.quiet_from)
+        self.quiet_from_spin.valueChanged.connect(self._on_changed)
+        quiet_row.addWidget(self.quiet_from_spin)
+        quiet_row.addWidget(QLabel("到", self))
+        self.quiet_to_spin = QSpinBox(self)
+        self.quiet_to_spin.setObjectName("proactiveQuietToSpin")
+        self.quiet_to_spin.setRange(0, 23)
+        self.quiet_to_spin.setSuffix(" 点")
+        self.quiet_to_spin.setValue(self._snapshot.quiet_to)
+        self.quiet_to_spin.valueChanged.connect(self._on_changed)
+        quiet_row.addWidget(self.quiet_to_spin)
+        quiet_row.addStretch(1)
+        outer.addLayout(quiet_row)
+        outer.addWidget(
+            _hint(
+                "跨零点也算（默认 23 点到次日 8 点）。**两个数填成一样就是不设免打扰**"
+                "——那比「填 23 到 23」再另给一个开关要少一个控件，也少一处能填错的地方。"
+            )
+        )
+        outer.addStretch(1)
+
+    def set_state(self, settings: ProactiveSettings) -> None:
+        """**打开窗口时调，陈述现状。** 顺带重置快照（同提醒页的道理）。"""
+        self._snapshot = settings
+        self._syncing = True
+        try:
+            self.enabled_box.setChecked(settings.enabled)
+            self.gap_spin.setValue(settings.min_gap_minutes)
+            self.limit_box.setChecked(settings.max_per_day is not None)
+            self.per_day_spin.setValue(settings.max_per_day or 3)
+            self.per_day_spin.setEnabled(settings.max_per_day is not None)
+            self.quiet_from_spin.setValue(settings.quiet_from)
+            self.quiet_to_spin.setValue(settings.quiet_to)
+        finally:
+            self._syncing = False
+
+    def current(self) -> ProactiveSettings:
+        """**每个控件都要读**（少读一个的症状是"改了它、关掉设置、再打开又变回去"）。"""
+        return ProactiveSettings(
+            enabled=self.enabled_box.isChecked(),
+            min_gap_minutes=self.gap_spin.value(),
+            max_per_day=self.per_day_spin.value() if self.limit_box.isChecked() else None,
+            quiet_from=self.quiet_from_spin.value(),
+            quiet_to=self.quiet_to_spin.value(),
+        )
+
+    def revert(self) -> None:
+        """「撤销修改」的主动那一半。**变了才发信号**（同工具页与记忆页）。"""
+        if self.current() == self._snapshot:
+            return
+        self.set_state(self._snapshot)
+        self.changed.emit(self.current())
+
+    def _on_limit_toggled(self, checked: bool) -> None:
+        self.per_day_spin.setEnabled(checked)
+        self._on_changed()
+
+    def _on_changed(self, *_args: object) -> None:
+        if self._syncing:
+            return
+        self.changed.emit(self.current())
+
+
 class DataPage(QWidget):
     """数据页：**记忆与数据放在哪个文件夹**，以及重新看一遍新手引导。
 
@@ -1773,6 +1921,9 @@ class SettingsDialog(QDialog):
     """「当前模型看得见图」变了。由工具页转发（见 :class:`ToolPage`）。"""
     memory_changed = Signal(object)
     reminders_changed = Signal(object)
+    #: 主动搭话那几项变了（开关、最小间隔、每日上限、免打扰），由
+    #: :class:`ProactivePage` 转发。
+    proactive_changed = Signal(object)
     #: 「重建联想」被按下。转出去给主窗口——只有它知道图存哪儿、库有多大。
     graph_rebuild_requested = Signal()
     #: 「立即巩固」被按下。同上：主窗口知道库在哪儿、要不要先等图。
@@ -1798,6 +1949,7 @@ class SettingsDialog(QDialog):
         tools: ToolSettings | None = None,
         memory: MemorySettings | None = None,
         reminders: ReminderSettings | None = None,
+        proactive: ProactiveSettings | None = None,
         voice: SpeechSettings | None = None,
     ) -> None:
         super().__init__(parent)
@@ -1833,7 +1985,7 @@ class SettingsDialog(QDialog):
         # 行距却只有 16 像素"的画面（一条蓝条压住左右邻居的字），而那种错看起来像字体坏了。
         # QSS 那份只留横向内边距（文字离左边框多远），纵向高度由这里的 sizeHint 说了算。
         item_height = self.categories.fontMetrics().height() + 2 * _CATEGORY_PAD_Y
-        for label in ("外观", "人设", "后端 / API", "工具", "记忆", "提醒", "语音", "数据"):
+        for label in ("外观", "人设", "后端 / API", "工具", "记忆", "提醒", "主动", "语音", "数据"):
             item = QListWidgetItem(label)
             item.setSizeHint(QSize(0, item_height))
             self.categories.addItem(item)
@@ -1846,6 +1998,7 @@ class SettingsDialog(QDialog):
         self.tools = ToolPage(self)
         self.memory = MemoryPage(self)
         self.reminders = ReminderPage(self)
+        self.proactive = ProactivePage(self)
         self.speech = SpeechPage(self)
         self.data = DataPage(self)
         self.pages.addWidget(self.appearance)
@@ -1854,6 +2007,7 @@ class SettingsDialog(QDialog):
         self.pages.addWidget(self.tools)
         self.pages.addWidget(self.memory)
         self.pages.addWidget(self.reminders)
+        self.pages.addWidget(self.proactive)
         self.pages.addWidget(self.speech)
         self.pages.addWidget(self.data)
         body.addWidget(self.pages, 1)
@@ -1890,6 +2044,9 @@ class SettingsDialog(QDialog):
         self.memory.changed.connect(self.memory_changed)
         # 提醒页同形（也是一个勾选框，勾上就是下一次到点生效）。
         self.reminders.changed.connect(self.reminders_changed)
+        # 主动搭话页同形：改了就是下一次 tick 用新的。
+        self.proactive.changed.connect(self.proactive_changed)
+        self.proactive.set_state(proactive if proactive is not None else ProactiveSettings())
         # 「重建联想」是**动作**不是设置，所以它自己一路信号出去，不混进
         # ``memory_changed``：那一路的接收方做的是"把 MemorySettings 存起来"，
         # 而这件事要起一个后台线程。混在一起的代价是每次勾选都建一遍图。
@@ -1914,6 +2071,7 @@ class SettingsDialog(QDialog):
             tools=ToolSettings() if tools is None else tools,
             memory=MemorySettings() if memory is None else memory,
             reminders=ReminderSettings() if reminders is None else reminders,
+            proactive=ProactiveSettings() if proactive is None else proactive,
             voice=voice if voice is not None else SpeechSettings(),
         )
 
@@ -1929,6 +2087,7 @@ class SettingsDialog(QDialog):
         tools: ToolSettings,
         memory: MemorySettings,
         reminders: ReminderSettings,
+        proactive: ProactiveSettings,
         voice: SpeechSettings,
     ) -> None:
         """**打开窗口时调。** 顺带把快照换成这一份——「撤销修改」回到的是**这一次**
@@ -1944,6 +2103,7 @@ class SettingsDialog(QDialog):
         self.tools.set_state(tools)
         self.memory.set_state(memory)
         self.reminders.set_state(reminders)
+        self.proactive.set_state(proactive)
         self.speech.set_state(voice if voice is not None else SpeechSettings())
 
     def set_resolved(self, resolved: Resolved) -> None:

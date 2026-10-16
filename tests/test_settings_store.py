@@ -25,6 +25,7 @@ from axo.ui.settings_store import (
     PROVIDER_OLLAMA,
     BackendSettings,
     MemorySettings,
+    ProactiveSettings,
     ReminderSettings,
     SettingsStore,
     ToolSettings,
@@ -964,3 +965,39 @@ def test_the_machine_keys_live_in_their_own_namespace() -> None:
     store.mark_onboarding_done()
 
     assert [key for key, _ in backend.writes] == ["app/data_root", "app/onboarding_done"]
+
+
+# ── 主动搭话（proactive/*）──────────────────────────────────────────────────
+
+
+def test_the_proactive_defaults_are_what_the_product_ships() -> None:
+    """默认值就是产品姿态：开着、静够 20 分钟、一天最多 3 次、23 点到次日 8 点免打扰。
+
+    **默认值有三个真源**（dataclass 字段、``load_proactive``、设置页控件的初值），
+    这条钉住前两处；第三处在设置页那条测试里。
+    """
+    assert SettingsStore(FakeBackend()).load_proactive() == ProactiveSettings(
+        enabled=True, min_gap_minutes=20, max_per_day=3, quiet_from=23, quiet_to=8
+    )
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        ProactiveSettings(),
+        ProactiveSettings(enabled=False),
+        # **"不限"与"一次都不来"是两件事**，而它们在往返里最容易互相变过去：前者写
+        # 空串、后者写 0，而一个会把空串读成 0 的读取侧会把它们悄悄换个个儿。
+        ProactiveSettings(max_per_day=None),
+        ProactiveSettings(max_per_day=0),
+        ProactiveSettings(max_per_day=1),
+        ProactiveSettings(min_gap_minutes=1, quiet_from=0, quiet_to=0),
+        ProactiveSettings(min_gap_minutes=1440, quiet_from=22, quiet_to=7),
+    ],
+)
+def test_the_proactive_settings_survive_a_round_trip(settings: ProactiveSettings) -> None:
+    store = SettingsStore(FakeBackend())
+
+    store.save_proactive(settings)
+
+    assert store.load_proactive() == settings

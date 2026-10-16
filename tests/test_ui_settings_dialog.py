@@ -59,6 +59,7 @@ from axo.ui.settings_store import (
     PROVIDER_OLLAMA,
     BackendSettings,
     MemorySettings,
+    ProactiveSettings,
     ReminderSettings,
     SpeechSettings,
     ToolSettings,
@@ -437,6 +438,7 @@ def test_reopening_moves_the_snapshot(qapp, data_root) -> None:
         tools=ToolSettings(),
         memory=MemorySettings(),
         reminders=ReminderSettings(),
+        proactive=ProactiveSettings(),
         voice=SpeechSettings(),
     )
     assert seen == [], "set_state 是在陈述现状，不该发信号"
@@ -565,6 +567,7 @@ def test_the_memory_box_opens_on_the_stored_value(qapp, data_root) -> None:
         tools=ToolSettings(),
         memory=MemorySettings(task_memory=True),
         reminders=ReminderSettings(),
+        proactive=ProactiveSettings(),
         voice=SpeechSettings(),
     )
     assert dialog.memory.task_box.isChecked()
@@ -587,6 +590,7 @@ def test_the_memory_box_emits_only_when_the_user_moves_it(qapp, data_root) -> No
         tools=ToolSettings(),
         memory=MemorySettings(task_memory=True),
         reminders=ReminderSettings(),
+        proactive=ProactiveSettings(),
         voice=SpeechSettings(),
     )
     assert seen == [], "摆上当前值不是一次改动"
@@ -625,6 +629,7 @@ def _memory_dialog(**memory: Any) -> SettingsDialog:
         tools=ToolSettings(),
         memory=MemorySettings(**memory),
         reminders=ReminderSettings(),
+        proactive=ProactiveSettings(),
         voice=SpeechSettings(),
     )
     return dialog
@@ -952,7 +957,7 @@ def test_the_categories_line_up_with_the_pages(qapp, data_root) -> None:
     dialog = _dialog()
     labels = [dialog.categories.item(i).text() for i in range(dialog.categories.count())]
 
-    assert labels == ["外观", "人设", "后端 / API", "工具", "记忆", "提醒", "语音", "数据"]
+    assert labels == ["外观", "人设", "后端 / API", "工具", "记忆", "提醒", "主动", "语音", "数据"]
     assert dialog.pages.count() == len(labels)
     for row, page in enumerate(
         (
@@ -962,6 +967,7 @@ def test_the_categories_line_up_with_the_pages(qapp, data_root) -> None:
             dialog.tools,
             dialog.memory,
             dialog.reminders,
+            dialog.proactive,
             dialog.speech,
             dialog.data,
         )
@@ -1301,6 +1307,7 @@ def test_reopening_moves_the_directory_snapshot(qapp, data_root, monkeypatch, tm
         tools=ToolSettings(read_roots=(new,)),
         memory=MemorySettings(),
         reminders=ReminderSettings(),
+        proactive=ProactiveSettings(),
         voice=SpeechSettings(),
     )
     monkeypatch.setattr(dialog.tools, "_ask_for_directory", lambda _start: str(tmp_path / "临时"))
@@ -1877,3 +1884,55 @@ def test_the_voices_combo_lists_what_is_on_disk(qapp: Any, data_root: Any) -> No
     assert labels[0] == "组件默认音色", "第一项要能退回组件默认"
     # 没放参考音时只有默认那一项——**少一项比多一项好**（见 tts.voices_in 的理由）。
     assert page.voice_combo.currentData() == ""
+
+
+def test_the_proactive_page_emits_on_a_change_and_reverts(qapp, data_root) -> None:
+    """主动那一页与提醒页同一套：边改边生效，底部「撤销修改」兜着。"""
+    dialog = _dialog()
+    seen: list[ProactiveSettings] = []
+    dialog.proactive_changed.connect(seen.append)
+
+    dialog.proactive.gap_spin.setValue(45)
+
+    assert seen and seen[-1].min_gap_minutes == 45
+
+    dialog.proactive.revert()
+
+    assert dialog.proactive.current() == ProactiveSettings()
+    assert seen[-1] == ProactiveSettings()
+
+
+def test_the_daily_cap_box_is_what_turns_the_limit_off(qapp, data_root) -> None:
+    """「不限」是一个**勾选框**，不是一个数。
+
+    用一个 0 去表示"不限"的话，0 就同时意味着"不限"与"一次都不来"——而纯层里 0 的
+    语义正是后者。两者共用一个值，界面上看不出任何异常。
+    """
+    dialog = _dialog()
+    seen: list[ProactiveSettings] = []
+    dialog.proactive_changed.connect(seen.append)
+
+    assert dialog.proactive.limit_box.isChecked(), "默认是有限额的"
+    assert dialog.proactive.per_day_spin.isEnabled()
+
+    dialog.proactive.limit_box.setChecked(False)
+
+    assert seen[-1].max_per_day is None
+    assert not dialog.proactive.per_day_spin.isEnabled(), "不限的时候那个数字框该灰掉"
+    assert dialog.proactive.current().max_per_day is None
+
+
+def test_opening_the_page_twice_does_not_rewrite_the_settings(qapp, data_root) -> None:
+    """``set_state`` 是**陈述现状**，不该往外发信号（同提醒页那条）。
+
+    没有 ``_syncing`` 闸门的话，``setChecked`` 会经由子控件发出 ``toggled``——症状是
+    每次打开设置都往设置里重写一遍同样的值，而"陈述现状"与"用户改了"在接收侧再也
+    分不开。
+    """
+    dialog = _dialog()
+    seen: list[ProactiveSettings] = []
+    dialog.proactive_changed.connect(seen.append)
+
+    dialog.proactive.set_state(ProactiveSettings(min_gap_minutes=33))
+
+    assert seen == []

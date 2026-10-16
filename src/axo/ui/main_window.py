@@ -3103,6 +3103,7 @@ class MainWindow(QMainWindow):
                         consolidation_interval_s=self._consolidation_interval_s,
                     ),
                     reminders=self._reminder_settings,
+                    proactive=self._proactive_settings,
                 )
                 dialog.theme_changed.connect(self._on_theme_changed)
                 dialog.backend_changed.connect(self._on_backend_changed)
@@ -3112,6 +3113,7 @@ class MainWindow(QMainWindow):
                 dialog.voice_changed.connect(self._on_voice_settings_changed)
                 dialog.memory_changed.connect(self._on_memory_changed)
                 dialog.reminders_changed.connect(self._on_reminders_changed)
+                dialog.proactive_changed.connect(self._on_proactive_settings_changed)
                 dialog.graph_rebuild_requested.connect(self._on_rebuild_graph)
                 # 「立即巩固」直接走**与定时那条路同一个入口**：区分自动/手动的地方
                 # 只有一处（`force`），而托盘那一项连的是同一个槽。
@@ -3140,6 +3142,7 @@ class MainWindow(QMainWindow):
                         consolidation_interval_s=self._consolidation_interval_s,
                     ),
                     reminders=self._reminder_settings,
+                    proactive=self._proactive_settings,
                 )
             # 图状态那一行**每次打开都重新对齐**（同人设页的道理，也是同一种真源：
             # 图是在这个窗口存在的时候才建的）。不回填的话，用户在设置页看着"还没建"
@@ -3290,6 +3293,18 @@ class MainWindow(QMainWindow):
         self._speech_player.set_volume(settings.volume)
 
     @Slot(object)
+    def _on_proactive_settings_changed(self, settings: ProactiveSettings) -> None:
+        """主动搭话那几项变了：存一份，**下一次 tick 就用新的**。
+
+        生效是自动的：那个 tick 现读 :attr:`_proactive_settings`。不去通知节拍器——
+        它管的是"隔多久问一次"，与"用户想不想被打扰"是两件事（同
+        :meth:`_on_reminders_changed` 那条理由）。
+
+        **也不追着补一句或撤一句**：她刚说完的那句已经说完了，改设置只管以后。
+        """
+        self._proactive_settings = settings
+        self._settings_store.save_proactive(settings)
+
     def _on_reminders_changed(self, settings: ReminderSettings) -> None:
         """提醒那两个开关变了：存一份，下一个到点就用新的。
 
