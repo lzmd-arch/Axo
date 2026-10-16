@@ -26,6 +26,7 @@ __all__ = [
     "STICKER_SUFFIXES",
     "Sticker",
     "catalog_line",
+    "find_in",
     "find_sticker",
     "stickers_in",
 ]
@@ -74,6 +75,27 @@ def stickers_in(root: Path) -> tuple[Sticker, ...]:
     return tuple(sorted(found, key=lambda sticker: (sticker.name.casefold(), sticker.name)))
 
 
+def find_in(stickers: Sequence[Sticker], name: str) -> Sticker | None:
+    """在一份**已经扫好的**目录里按名字找一个。
+
+    工具那一侧走它：目录是装配期扫好传进去的（工具表每轮重建，见
+    ``ui/main_window.py`` 的 ``_tools()``），再扫一遍目录等于让"这一轮看到的表情包"
+    与"提示词里列的那几个"有可能不是同一批——那种不一致的症状是模型调一个刚刚才
+    列出来的名字，然后被告知没有。判据本身与 :func:`find_sticker` 是同一份。
+    """
+    wanted = name.strip()
+    if not wanted:
+        return None
+    for sticker in stickers:
+        if sticker.name == wanted:
+            return sticker
+    folded = wanted.casefold()
+    for sticker in stickers:
+        if sticker.name.casefold() == folded:
+            return sticker
+    return None
+
+
 def find_sticker(root: Path, name: str) -> Sticker | None:
     """按名字找一个。找不到返回 ``None``。
 
@@ -83,18 +105,7 @@ def find_sticker(root: Path, name: str) -> Sticker | None:
 
     空名字返回 ``None``：那是"没说要发哪张"，不是"找名叫空串的那张"。
     """
-    wanted = name.strip()
-    if not wanted:
-        return None
-    stickers = stickers_in(root)
-    for sticker in stickers:
-        if sticker.name == wanted:
-            return sticker
-    folded = wanted.casefold()
-    for sticker in stickers:
-        if sticker.name.casefold() == folded:
-            return sticker
-    return None
+    return find_in(stickers_in(root), name)
 
 
 def catalog_line(stickers: Sequence[Sticker]) -> str:

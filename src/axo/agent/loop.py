@@ -149,6 +149,12 @@ class ToolFinished:
     detail: str = ""
     denied: bool = False
     clipped: bool = False
+    preview: str = ""
+    """工具产出的、要**显示给用户**的那张图的路径（空串表示没有）。
+
+    从 :attr:`~axo.agent.tools.ToolOutcome.preview` 原样带过来——这一层不认识「表情包」
+    是什么，它只负责不让一个已知的事实（工具有一张要给人看的图）在传话的路上丢掉。
+    """
 
 
 @dataclass(frozen=True)
@@ -478,6 +484,7 @@ def run_agent_loop(
                 detail=outcome.detail,
                 denied=not approved,
                 clipped=clipped,
+                preview=outcome.preview,
             )
             # **图只活在这一次往返里。** 落逐字稿的那条路只存 ``content``、L5 回放
             # 重建行时也不带 ``images``（``session/assemble.py`` 的 ``_tool_pair``），

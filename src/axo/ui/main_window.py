@@ -134,12 +134,14 @@ from ..paths import (
     reminders_fired_path,
     reminders_path,
     sessions_dir,
+    stickers_dir,
 )
 from ..session.assemble import Assembly, stored_rows
 from ..session.budget import TokenBudget, TokenMeter, reserve_for
 from ..session.environment import build_environment
 from ..session.indicator import ContextState, context_state, format_context
 from ..session.store import Message, Session, SessionStore, new_session_id
+from ..stickers import stickers_in
 from ..tts import SpeechReceipt
 from .agent_worker import AgentWorker
 from .app import make_settings
@@ -1783,7 +1785,15 @@ class MainWindow(QMainWindow):
         其余工具在登记上不分条件——要不要用户点头是工具自己的 ``requires_approval``，
         闸门读那一处，这里不重复判断。
         """
-        return ToolRegistry(default_tools(read_root=self._read_roots, vision=self._model_can_see()))
+        return ToolRegistry(
+            default_tools(
+                read_root=self._read_roots,
+                vision=self._model_can_see(),
+                # **每轮现扫**：用户往 ``stickers/`` 里丢一张图，下一轮她就用得上。
+                # 目录是空的就返回空元组，工具随之不登记。
+                stickers=stickers_in(stickers_dir()),
+            )
+        )
 
     def _model_can_see(self) -> bool:
         """当前模型能不能看图。

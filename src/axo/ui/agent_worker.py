@@ -347,6 +347,7 @@ class AgentWorker(QObject):
                             "clipped": event.clipped,
                             "content": event.content,
                             "detail": event.detail[:_DETAIL_CHARS],
+                            "preview": event.preview,
                         }
                     )
                 elif isinstance(event, MessagesAppended):

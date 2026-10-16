@@ -176,6 +176,16 @@ class ToolOutcome:
     detail: str = ""
     replayable: bool = True
     images: tuple[str, ...] = ()
+    preview: str = ""
+    """给**用户**看一眼的那张图的本地路径（绝对路径）。空串表示没有。
+
+    **与 :attr:`images` 不是一回事，别混。** 那个是回灌给模型的图（base64、进上下文）；
+    这个是界面上要显示的那一张。表情包正是后者：她发了一张图给用户看，而模型不需要
+    "看见"自己发的那张——它知道"我发过一张"就够了。
+
+    它是**绝对路径**；落进逐字稿时由 ``ui/main_window.py`` 换成相对数据根的路径
+    （数据根会搬家，而逐字稿不该因此失效）。
+    """
 
     @classmethod
     def success(
@@ -185,8 +195,16 @@ class ToolOutcome:
         detail: str = "",
         replayable: bool = True,
         images: tuple[str, ...] = (),
+        preview: str = "",
     ) -> ToolOutcome:
-        return cls(ok=True, content=content, detail=detail, replayable=replayable, images=images)
+        return cls(
+            ok=True,
+            content=content,
+            detail=detail,
+            replayable=replayable,
+            images=images,
+            preview=preview,
+        )
 
     @classmethod
     def failure(

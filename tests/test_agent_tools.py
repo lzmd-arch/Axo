@@ -34,6 +34,7 @@ from axo.agent.catalog import (
     ReadFileTool,
     ReadMemoryTool,
     SearchMemoryTool,
+    SendStickerTool,
     SetReminderTool,
     WriteMemoryTool,
     default_tools,
@@ -52,6 +53,7 @@ from axo.agent.tools import (
 from axo.llm.base import ToolCall, ToolSpec
 from axo.memory.forget import FORGET_KEY
 from axo.memory.writer import MemoryWriter
+from axo.stickers import stickers_in
 from memcore.ids import new_ulid
 from memcore.sdr import encode_lexical
 from memcore.store import MemoryStore
@@ -1013,3 +1015,81 @@ def test_write_memory_and_set_reminder_are_separate_files(
 
     assert [r.text for r in reminders.all()] == ["明天买牛奶。"]
     assert [item.content for item in store.load_all()] == ["牛奶喝完了。"]
+
+
+# ── 表情包（send_sticker）────────────────────────────────────────────────────
+
+
+def _sticker_dir(tmp_path: Path) -> Path:
+    folder = tmp_path / "stickers"
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in ("开心", "无语", "Sad"):
+        # 内容不重要——扫描只认后缀。这里写 PNG 的魔数开头，免得哪天多一条
+        # "它是不是真图片"的判据时，这些夹具突然变成"坏文件"。
+        (folder / f"{name}.png").write_bytes(bytes([137, 80, 78, 71]))
+    return folder
+
+
+def test_the_sticker_tool_is_registered_only_when_there_are_stickers(tmp_path: Path) -> None:
+    """目录空着就**不登记**：她不可能成功，而做不到的事不该出现在工具表里
+    （同 ``read_file`` 在没有可读根、``look_at_screen`` 在模型看不见图时那条账）。"""
+    assert "send_sticker" not in [tool.spec.name for tool in default_tools()]
+
+    names = [tool.spec.name for tool in default_tools(stickers=stickers_in(_sticker_dir(tmp_path)))]
+
+    assert "send_sticker" in names
+
+
+def test_sending_a_sticker_hands_the_path_to_the_user_channel(
+    tmp_path: Path, ctx: ToolContext
+) -> None:
+    """成功时 **preview** 是那张图的路径——那是给用户看的通道。
+
+    ``images`` 仍然是空的：模型不需要"看见"自己发的那张（那还会白烧一笔图 token）。
+    两条通道混起来的后果是表情包被回灌进上下文，而模型开始对着自己的梗图说话。
+    """
+    tool = SendStickerTool(stickers_in(_sticker_dir(tmp_path)))
+
+    outcome = tool.run({"name": "开心"}, ctx)
+
+    assert outcome.ok
+    assert outcome.preview.endswith("开心.png")
+    assert outcome.images == ()
+    assert "开心" in outcome.content
+
+
+def test_a_wrong_name_gets_the_whole_list_back(tmp_path: Path, ctx: ToolContext) -> None:
+    """失败时**把可用的名单再说一遍**：模型多半是名字记错了，而它手上那份清单
+    （在工具描述里）已经过去好几轮了。光说"没有"会让它再猜一次。"""
+    tool = SendStickerTool(stickers_in(_sticker_dir(tmp_path)))
+
+    outcome = tool.run({"name": "生气"}, ctx)
+
+    assert not outcome.ok
+    assert "开心" in outcome.content and "无语" in outcome.content
+
+
+def test_a_wrong_case_still_finds_the_sticker(tmp_path: Path, ctx: ToolContext) -> None:
+    tool = SendStickerTool(stickers_in(_sticker_dir(tmp_path)))
+
+    outcome = tool.run({"name": "sad"}, ctx)
+
+    assert outcome.ok and outcome.preview.endswith("Sad.png")
+
+
+def test_a_sticker_without_a_name_is_a_failure_not_a_crash(
+    tmp_path: Path, ctx: ToolContext
+) -> None:
+    """参数缺失/类型不对是**正常失败**（回一句能指导下一步的话），不是异常。"""
+    tool = SendStickerTool(stickers_in(_sticker_dir(tmp_path)))
+
+    assert not tool.run({}, ctx).ok
+    assert not tool.run({"name": 42}, ctx).ok
+
+
+def test_the_sticker_tool_is_replayable(tmp_path: Path, ctx: ToolContext) -> None:
+    """与 ``get_time`` 那种"某一刻的快照"不同：**"我发过一张开心的表情包"在世界里
+    没有变过**，回放它是对的（不回放的话模型会以为自己没发过，然后重复发）。"""
+    tool = SendStickerTool(stickers_in(_sticker_dir(tmp_path)))
+
+    assert tool.run({"name": "开心"}, ctx).replayable is True

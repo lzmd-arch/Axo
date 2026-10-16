@@ -54,6 +54,7 @@ from memcore.recall import RecallConfig, recall
 from ..llm.base import ToolSpec
 from ..memory.forget import can_soft_forget, soft_forgotten
 from ..memory.policy import MemoryDraft
+from ..stickers import Sticker, catalog_line, find_in
 from .fs import ReadFileError, read_text, resolve_within
 from .reminders import (
     REPEAT_DAILY,
@@ -144,6 +145,57 @@ def _clip(text: str, limit: int) -> str:
 
 def _weekday_cn(moment: datetime) -> str:
     return "一二三四五六日"[moment.weekday()]
+
+
+class SendStickerTool:
+    """发一张表情包。
+
+    她自己找上来之外的另一条主动：在一轮回答里顺手丢一张图。表情包从数据根下的
+    ``stickers/`` 来（一个文件一个、名字就是文件名）——**目录空着的时候这个工具根本
+    不登记**（同 ``read_file`` 在没有可读根时的姿态：做不到的事不该出现在工具表里）。
+
+    **它不产出给模型看的图**（``images`` 为空）：那张是给用户看的，走 ``preview``。
+    模型知道自己发过哪一张就够了，没必要把图回灌给它"看"——那还会白烧一笔图 token。
+
+    ``replayable=True``：与 ``get_time`` 那种"某一刻的快照"不同，"我发过一张开心的
+    表情包"这件事在世界里没有变过，回放它是对的。
+    """
+
+    def __init__(self, stickers: Sequence[Sticker]) -> None:
+        self._stickers = tuple(stickers)
+        self.spec = ToolSpec(
+            name="send_sticker",
+            description=(
+                "发一张表情包给对方。语气合适的时候（玩闹、安慰、道谢、无话可说）配一张，"
+                "**不要每句话都发**。可用的表情包："
+                f"{catalog_line(self._stickers)}。"
+                "参数 name 必须是上面列出的名字之一。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "表情包的名字"},
+                },
+                "required": ["name"],
+            },
+        )
+
+    requires_approval: ClassVar[bool] = False
+
+    def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+        wanted = arguments.get("name")
+        name = wanted if isinstance(wanted, str) else ""
+        sticker = find_in(self._stickers, name)
+        if sticker is None:
+            # **失败也要把可用的名单再说一遍**：模型多半是把名字记错了，而它手上
+            # 没有别的办法知道这个名字不存在（工具描述里那份清单已经过去好几轮了）。
+            return ToolOutcome.failure(
+                f"没有叫「{name}」的表情包。可用的有：{catalog_line(self._stickers)}。"
+            )
+        return ToolOutcome.success(
+            f"已发送表情包「{sticker.name}」。",
+            preview=str(sticker.path),
+        )
 
 
 class GetTimeTool:
@@ -912,7 +964,12 @@ class LookAtScreenTool:
         )
 
 
-def default_tools(*, read_root: Sequence[Path] = (), vision: bool = False) -> tuple[Tool, ...]:
+def default_tools(
+    *,
+    read_root: Sequence[Path] = (),
+    vision: bool = False,
+    stickers: Sequence[Sticker] = (),
+) -> tuple[Tool, ...]:
     """十个工具。
 
     **两个工具按条件登记**，判据是"这个环境里它根本不可能成功"：
@@ -947,4 +1004,6 @@ def default_tools(*, read_root: Sequence[Path] = (), vision: bool = False) -> tu
         *((ReadFileTool(),) if read_root else ()),
         # 追加，不插队（见上面那条"顺序就是声明顺序"）。
         *((LookAtScreenTool(),) if vision else ()),
+        # 没有表情包就不登记它——同 ``read_file`` 与 ``look_at_screen`` 那条账。
+        *((SendStickerTool(stickers),) if stickers else ()),
     )
