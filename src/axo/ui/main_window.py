@@ -89,6 +89,7 @@ from ..agent.router import (
 )
 from ..agent.tools import Capture, ToolContext, ToolRegistry
 from ..asr import Transcription
+from ..attachments import Attachment, attachment_for, body_of
 from ..llm.base import ChatBackendError, ChatRequest
 from ..llm.ollama import (
     MODEL_ID_PREFIX as OLLAMA_MODEL_ID_PREFIX,
@@ -395,6 +396,47 @@ def display_rows(messages: Sequence[Message]) -> list[dict[str, Any]]:
                 meta["title"] = f"工具结果 · {name}"
         rows.append({"role": role, "text": text, "meta": meta})
     return rows
+
+
+#: 附件的后缀 → MIME。**附件图按原样发出去**（不做转码——那要一个图像库，而它
+#: 不该为了这件事进产物）。所以这里只认那些模型侧一定认得的类型。
+_IMAGE_MIMES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
+
+
+def _attachment_prompt_block(attachments: Sequence[Attachment]) -> str:
+    """附件进**请求**的那一段：文件正文。
+
+    **与逐字稿那一份刻意不同**（见 :func:`_attachment_marks`）：进了请求的内容是给
+    模型读的，而逐字稿的读者是人。一份两万字符的日志写进逐字稿会把那一轮变成一个
+    文件转储，而文件本身还在原地——标记里的名字足够找回去。
+    """
+    if not attachments:
+        return ""
+    return "\n\n" + "\n\n".join(body_of(item) for item in attachments)
+
+
+def _attachment_marks(attachments: Sequence[Attachment]) -> str:
+    """附件进**逐字稿**的那一行：只有名字。"""
+    if not attachments:
+        return ""
+    return "\n\n（附：" + "、".join(item.name for item in attachments) + "）"
+
+
+def _image_data_uri(attachment: Attachment) -> str:
+    """一张附件图 → ``data:`` URI（视觉通道收的就是这个形状）。
+
+    后缀认不出来时按 PNG 报：那种情况下它是"带了图但没认出来"，而报一个错的 MIME
+    比报 PNG 更糟——服务端会拿它去解码，然后拒掉整个请求。
+    """
+    mime = _IMAGE_MIMES.get(attachment.path.suffix.lower(), "image/png")
+    payload = base64.b64encode(attachment.path.read_bytes()).decode("ascii")
+    return f"data:{mime};base64,{payload}"
 
 
 def _sticker_stored_path(path: str) -> str:
@@ -716,6 +758,11 @@ class MainWindow(QMainWindow):
         #: 而不是栈上传参；每个真正发出去的 ``_on_submit`` 重写它，早退分支不残留。
         self._spoken_reply = False
         self._pending_audio = b""
+        #: 拖进来、还没发出去的文件。**发送时一起带过去**（见 :meth:`_on_submit`）。
+        self._pending_attachments: tuple[Attachment, ...] = ()
+        #: 这一轮要贴到 user 行上的图（``data:`` URI）。与 ``_pending_audio`` 同姿态：
+        #: **发完即清**（原图不落逐字稿，逐字稿里只有一行名字）。
+        self._pending_images: tuple[str, ...] = ()
         #: **播出回执**（``tts.SpeechReceipt``）：她说的那句出没出声。**下一轮进
         #: 环境槽后即清**——它是一条关于「刚说那句」的信号，不是常驻状态。
         self._speech_receipt: Any = None
@@ -1671,8 +1718,21 @@ class MainWindow(QMainWindow):
         # 于切片写没写对，而写错的表现是当前输入出现两次——一个不报错、只是让模型
         # 看到自己把问题重复了一遍的错误。
         history = list(self._session.messages)
-        self._append(Message(role="user", content=text, spoken=spoken))
-        self.chat_view.append_message("user", text, {"title": _SPOKEN_TITLE} if spoken else None)
+        # **附件在这里分成两份文本。** 一份进请求（文件正文拼在用户那句话后面）、一份
+        # 进逐字稿（只留「（附：笔记.md）」这样的标记）——两份不同的理由见
+        # :func:`_attachment_prompt_block`。图片不走文本：它贴到 user 行上（见
+        # :meth:`_attach_pending_images`）。
+        pending, self._pending_attachments = self._pending_attachments, ()
+        self._pending_images = tuple(
+            _image_data_uri(item) for item in pending if item.kind == "image"
+        )
+        text_for_prompt = text + _attachment_prompt_block(pending)
+        text_for_transcript = text + _attachment_marks(pending)
+
+        self._append(Message(role="user", content=text_for_transcript, spoken=spoken))
+        self.chat_view.append_message(
+            "user", text_for_transcript, {"title": _SPOKEN_TITLE} if spoken else None
+        )
 
         # 预留量**跟着后端走**：云端是 0（一个字都不传 ``max_tokens``），Ollama 那条
         # 链才用 DEFAULT_RESERVE_OUTPUT——那是它的协议怪癖，不是我们的额度。
@@ -1680,7 +1740,7 @@ class MainWindow(QMainWindow):
             window=self._backend.context_window,
             reserve_output=reserve_for(self._backend),
         )
-        self._pending_text = text
+        self._pending_text = text_for_prompt
         # **只在"这一轮真的要发出去"时落**：help/裸切换那些早退分支在上面就 return 了，
         # 不会把"说出来的"留到下一轮（下一轮进这里照样重写）。
         self._spoken_reply = spoken
@@ -1697,7 +1757,7 @@ class MainWindow(QMainWindow):
             store=self._memory,
             budget=self._budget,
             history=history,
-            current=text,
+            current=text_for_prompt,
             environment=build_environment(
                 model_id=self._backend.model_id,
                 tools_declared=self._turn_uses_tools,
@@ -1763,6 +1823,7 @@ class MainWindow(QMainWindow):
         # 行为，但用路由给的结论意味着**将来改那条规则只需要改一处**。
         # **原声贴到本轮 user 行**（听得见才贴；发完即清）。贴在这里一处，
         # agent 路与 ChatWorker 路拿到的是同一份装配。
+        assembly = self._attach_pending_images(assembly)
         assembly, hears_audio = self._attach_pending_audio(assembly)
         if self._turn_uses_tools and hears_audio:
             # **捎上原声的这一轮只听、不调工具**。三个理由（见 docs/agent.md）：
@@ -1901,6 +1962,61 @@ class MainWindow(QMainWindow):
                 "**原声没有发出去**（这一轮发的是转写文字）。\n\n" + where + "。",
             )
         return assembly, False
+
+    @Slot(list)
+    def _on_attach_files(self, paths: list) -> None:
+        """拖进来的文件：**先进待发，下一次发送时一起带过去**。
+
+        不立刻发：拖一个文件进来多半还要配一句话（"帮我看看这个"），而"拖进来就发"
+        会让那句话说不出完整的上下文。
+
+        **用云端模型时要说清文件会发出去。** 这是个真问题而不是免责声明：与截图那次
+        同一个姿态——用户有权在拖之前就知道内容去哪儿。
+        """
+        found = [
+            item for item in (attachment_for(Path(str(one))) for one in paths) if item is not None
+        ]
+        if not found:
+            self.chat_view.append_message("system", "这些文件读不了（可能不是文件，或者读不动）。")
+            return
+        self._pending_attachments = tuple(found)
+        lines = [
+            "**附上了：" + "、".join(item.name for item in found) + "**",
+            "下一条消息会带着它们一起发过去。",
+        ]
+        if self._backend_settings.is_cloud:
+            lines.append("⚠️ 你用的是**云端模型**：这些文件的内容会发给那台服务器。")
+        self.chat_view.append_message("system", "\n\n".join(lines))
+
+    def _attach_pending_images(self, assembly: Assembly) -> Assembly:
+        """把这一轮用户附的图贴到那条 ``user`` 行上。**发完即清。**
+
+        与 :meth:`_attach_pending_audio` 同形、同一条纪律：**不贴出去的时候要说一句
+        原因**。两条不贴的情形：
+
+        * **当前模型看不见图**——没得说，附件图它读不了（同 ``look_at_screen`` 那条能力门）。
+        * **这一路的图挂在别处**：本机 Ollama 那条链的图挂在**工具结果**那一行（看屏幕用的
+          那条），而附件图没有那样一行可挂。**这是"我们还没接过去"，不是"对面不支持"**
+          ——说成后者会让人去反复换模型，而换哪个都一样。
+        """
+        images, self._pending_images = self._pending_images, ()
+        if not images:
+            return assembly
+        can_ride = getattr(self._backend, "images_ride_on", None) == "user"
+        if can_ride and self._model_can_see():
+            messages = list(assembly.messages)
+            for index in range(len(messages) - 1, -1, -1):
+                if messages[index].role == "user":
+                    messages[index] = replace(messages[index], images=images)
+                    break
+            return replace(assembly, messages=tuple(messages))
+        reason = (
+            "当前模型看不见图（设置 → 工具那一格没勾，或者本机模型没报 vision）"
+            if not self._model_can_see()
+            else "本机这条路把图挂在「工具结果」那一行（看屏幕用的那条），附件图还没接过去"
+        )
+        self.chat_view.append_message("system", "**附件的图没有发出去。**" + "\n\n" + reason + "。")
+        return assembly
 
     def _explain_the_missing_screen_tool(self) -> None:
         """这一句要看屏幕，而这一轮的工具表里没有那个工具 —— **把为什么说出来**。

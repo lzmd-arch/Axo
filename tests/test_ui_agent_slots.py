@@ -277,6 +277,9 @@ class Stub(QObject):
     _pick_material = MainWindow._pick_material
     _start_proactive_speech = MainWindow._start_proactive_speech
     _show_sticker = MainWindow._show_sticker
+    # ── 拖进来的文件 ──
+    _on_attach_files = MainWindow._on_attach_files
+    _attach_pending_images = MainWindow._attach_pending_images
 
     def __init__(
         self,
@@ -324,6 +327,9 @@ class Stub(QObject):
         self._spoken_today = 0
         self._used_materials: list[str] = []
         self._proactive_day: date | None = None
+        # ── 拖进来的文件那一档 ──
+        self._pending_attachments: tuple[Any, ...] = ()
+        self._pending_images: tuple[str, ...] = ()
         self._settings_store = FakeSettingsStore()
         #: 设置窗口（可能还没开）。``_on_reminders_changed`` 往它上面回填结果那一行。
         self._settings_dialog: Any = None
@@ -1955,3 +1961,116 @@ def test_display_rows_leaves_a_text_row_alone() -> None:
     rows = display_rows([Message(role="assistant", content="好。")])
 
     assert rows[0]["meta"] == {}
+
+
+# ── 拖进来的文件 ────────────────────────────────────────────────────────────
+
+
+def _drop_stub(qapp: Any, *, cloud: bool = False, can_see: bool = True) -> Stub:
+    """一个能收附件的替身。
+
+    后端只用 ``SimpleNamespace``：``_attach_pending_images`` 只读 ``images_ride_on``
+    这一个属性，为它造一个假后端类不值得。
+    """
+    from types import SimpleNamespace
+
+    stub = Stub(
+        streaming=False,
+        backend=SimpleNamespace(images_ride_on="user"),
+        memory=MemoryStore(":memory:"),
+    )
+    stub._backend_settings = SimpleNamespace(is_cloud=cloud)
+    stub._model_can_see = lambda: can_see  # type: ignore[method-assign]
+    return stub
+
+
+def test_dropping_a_file_holds_it_for_the_next_message(qapp: Any, tmp_path: Path) -> None:
+    """拖进来**不立刻发**：多半还要配一句话（"帮我看看这个"）。"""
+    note = tmp_path / "笔记.md"
+    note.write_text("路由器在书房。", encoding="utf-8")
+    stub = _drop_stub(qapp)
+
+    stub._on_attach_files([str(note)])
+
+    assert [item.name for item in stub._pending_attachments] == ["笔记.md"]
+    _kind, role, text, _meta = stub.chat_view.calls[-1]
+    assert role == "system" and "笔记.md" in text and "下一条消息" in text
+
+
+def test_the_cloud_gets_a_warning_before_a_file_goes(qapp: Any, tmp_path: Path) -> None:
+    """用云端模型时**拖之前就说清内容会发出去**——与截图那次同一个姿态。"""
+    note = tmp_path / "笔记.md"
+    note.write_text("x", encoding="utf-8")
+    stub = _drop_stub(qapp, cloud=True)
+
+    stub._on_attach_files([str(note)])
+
+    assert "云端" in stub.chat_view.calls[-1][2]
+
+
+def test_a_dropped_thing_that_is_not_a_file_says_so(qapp: Any, tmp_path: Path) -> None:
+    """拖一个目录进来（很常见）不该静默——也不该炸。"""
+    stub = _drop_stub(qapp)
+
+    stub._on_attach_files([str(tmp_path), str(tmp_path / "没有这个文件.txt")])
+
+    assert stub._pending_attachments == ()
+    assert "读不了" in stub.chat_view.calls[-1][2]
+
+
+def test_an_attached_image_rides_on_the_user_row(qapp: Any, tmp_path: Path) -> None:
+    """附件图贴到**本轮那条 user 行**上——它没有工具结果那一行可挂。"""
+    from axo.session.assemble import assemble
+    from axo.session.budget import TokenBudget
+
+    stub = _drop_stub(qapp)
+    stub._pending_images = ("data:image/png;base64,AAAA",)
+    assembly = assemble([], current="看看这张。", budget=TokenBudget(window=8192))
+
+    attached = stub._attach_pending_images(assembly)
+
+    assert attached.messages[-1].images == ("data:image/png;base64,AAAA",)
+    assert stub._pending_images == (), "贴完要清——它只活在这一轮"
+
+
+def test_an_image_the_model_cannot_see_says_why(qapp: Any) -> None:
+    """看不见图的模型：**说清原因**（同 ``_attach_pending_audio`` 那条纪律）。"""
+    from axo.session.assemble import assemble
+    from axo.session.budget import TokenBudget
+
+    stub = _drop_stub(qapp, can_see=False)
+    stub._pending_images = ("data:image/png;base64,AAAA",)
+    assembly = assemble([], current="看看这张。", budget=TokenBudget(window=8192))
+
+    attached = stub._attach_pending_images(assembly)
+
+    assert attached.messages[-1].images == ()
+    _kind, role, text, _meta = stub.chat_view.calls[-1]
+    assert role == "system" and "没有发出去" in text
+
+
+def test_a_backend_that_hangs_images_elsewhere_says_it_is_us_not_them(qapp: Any) -> None:
+    """本机那条链把图挂在工具结果行上——**那是「我们还没接过去」，不是「对面不支持」**。
+
+    说成后者的代价是用户去反复换模型，而换哪个都一样（那条纪律是上一批用真事换来的）。
+    """
+    from types import SimpleNamespace
+
+    from axo.session.assemble import assemble
+    from axo.session.budget import TokenBudget
+
+    stub = Stub(
+        streaming=False,
+        backend=SimpleNamespace(images_ride_on="tool"),
+        memory=MemoryStore(":memory:"),
+    )
+    stub._backend_settings = SimpleNamespace(is_cloud=False)
+    stub._model_can_see = lambda: True  # type: ignore[method-assign]
+    stub._pending_images = ("data:image/png;base64,AAAA",)
+    assembly = assemble([], current="看看这张。", budget=TokenBudget(window=8192))
+
+    stub._attach_pending_images(assembly)
+
+    text = stub.chat_view.calls[-1][2]
+    assert "还没接过去" in text
+    assert "不支持" not in text
