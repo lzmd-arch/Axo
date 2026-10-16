@@ -144,6 +144,10 @@ _PURE_LAYERS = (
     # 只认后缀，所以"它自己不碰 Qt/网络"是可断言的事实——而它要出现在工具描述里，
     # 那段文本错了是"她以为有一张其实没有"。
     "axo/stickers.py",
+    # 用户拖进来的文件：判类型、抽正文、按上限截断。**纯 stdlib**（PDF 解析器是函数内
+    # import 的可选 extra），所以「它不碰 Qt、不发请求」是可断言的事实——而它决定的是
+    # **什么内容能进上下文**：判错了就是把不该发出去的东西发出去了。
+    "axo/attachments.py",
     "axo/session",
     "axo/ui/color.py",
     "axo/ui/theme.py",
