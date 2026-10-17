@@ -183,6 +183,12 @@ class CallController(QObject):
             self._session.move(CallState.THINKING, time.monotonic())
             self._emit_state()
 
+    def on_playback_started(self) -> None:
+        """第一句开始播了：进入 ``SPEAKING``（即使回复还在生成）。"""
+        if self.live and self._session.state is CallState.THINKING:
+            self._session.move(CallState.SPEAKING, time.monotonic())
+            self._emit_state()
+
     def on_reply_finished(self, *, will_speak: bool) -> None:
         """回复生成完了：接着说话，或者直接回到聆听。"""
         if not self.live:

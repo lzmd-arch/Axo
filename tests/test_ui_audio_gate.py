@@ -69,6 +69,7 @@ class _NullCall:
 def _window(*, cloud: bool, hears: bool, audio: bytes = b"", ride: str | None = "user") -> Any:
     window = SimpleNamespace(
         _call=_NullCall(),
+        _commit_speech_receipt=lambda: None,
         _backend_settings=SimpleNamespace(is_cloud=cloud),
         _tool_settings=SimpleNamespace(audio_in=hears),
         _audio_in=hears,
@@ -164,6 +165,7 @@ def test_a_degraded_endpoint_is_announced_and_the_flag_flipped_off(qapp: Any) ->
     settings = SimpleNamespace(saved=[], save_tools=lambda s: settings.saved.append(s))
     window = SimpleNamespace(
         _call=_NullCall(),
+        _commit_speech_receipt=lambda: None,
         _backend=SimpleNamespace(degraded_audio=True),
         _audio_in=True,
         _tool_settings=SimpleNamespace(audio_in=True),

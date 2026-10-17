@@ -38,7 +38,7 @@ from axo.agent.reminders import Alert, Occurrence, Reminder
 from axo.asr import Transcription
 from axo.llm.base import ChatMessage, ToolCall
 from axo.session.store import Message
-from axo.tts import SpeechResult
+from axo.tts import SpeechReceipt, SpeechResult
 from axo.ui import voice as voice_module
 from axo.ui.main_window import SPEECH_TIMEOUT_MS, MainWindow, display_rows
 from axo.ui.proactive_scheduler import ProactiveScheduler
@@ -306,6 +306,9 @@ class Stub(QObject):
     _on_tts_done = MainWindow._on_tts_done
     _on_speech_played = MainWindow._on_speech_played
     _take_speech_receipt = MainWindow._take_speech_receipt
+    _peek_speech_receipt = MainWindow._peek_speech_receipt
+    _commit_speech_receipt = MainWindow._commit_speech_receipt
+    _format_speech_receipt = MainWindow._format_speech_receipt
     _track = MainWindow._track
     # ── 主动搭话那一档（她先开口的另一条路）──
     _on_proactive_tick = MainWindow._on_proactive_tick
@@ -2247,3 +2250,17 @@ def test_a_generating_turn_refuses_to_start_a_call(qapp: Any) -> None:
 
     assert stub._call.live is False
     assert stub._call.started == 0
+
+
+def test_a_receipt_is_only_consumed_after_the_turn_really_ran(qapp: Any) -> None:
+    """**peek/commit**：组装失败或请求没发出去时，回执不能凭空消失。"""
+    import time as _time
+
+    stub = Stub(streaming=False)
+    stub._speech_receipt = SpeechReceipt(at=_time.time(), text="你好", ok=True)
+
+    first = stub._peek_speech_receipt()
+    assert first and stub._peek_speech_receipt() == first, "peek 不许清"
+
+    stub._commit_speech_receipt()
+    assert stub._peek_speech_receipt() == ""

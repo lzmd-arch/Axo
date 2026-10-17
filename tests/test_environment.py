@@ -169,3 +169,39 @@ def test_she_knows_whether_this_turn_will_be_spoken() -> None:
     assert "会被念出声" in speaking
     assert "只出文字" in typing
     assert "念出声" not in typing
+
+
+# ── 模态真相：转写不是原声 ─────────────────────────────────────────────────
+
+
+def test_a_spoken_turn_says_the_model_only_got_text() -> None:
+    """**模型会以为自己听到了原声**，进而声称听出了语气——它手里只有转写。"""
+    text = build_environment(spoken_input=True, now=datetime(2026, 10, 10, 15, 4))
+
+    assert "语音转写" in text
+    assert "原声没有发给你" in text
+
+
+def test_forwarded_audio_is_stated_as_such() -> None:
+    text = build_environment(
+        spoken_input=True, audio_forwarded=True, now=datetime(2026, 10, 10, 15, 4)
+    )
+
+    assert "附了原声" in text
+    assert "原声没有发给你" not in text
+
+
+def test_call_mode_is_a_fact_in_the_environment() -> None:
+    text = build_environment(call_mode=True, now=datetime(2026, 10, 10, 15, 4))
+
+    assert "免按键通话" in text
+    assert "打断" in text
+
+
+def test_alerts_that_arrived_during_a_call_are_reported_next_turn() -> None:
+    text = build_environment(pending_alerts=("该睡了", "交水费"), now=datetime(2026, 10, 10, 15, 4))
+
+    assert "该睡了" in text and "交水费" in text
+
+    quiet = build_environment(now=datetime(2026, 10, 10, 15, 4))
+    assert "该睡了" not in quiet

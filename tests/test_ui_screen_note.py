@@ -85,6 +85,7 @@ def _window(*, can_see: bool, cloud: bool, text: str, model: str | None = "qwen3
     """那个人造 ``self``：**只有这个方法碰得到的那五样**。"""
     window = SimpleNamespace(
         _call=_NullCall(),
+        _commit_speech_receipt=lambda: None,
         _pending_text=text,
         _backend_settings=SimpleNamespace(is_cloud=cloud),
         model_combo=_Combo(model),
@@ -165,6 +166,7 @@ def _seer(*, cloud: bool, declared: bool, caps: tuple[str, ...] = (), model: str
     """``_model_can_see`` 碰得到的那四样。"""
     return SimpleNamespace(
         _call=_NullCall(),
+        _commit_speech_receipt=lambda: None,
         _backend_settings=SimpleNamespace(is_cloud=cloud),
         _cloud_vision=declared,
         _model_caps={model: caps},
@@ -225,6 +227,7 @@ def test_the_slot_actually_pushes_that_sentence(qapp: Any) -> None:
     """接线：那个槽真的把它推出去了（纯函数对了不等于接上了）。"""
     window = SimpleNamespace(
         _call=_NullCall(),
+        _commit_speech_receipt=lambda: None,
         chat_view=_Recorder(),
         _append=lambda _message: None,
         _remember=lambda *_args, **_kwargs: None,

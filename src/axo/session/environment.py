@@ -28,6 +28,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 
 __all__ = ["build_environment"]
@@ -43,6 +44,10 @@ def build_environment(
     needs_clarification: bool = False,
     speech_receipt: str = "",
     will_speak: bool = False,
+    spoken_input: bool = False,
+    audio_forwarded: bool = False,
+    call_mode: bool = False,
+    pending_alerts: Sequence[str] = (),
 ) -> str:
     """拼 L1 的正文。
 
@@ -58,6 +63,11 @@ def build_environment(
             "不表态"——老调用方与既有测试的输出逐字节不变。
         needs_clarification: 这一轮的路由判不准用户是想闲聊还是要做事
             （:attr:`~axo.agent.router.RoutedTurn.wants_clarification`）。
+        spoken_input: 用户这一句来自语音（转写）。
+        audio_forwarded: 原声也随这一轮发给了模型。**转写与"模型听见原声"是两件事**，
+            用户看到的是转写，模型收到的可能只有文字。
+        call_mode: 这一轮处在免按键通话中。
+        pending_alerts: 通话期间到点、但没由她开口的提醒。
 
     Returns:
         两三行文本。**空输入给空串**（没给模型标识也照样给时间）。
@@ -86,6 +96,21 @@ def build_environment(
         # 一句**事件**，不是一句"我做不到"。也**不列清单**——清单会被原样背成
         # 能力免责声明，两件事的现场都在模块文档里。
         lines.append("这一轮没有工具可用，也不会有任何动作被执行。")
+    if spoken_input and not audio_forwarded:
+        # **说清"你收到的是转写"。** 模型会以为自己听到了原声，进而声称听出了
+        # 语气——而它手里只有一串可能没有标点的文字。
+        lines.append(
+            "用户这一句是**语音转写**来的：你收到的只有文字，原声没有发给你。"
+            "转写可能没有标点，同音字可能写错。"
+        )
+    elif audio_forwarded:
+        lines.append("用户这一句除了转写文字，还附了原声（WAV）；文字是转写，可能有错。")
+    if call_mode:
+        lines.append("现在是免按键通话：用户可能在你说话时打断你，每一句之间没有按按钮这个动作。")
+    if pending_alerts:
+        lines.append(
+            "通话期间到了这些提醒（程序已显示，用户可能还没处理）：" + "；".join(pending_alerts)
+        )
     if will_speak:
         # **这一轮她的回答会出声**——她要知道自己是"说出来"的还是"只给字"的。
         # 不说的话她会在打字那轮问「听到了吗」（2026-10-14 实测：用户打字提问，她

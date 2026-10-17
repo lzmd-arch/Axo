@@ -958,6 +958,12 @@ class ToolPage(QWidget):
         self.audio_box = QCheckBox("当前模型听得见原声（云端问不到这个能力，要你自己声明）", self)
         self.audio_box.setObjectName("cloudAudioBox")
         self.audio_box.toggled.connect(self._on_audio_toggled)
+        outer.addWidget(
+            _hint(
+                "DeepSeek 当前的模型（deepseek-flash / deepseek-v4-pro）**不收音频**："
+                "这一项只在声明支持 input_audio 的端点上生效，其他时候她会只读转写文字。"
+            )
+        )
         outer.addWidget(self.audio_box)
         outer.addWidget(
             _hint(

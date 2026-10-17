@@ -109,6 +109,7 @@ from ..llm.openai_compat import (
     OpenAICompatChatBackend,
     fallback_models,
     pick_cloud_chat_model,
+    supports_audio_input,
 )
 from ..llm.speech import RemoteSpeech
 from ..memory import (
@@ -183,6 +184,7 @@ from .settings_store import (
     ToolSettings,
     wallpaper_file,
 )
+from .speech_pipeline import SpeechPipeline
 from .speech_player import SpeechPlayer, TtsWorker
 from .speech_process import SpeechLauncher
 from .theme import Resolved, Theme, resolve
@@ -777,6 +779,12 @@ class MainWindow(QMainWindow):
         #: **播出回执**（``tts.SpeechReceipt``）：她说的那句出没出声。**下一轮进
         #: 环境槽后即清**——它是一条关于「刚说那句」的信号，不是常驻状态。
         self._speech_receipt: Any = None
+        #: 分句流式语音（通话里用）：一句完整了就合成、就播。
+        self._speech_pipeline: SpeechPipeline | None = None
+        self._pipeline_fed = False
+        self._pipeline_text = ""
+        #: 通话期间到点、但没有由她开口的提醒。下一轮 L1 里告诉她。
+        self._call_pending_alerts: list[str] = []
         #: 正在念/正要念的那句（回执要引用它；合成与播放是两步）。
         self._speaking_text = ""
 
@@ -1242,6 +1250,17 @@ class MainWindow(QMainWindow):
         self.chat_view.call_toggled.connect(self._on_call_toggled)
         self.chat_view.call_interrupted.connect(self._on_call_interrupt)
         self.chat_view.call_muted.connect(self._call.set_muted)
+        # 分句流式：**只在通话里启用**。普通聊天仍走整段合成（那条路径的收条、
+        # 打断与测试都是按整段写的）。
+        self._speech_pipeline = SpeechPipeline(
+            self._speech_backend,
+            self._speech_player,
+            voice=self._voice_settings.voice,
+            parent=self,
+        )
+        self._speech_pipeline.started.connect(self._on_pipeline_started)
+        self._speech_pipeline.finished.connect(self._on_pipeline_finished)
+        self._speech_pipeline.failed.connect(self._on_pipeline_failed)
         # 拖进来的文件走**与打字同一条路**的下游（`_on_attach_files`），只是入口在网页那边。
         self.chat_view.files_dropped.connect(self._on_files_dropped)
         self.chat_view.tool_confirm_decided.connect(self._on_tool_confirm)
@@ -1694,6 +1713,11 @@ class MainWindow(QMainWindow):
         # 突然作为一条"新消息"发出去——而那时用户已经在说别的了。丢弃要连结果一起丢
         # （`discard=True`），只丢结果的话那段文字会从别的路冒出来。
         self._discard_voice()
+        pipeline = getattr(self, "_speech_pipeline", None)
+        if pipeline is not None:
+            pipeline.reset()
+        self._pipeline_fed = False
+        self._pipeline_text = ""
         if self._call.live:
             # 打字/语音提交时，通话的麦克风必须先关：不然她一边回答、一边还在录。
             self._call.on_user_turn_started()
@@ -1794,8 +1818,12 @@ class MainWindow(QMainWindow):
                 model_id=self._backend.model_id,
                 tools_declared=self._turn_uses_tools,
                 needs_clarification=self._turn_needs_clarification,
-                speech_receipt=self._take_speech_receipt(),
+                speech_receipt=self._peek_speech_receipt(),
                 will_speak=bool(spoken and self._voice_settings.enabled),
+                spoken_input=spoken,
+                audio_forwarded=self._audio_forwarded(audio),
+                call_mode=bool(getattr(self, "_call", None) and self._call.live),
+                pending_alerts=tuple(getattr(self, "_call_pending_alerts", ())),
             ),
             embedding=self._embedding,
             session_id=self._session.session_id,
@@ -1806,6 +1834,8 @@ class MainWindow(QMainWindow):
             recall_config=self._recall_config(),
             graph=self._graph,
         )
+        if getattr(self, "_call_pending_alerts", None) is not None:
+            self._call_pending_alerts.clear()
         worker.ready.connect(self._on_assembly_ready)
         worker.failed.connect(self._on_prepare_failed)
         # 终局信号顺手收掉线程的事件循环。**不接这个，线程会一直活着**：``run()``
@@ -1816,6 +1846,18 @@ class MainWindow(QMainWindow):
         worker.failed.connect(thread.quit)
         self._track(thread, worker, what="装配线程", slot="prepare")
         thread.start()
+
+    def _audio_forwarded(self, audio: bytes) -> bool:
+        """这一轮的原声会不会真的发给模型。
+
+        **替身可能没有能力判定那一条**（它只在真正构造后端之后才存在），所以这里
+        按"没有就当不能"处理——宁可少写一句"我听见了原声"，也不要让上下文里出现
+        一句靠不住的能力声明。
+        """
+        if not audio:
+            return False
+        can_hear = getattr(self, "_model_can_hear", None)
+        return bool(can_hear()) if callable(can_hear) else False
 
     @Slot(object, object)
     def _on_assembly_ready(self, assembly: Assembly, ledger: Any) -> None:
@@ -1883,6 +1925,7 @@ class MainWindow(QMainWindow):
         thread = QThread(self)
         worker = ChatWorker(self._backend, request)
         worker.chunk.connect(self.chat_view.push_token)
+        worker.chunk.connect(self._on_pipeline_chunk)
         worker.finished.connect(self._on_reply_finished)
         worker.failed.connect(self._on_reply_failed)
         worker.finished.connect(thread.quit)
@@ -1983,7 +2026,14 @@ class MainWindow(QMainWindow):
         """
         if not self._backend_settings.is_cloud:
             return False
-        return self._audio_in
+        if not self._audio_in:
+            return False
+        # **已知不收音频的模型提前拦住**（2026-10 官方文档：DeepSeek 两个当前模型
+        # 都没有音频输入）。不拦的话每一轮都会先上传一段 1MB 的 WAV、再被拒、再
+        # 纯文字重发——慢一拍，而且用户看不出为什么。
+        combo = getattr(self, "model_combo", None)
+        name = str(combo.currentData() or "") if combo is not None else ""
+        return supports_audio_input(name) if name else True
 
     def _attach_pending_audio(self, assembly: Assembly) -> tuple[Assembly, bool]:
         """把本轮原声贴到那条 user 行上；返回 ``(贴好后的装配, 有没有贴上)``。
@@ -2006,11 +2056,14 @@ class MainWindow(QMainWindow):
                     break
             return replace(assembly, messages=tuple(messages)), True
         if self._audio_in:
-            where = (
-                "本机 Ollama 的接口收不了音频（只有 images 字段，实测）"
-                if not self._backend_settings.is_cloud
-                else "这个端点没声明收原声"
-            )
+            combo = getattr(self, "model_combo", None)
+            name = str(combo.currentData() or "") if combo is not None else ""
+            if not self._backend_settings.is_cloud:
+                where = "本机 Ollama 的接口收不了音频（只有 images 字段，实测）"
+            elif name and not supports_audio_input(name):
+                where = f"当前模型（{name}）不支持音频输入"
+            else:
+                where = "这个端点没声明收原声"
             self.chat_view.append_message(
                 "system",
                 "**原声没有发出去**（这一轮发的是转写文字）。\n\n" + where + "。",
@@ -2166,6 +2219,7 @@ class MainWindow(QMainWindow):
             # 之后没有第二个数可传，而两个数一旦对不上，账本就废了。
         )
         worker.chunk.connect(self.chat_view.push_token)
+        worker.chunk.connect(self._on_pipeline_chunk)
         worker.finished.connect(self._on_reply_finished)
         worker.finished.connect(self._on_tool_round_finished)
         worker.failed.connect(self._on_reply_failed)
@@ -2428,6 +2482,46 @@ class MainWindow(QMainWindow):
     def _on_call_interrupt(self) -> None:
         self._call.interrupt()
 
+    # ── 分句流式语音（通话） ────────────────────────────────────────────────
+
+    @Slot(str)
+    def _on_pipeline_chunk(self, text: str) -> None:
+        """生成中的一段字：说出来的那一轮交给语音管线。"""
+        if (
+            self._call.live
+            and self._spoken_reply
+            and self._voice_settings.enabled
+            and self._speech_pipeline is not None
+            and text
+        ):
+            self._speech_pipeline.feed(text)
+            self._pipeline_fed = True
+
+    @Slot()
+    def _on_pipeline_started(self) -> None:
+        if self._call.live:
+            self._call.on_playback_started()
+
+    @Slot()
+    def _on_pipeline_finished(self) -> None:
+        """整条回复念完了：写**一条**回执，并把麦克风交还给通话。"""
+        self._speech_receipt = SpeechReceipt(at=time.time(), text=self._pipeline_text, ok=True)
+        if self._call.live:
+            self._call.on_playback_finished()
+        if self._speech_pipeline is not None:
+            self._speech_pipeline.reset()
+
+    @Slot(str)
+    def _on_pipeline_failed(self, reason: str) -> None:
+        self.chat_view.append_message("system", f"**没有出声**\n\n{reason}")
+        self._speech_receipt = SpeechReceipt(
+            at=time.time(), text=self._pipeline_text, ok=False, reason=reason
+        )
+        if self._call.live:
+            self._call.on_playback_finished()
+        if self._speech_pipeline is not None:
+            self._speech_pipeline.reset()
+
     def _discard_voice(self) -> None:
         """用户开口说话了 → **这一遍不要了**（在 :meth:`_on_submit` 开头调）。"""
         if self._voice.listening or self._voice_state:
@@ -2468,14 +2562,23 @@ class MainWindow(QMainWindow):
             )
         self._remember(text, interrupted=interrupted, tool_trace=statistics.get("tool_trace", ()))
         self._reset_generation_state()
+        # **回执在这一刻才算送达**：请求真的跑完了（哪怕空回复），下一轮才该
+        # 拿到"她上一句出没出声"。准备失败/请求失败且一个 chunk 都没有时留在槽里。
+        self._commit_speech_receipt()
         will_speak = False
         if self._spoken_reply:
             self._spoken_reply = False
             # 说出来的那一轮：**她开口回**。打断的半句与空回复都不念——念一句空的是
             # 无声，念半句是念一个被打断的念头。
-            if not interrupted and text.strip():
-                will_speak = bool(self._voice_settings.enabled)
-                if will_speak:
+            if not interrupted and text.strip() and self._voice_settings.enabled:
+                will_speak = True
+                if self._call.live and self._speech_pipeline is not None:
+                    # 通话：分句流式。生成期间已经喂过 chunk；这里把尾巴交出去。
+                    if not self._pipeline_fed:
+                        self._speech_pipeline.feed(text)
+                    self._pipeline_text = text
+                    self._speech_pipeline.finish()
+                else:
                     self._speak_reply(text)
         if self._call.live:
             # 她把话说完了：进入 SPEAKING 等播放结束，或者直接回到聆听。
@@ -2649,6 +2752,8 @@ class MainWindow(QMainWindow):
             or self._call.live
             or not self._reminder_settings.speak_on_alert
         ):
+            if self._call.live:
+                self._call_pending_alerts.append(alert.heading())
             self._tell_reminder(alert)
             return
         self._start_reminder_speech(alert)
@@ -2995,6 +3100,20 @@ class MainWindow(QMainWindow):
             self._tell_reminder(payload, note="等了二十秒还没说完")
 
     @Slot()
+    def _peek_speech_receipt(self) -> str:
+        """看一眼回执，**不清**。真正清掉发生在"这一轮真的跑完"那一刻。"""
+        if self._speech_receipt is None:
+            return ""
+        return self._format_speech_receipt(self._speech_receipt)
+
+    def _commit_speech_receipt(self) -> None:
+        """这一轮已经把回执交给模型了（或确定交不出去了）：清掉，保证只用一次。"""
+        self._speech_receipt = None
+
+    def _format_speech_receipt(self, receipt: Any) -> str:
+        at = datetime.fromtimestamp(receipt.at).strftime("%H:%M")
+        return receipt.describe(at=at)
+
     def _take_speech_receipt(self) -> str:
         """拿走播出回执的那行字。**拿走即清**（用完即清）。没有回执返回空串。
 
@@ -3005,8 +3124,7 @@ class MainWindow(QMainWindow):
         receipt, self._speech_receipt = self._speech_receipt, None
         if receipt is None:
             return ""
-        at = datetime.fromtimestamp(receipt.at).strftime("%H:%M")
-        return receipt.describe(at=at)
+        return self._format_speech_receipt(receipt)
 
     def _on_speech_played(self) -> None:
         """她那句**播完了**（``SpeechPlayer.finished``——只有自然播完才发）。
@@ -3014,6 +3132,10 @@ class MainWindow(QMainWindow):
         回执记的是**完成时刻**：「这一句出没出声」是一句关于结束的话，而打断与失败
         各有自己的收条（:meth:`_stop_speech` / :meth:`_on_tts_done`）。
         """
+        pipeline = getattr(self, "_speech_pipeline", None)
+        if pipeline is not None and pipeline.active:
+            # 通话里的分句流式：每句播完都会走到这里，**回执由管线在整条结束时写**。
+            return
         self._speech_receipt = SpeechReceipt(at=time.time(), text=self._speaking_text, ok=True)
         if self._call.live:
             # 她说完了：回到聆听（半双工的另一半）。
@@ -3098,6 +3220,9 @@ class MainWindow(QMainWindow):
             self._speech_receipt = SpeechReceipt(
                 at=time.time(), text=self._speaking_text, ok=False, reason="没播完（被打断了）"
             )
+        pipeline = getattr(self, "_speech_pipeline", None)
+        if pipeline is not None:
+            pipeline.cancel()
         self._speech_player.stop()
         self._tts_live = False
         if self._speak_worker is None:
@@ -3665,6 +3790,8 @@ class MainWindow(QMainWindow):
         self._voice_settings = settings
         self._settings_store.save_voice(settings)
         self._speech_backend = RemoteSpeech(settings.base_url)
+        if self._speech_pipeline is not None:
+            self._speech_pipeline.reconfigure(self._speech_backend, voice=settings.voice)
         self._speech_player.set_volume(settings.volume)
 
     @Slot(object)
@@ -4470,6 +4597,8 @@ class MainWindow(QMainWindow):
         # 从哪儿来的，也不该动（见 ``ui/speech_process.py`` 的模块文档）。
         # **通话先收**：先关麦、再等识别线程；不等的话就是下一次 0xC0000409。
         self._call.shutdown()
+        if self._speech_pipeline is not None:
+            self._speech_pipeline.shutdown()
         if self._speech_launcher is not None:
             self._speech_launcher.stop()
             self._speech_launcher = None
