@@ -176,10 +176,6 @@ class WebBridge(QObject):
     call_muted = Signal(bool)
     """通话静音开关。"""
 
-    call_toggled = Signal()
-    call_interrupted = Signal()
-    call_muted = Signal(bool)
-
     voice_toggled = Signal()
     """麦克风按钮被按了一下。:class:`ChatView` 把它原样转发出去。
 
@@ -269,6 +265,15 @@ class ChatView(QWidget):
 
     voice_toggled = Signal()
     """麦克风按钮被按了一下。**主窗口据此开始/结束录音**（见 ``ui/voice.py``）。"""
+
+    call_toggled = Signal()
+    """通话按钮：开始或挂断。"""
+
+    call_interrupted = Signal()
+    """通话中插话。"""
+
+    call_muted = Signal(bool)
+    """通话静音开关。"""
 
     files_dropped = Signal(list)
     """拖进来一批文件（``file://`` URL）。**与桥那个同名但不是一个对象**——

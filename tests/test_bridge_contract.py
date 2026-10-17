@@ -161,3 +161,38 @@ def test_every_slot_is_written_down_in_the_contract_table() -> None:
     assert slots, "WebBridge 上一个 @Slot 都没找到——装饰器写法变了？"
     missing = [name for name in slots if f"window.bridge.{name}(" not in table]
     assert missing == [], f"契约表里没写这几个槽：{missing}。表在 chat_view.py 的模块文档里。"
+
+
+def test_every_forwarded_signal_is_declared_on_the_view(tree: ast.Module) -> None:
+    """``self._bridge.X.connect(self.Y)`` 里的 Y 必须是 **ChatView 自己**声明的。
+
+    这一条挡的是 2026-10-17 的实际事故：call 的三个信号只声明在 ``WebBridge`` 上，
+    ``ChatView.__init__`` 却去连 ``self.call_toggled``——构造时 AttributeError，应用
+    起不来。前两条测试各自都"名字存在"，因为它们查的是**另一侧**；而这一侧的名字
+    根本不存在。构建自检拦住了它（console 版给了回溯），但那是四分钟级别的反馈。
+    """
+    node = _klass(tree, VIEW)
+    declared = _members(node)
+    forwarded: set[str] = set()
+    for sub in ast.walk(node):
+        if (
+            isinstance(sub, ast.Call)
+            and isinstance(sub.func, ast.Attribute)
+            and sub.func.attr == "connect"
+            and isinstance(sub.func.value, ast.Attribute)
+            and isinstance(sub.func.value.value, ast.Attribute)
+            and sub.func.value.value.attr == "_bridge"
+            and sub.args
+            and isinstance(sub.args[0], ast.Attribute)
+            and isinstance(sub.args[0].value, ast.Name)
+            and sub.args[0].value.id == "self"
+        ):
+            forwarded.add(sub.args[0].attr)
+
+    missing = sorted(forwarded - declared)
+
+    assert forwarded, "没有找到任何桥信号的转发——写法变了？"
+    assert missing == [], (
+        f"ChatView 转发了自己没声明的信号：{missing}。"
+        "桥上有、ChatView 上也得各声明一次（两个 self 是两个对象）。"
+    )
