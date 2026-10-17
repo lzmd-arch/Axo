@@ -230,6 +230,10 @@ class AgentWorker(QObject):
         ``0xC0000409`` 结束（见模块文档）。
         """
         self._stop_requested = True
+        # **正在跑的命令也要停**：它会阻塞到超时，而收尾只等 3 秒。
+        cancel = getattr(self._ctx, "cancel", None)
+        if cancel is not None:
+            cancel.set()
         self._slot.cancel()
         # 两个槽都要叫醒：谁正卡在等，谁就是那个会让收尾等满 3 秒的线程。
         self._capture_slot.cancel()

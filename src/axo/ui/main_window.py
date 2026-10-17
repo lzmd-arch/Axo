@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import base64
 import sys
+import threading
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
@@ -2214,6 +2215,7 @@ class MainWindow(QMainWindow):
     def _start_agent_turn(self, assembly: Assembly, registry: ToolRegistry) -> None:
         """起一轮带工具的请求。"""
         assert self._backend is not None and self._budget is not None
+        self._agent_cancel = threading.Event()
         ctx = ToolContext(
             store=self._memory,
             session_id=self._session.session_id,
@@ -2232,6 +2234,7 @@ class MainWindow(QMainWindow):
             write_root=self._read_roots,
             data_root=data_dir(),
             allow_commands=self._allow_commands,
+            cancel=self._agent_cancel,
             net=self._web_backend(),
         )
         thread = QThread(self)

@@ -28,6 +28,7 @@ import pytest
 from axo.agent.catalog import (
     MAX_REMINDER_CHARS,
     MAX_WRITE_CHARS,
+    EditFileTool,
     FetchUrlTool,
     ForgetMemoryTool,
     GetTimeTool,
@@ -35,12 +36,14 @@ from axo.agent.catalog import (
     LookAtScreenTool,
     ReadFileTool,
     ReadMemoryTool,
+    RunCommandTool,
     SearchFilesTool,
     SearchMemoryTool,
     SendStickerTool,
     SetReminderTool,
     SystemInfoTool,
     WebSearchTool,
+    WriteFileTool,
     WriteMemoryTool,
     default_tools,
 )
@@ -1199,3 +1202,114 @@ def test_web_tools_appear_only_with_a_channel(tmp_path: Path) -> None:
 
     assert "web_search" not in without and "fetch_url" not in without
     assert "web_search" in with_web and "fetch_url" in with_web
+
+
+# ── 写与执行（A2） ──────────────────────────────────────────────────────────
+
+
+def _write_ctx(tmp_path: Path, *, data_root: Path | None = None) -> ToolContext:
+    return ToolContext(
+        store=MemoryStore(":memory:"),
+        read_root=(tmp_path,),
+        write_root=(tmp_path,),
+        data_root=data_root,
+        allow_commands=True,
+        cancel=None,
+    )
+
+
+def test_write_file_writes_and_is_not_replayable(tmp_path: Path) -> None:
+    outcome = WriteFileTool().run({"path": "新.txt", "content": "你好"}, _write_ctx(tmp_path))
+
+    assert outcome.ok and outcome.replayable is False
+    assert (tmp_path / "新.txt").read_text(encoding="utf-8") == "你好"
+
+
+def test_write_file_never_touches_the_data_root(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    data.mkdir()
+
+    outcome = WriteFileTool().run(
+        {"path": "data/mem.db", "content": "x"}, _write_ctx(tmp_path, data_root=data)
+    )
+
+    assert outcome.ok is False and "数据目录" in outcome.content
+    assert not (data / "mem.db").exists()
+
+
+def test_edit_file_replaces_one_match(tmp_path: Path) -> None:
+    target = tmp_path / "a.txt"
+    target.write_text("alpha beta", encoding="utf-8")
+
+    outcome = EditFileTool().run(
+        {"path": "a.txt", "old_text": "beta", "new_text": "gamma"}, _write_ctx(tmp_path)
+    )
+
+    assert outcome.ok
+    assert target.read_text(encoding="utf-8") == "alpha gamma"
+
+
+def test_edit_file_refuses_an_ambiguous_match(tmp_path: Path) -> None:
+    target = tmp_path / "a.txt"
+    target.write_text("x x", encoding="utf-8")
+
+    outcome = EditFileTool().run(
+        {"path": "a.txt", "old_text": "x", "new_text": "y"}, _write_ctx(tmp_path)
+    )
+
+    assert outcome.ok is False and "2 次" in outcome.content
+    assert target.read_text(encoding="utf-8") == "x x"
+
+
+def test_edit_file_refuses_when_the_text_is_absent(tmp_path: Path) -> None:
+    target = tmp_path / "a.txt"
+    target.write_text("abc", encoding="utf-8")
+
+    outcome = EditFileTool().run(
+        {"path": "a.txt", "old_text": "zzz", "new_text": "y"}, _write_ctx(tmp_path)
+    )
+
+    assert outcome.ok is False and "没有找到" in outcome.content
+
+
+def test_run_command_is_refused_when_the_switch_is_off(tmp_path: Path) -> None:
+    context = _write_ctx(tmp_path)
+    context = ToolContext(
+        store=context.store,
+        read_root=context.read_root,
+        write_root=context.write_root,
+        allow_commands=False,
+    )
+
+    outcome = RunCommandTool().run({"command": "echo hi"}, context)
+
+    assert outcome.ok is False and "没有打开" in outcome.content
+
+
+def test_run_command_reports_output_and_exit(tmp_path: Path) -> None:
+    import sys
+
+    command = f'"{sys.executable}" -c "print(123)"'
+    outcome = RunCommandTool().run({"command": command, "timeout_s": 20}, _write_ctx(tmp_path))
+
+    assert outcome.ok and "123" in outcome.content
+    assert "退出码 0" in outcome.content
+
+
+def test_write_tools_need_a_write_root_and_commands_need_the_switch(tmp_path: Path) -> None:
+    without = [tool.spec.name for tool in default_tools(read_root=(tmp_path,))]
+    with_write = [
+        tool.spec.name for tool in default_tools(read_root=(tmp_path,), write_root=(tmp_path,))
+    ]
+    with_commands = [
+        tool.spec.name
+        for tool in default_tools(
+            read_root=(tmp_path,), write_root=(tmp_path,), allow_commands=True
+        )
+    ]
+
+    assert "write_file" not in without and "edit_file" not in without
+    assert "run_command" not in without
+    assert "write_file" in with_write and "edit_file" in with_write
+    assert "run_command" not in with_write
+    assert with_commands[-1] == "run_command"

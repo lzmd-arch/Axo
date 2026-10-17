@@ -63,10 +63,13 @@ from .fs import (
     MAX_LIST_ENTRIES,
     MAX_SEARCH_RESULTS,
     ReadFileError,
+    WriteFileError,
     list_entries,
     read_text,
+    resolve_for_write,
     resolve_within,
     search_text,
+    write_text_atomic,
 )
 from .reminders import (
     REPEAT_DAILY,
@@ -77,6 +80,7 @@ from .reminders import (
     repeat_label,
     weekday_name,
 )
+from .shell import DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S, run_command
 from .tools import (
     Capture,
     Tool,
@@ -88,6 +92,7 @@ from .tools import (
 )
 
 __all__ = [
+    "EditFileTool",
     "FetchUrlTool",
     "ForgetMemoryTool",
     "ListFilesTool",
@@ -96,11 +101,13 @@ __all__ = [
     "GetTimeTool",
     "ReadFileTool",
     "ReadMemoryTool",
+    "RunCommandTool",
     "SearchFilesTool",
     "SearchMemoryTool",
     "SetReminderTool",
     "SystemInfoTool",
     "WebSearchTool",
+    "WriteFileTool",
     "WriteMemoryTool",
     "default_tools",
 ]
@@ -1171,6 +1178,184 @@ class FetchUrlTool:
         return ToolOutcome.success(head + content, replayable=False)
 
 
+def _argument_flag(arguments: dict[str, Any], key: str) -> bool:
+    """取一个布尔参数。**不猜**：字符串、数字都算参数写错。"""
+    value = arguments.get(key)
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise ToolArgumentError(
+            f"{key} 必须是布尔值，收到的是 {type(value).__name__}（{value!r}）。"
+        )
+    return value
+
+
+class WriteFileTool:
+    """写一个文本文件。**过闸门**：它会改变磁盘上的东西。"""
+
+    spec: ClassVar[ToolSpec] = ToolSpec(
+        name="write_file",
+        description=(
+            "把一段文本写进用户允许目录里的文件（覆盖或追加）。用户说「把这个存下来」"
+            "「写到那个文件里」时用它。**会改磁盘上的内容**，所以每次都会先问用户。"
+            "路径要相对于允许目录；要新建子目录时把 create_dirs 设为 true。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "相对于允许目录的文件路径。"},
+                "content": {"type": "string", "description": "要写入的完整文本。"},
+                "mode": {
+                    "type": "string",
+                    "enum": ["overwrite", "append"],
+                    "description": "overwrite（默认）覆盖，append 追加。",
+                },
+                "create_dirs": {"type": "boolean", "description": "父目录不存在时是否新建。"},
+            },
+            "required": ["path", "content"],
+        },
+    )
+    requires_approval: ClassVar[bool] = True
+
+    def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+        raw = argument_str(arguments, "path")
+        content = argument_str(arguments, "content", required=False)
+        mode = argument_str(arguments, "mode", required=False) or "overwrite"
+        create_dirs = _argument_flag(arguments, "create_dirs")
+        if mode not in ("overwrite", "append"):
+            raise ToolArgumentError(f"mode 只能是 overwrite 或 append，收到 {mode!r}。")
+        if not ctx.write_root:
+            return ToolOutcome.failure("写入工具没有配置可写目录。")
+        deny = (ctx.data_root,) if ctx.data_root is not None else ()
+        try:
+            path = resolve_for_write(ctx.write_root, raw, create_dirs=create_dirs, deny=deny)
+            written = write_text_atomic(
+                path, content, append=(mode == "append"), create_dirs=create_dirs
+            )
+        except WriteFileError as exc:
+            return ToolOutcome.failure(str(exc))
+        verb = "追加" if mode == "append" else "写入"
+        return ToolOutcome.success(f"已{verb} {path}（{written} 字节）。", replayable=False)
+
+
+class EditFileTool:
+    """按精确文本替换改一个文件。**过闸门。**"""
+
+    spec: ClassVar[ToolSpec] = ToolSpec(
+        name="edit_file",
+        description=(
+            "在文件里把一段**精确文本**替换成另一段。适合小改动；要整份重写时用"
+            " write_file。old_text 必须在文件里出现且（默认）只出现一次——出现零次或"
+            "多次会拒绝并说明，不会猜你想改哪一处。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "相对于允许目录的文件路径。"},
+                "old_text": {"type": "string", "description": "要替换掉的原文（必须精确匹配）。"},
+                "new_text": {"type": "string", "description": "替换成什么；空串 = 删除。"},
+                "replace_all": {"type": "boolean", "description": "出现多次时是否全部替换。"},
+            },
+            "required": ["path", "old_text"],
+        },
+    )
+    requires_approval: ClassVar[bool] = True
+
+    def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+        raw = argument_str(arguments, "path")
+        old_text = argument_str(arguments, "old_text")
+        new_text = argument_str(arguments, "new_text", required=False)
+        replace_all = _argument_flag(arguments, "replace_all")
+        if not ctx.write_root:
+            return ToolOutcome.failure("写入工具没有配置可写目录。")
+        deny = (ctx.data_root,) if ctx.data_root is not None else ()
+        try:
+            path = resolve_for_write(ctx.write_root, raw, deny=deny)
+        except WriteFileError as exc:
+            return ToolOutcome.failure(str(exc))
+        if not path.is_file():
+            return ToolOutcome.failure(f"文件不存在：{path}")
+        try:
+            original = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            return ToolOutcome.failure(f"读不了 {path.name}：{exc}")
+        count = original.count(old_text)
+        if count == 0:
+            return ToolOutcome.failure(f"在 {path.name} 里没有找到那段原文，文件没有改动。")
+        if count > 1 and not replace_all:
+            return ToolOutcome.failure(
+                f"那段原文在 {path.name} 里出现了 {count} 次。请给更长的上下文让它唯一，"
+                "或者把 replace_all 设为 true 全部替换。"
+            )
+        revised = original.replace(old_text, new_text, -1 if replace_all else 1)
+        try:
+            write_text_atomic(path, revised)
+        except WriteFileError as exc:
+            return ToolOutcome.failure(str(exc))
+        return ToolOutcome.success(
+            f"已修改 {path.name}（替换 {count if replace_all else 1} 处）。", replayable=False
+        )
+
+
+class RunCommandTool:
+    """在本机跑一条命令。**过闸门，且只有设置里打开才登记。**"""
+
+    spec: ClassVar[ToolSpec] = ToolSpec(
+        name="run_command",
+        description=(
+            "在允许目录里执行一条 shell 命令，拿回输出与退出码。查版本、跑测试、"
+            "看目录树这类事用它。**会在这台机器上真正执行**，所以每次都会先问用户；"
+            "超时默认 30 秒（最多 120），用户随时可以停止。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "要执行的命令。"},
+                "cwd": {
+                    "type": "string",
+                    "description": "工作目录（相对路径）；默认第一个允许目录。",
+                },
+                "timeout_s": {"type": "integer", "description": "超时秒数，默认 30，最多 120。"},
+            },
+            "required": ["command"],
+        },
+    )
+    requires_approval: ClassVar[bool] = True
+
+    def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+        command = argument_str(arguments, "command")
+        raw_cwd = argument_str(arguments, "cwd", required=False) or "."
+        timeout_s = argument_int(
+            arguments,
+            "timeout_s",
+            default=DEFAULT_TIMEOUT_S,
+            minimum=1,
+            maximum=MAX_TIMEOUT_S,
+        )
+        assert timeout_s is not None
+        if not ctx.allow_commands:
+            return ToolOutcome.failure("命令执行没有打开（设置 → 工具）。")
+        if not ctx.write_root:
+            return ToolOutcome.failure("命令执行需要至少一个允许目录。")
+        try:
+            cwd = resolve_within(ctx.write_root, raw_cwd)
+        except ReadFileError as exc:
+            return ToolOutcome.failure(str(exc))
+        if not cwd.is_dir():
+            return ToolOutcome.failure(f"{cwd} 不是目录。")
+        result = run_command(command, cwd=cwd, timeout_s=timeout_s, cancel=ctx.cancel)
+        head = f"退出码 {result.exit_code}，用时 {result.duration_ms} ms"
+        if result.timed_out:
+            head = f"**超时**（超过 {timeout_s} 秒），已终止。{head}"
+        elif result.cancelled:
+            head = f"**被用户停止**。{head}"
+        body = result.output.strip() or "（没有输出）"
+        text = f"{head}\n\n{body}"
+        if result.ok:
+            return ToolOutcome.success(text, replayable=False)
+        return ToolOutcome.failure(text, replayable=False)
+
+
 def default_tools(
     *,
     read_root: Sequence[Path] = (),
@@ -1178,6 +1363,8 @@ def default_tools(
     stickers: Sequence[Sticker] = (),
     plugins: Sequence[Tool] = (),
     web: Any | None = None,
+    write_root: Sequence[Path] = (),
+    allow_commands: bool = False,
 ) -> tuple[Tool, ...]:
     """十个工具。
 
@@ -1224,6 +1411,10 @@ def default_tools(
             if web is not None and getattr(web, "available", False)
             else ()
         ),
+        # 写与执行**追加在最后**（提示缓存靠稳定前缀）。三个前提：
+        # 有可写根、用户没关命令执行；``edit_file`` 与 ``write_file`` 同一前提。
+        *((WriteFileTool(), EditFileTool()) if write_root else ()),
+        *((RunCommandTool(),) if write_root and allow_commands else ()),
         # 追加，不插队（见上面那条"顺序就是声明顺序"）。
         *((LookAtScreenTool(),) if vision else ()),
         # 没有表情包就不登记它——同 ``read_file`` 与 ``look_at_screen`` 那条账。
