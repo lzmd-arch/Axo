@@ -236,3 +236,127 @@ def test_an_ordinary_transport_error_does_not_get_the_tls_sentence() -> None:
         _wrap_transport_error(exc, "https://api.deepseek.com/v1", what="对话（x）")
 
     assert "TLS" not in str(caught.value)
+
+
+# ── 限流与 5xx：首个 chunk 前重试 ──────────────────────────────────────────
+
+_RETRY_SSE = (
+    b'data: {"choices":[{"index":0,"delta":{"content":"\xe5\xa5\xbd\xe4\xba\x86"}}]}\r\n\r\n'
+    b"data: [DONE]\r\n\r\n"
+)
+
+
+class _RetryResponse:
+    def __init__(self, status: int, body: bytes = b"", *, headers: dict[str, str] | None = None):
+        self.status_code = status
+        self.is_success = 200 <= status < 300
+        self._body = body
+        self.headers = headers or {}
+        self.text = body.decode("utf-8", "replace")
+
+    def iter_bytes(self) -> Any:
+        yield self._body
+
+    def read(self) -> None:
+        return
+
+    def __enter__(self) -> _RetryResponse:
+        return self
+
+    def __exit__(self, *_args: Any) -> None:
+        return
+
+
+class _RetryClient:
+    def __init__(self, responses: list[_RetryResponse]) -> None:
+        self._responses = list(responses)
+        self.calls = 0
+
+    def __enter__(self) -> _RetryClient:
+        return self
+
+    def __exit__(self, *_args: Any) -> None:
+        return
+
+    def stream(self, *_args: Any, **_kwargs: Any) -> _RetryResponse:
+        self.calls += 1
+        return self._responses.pop(0)
+
+
+def _retry_backend() -> Any:
+    from axo.llm import openai_compat
+
+    instance = object.__new__(openai_compat.OpenAICompatChatBackend)
+    instance.model = "deepseek-flash"
+    instance.base_url = "https://api.deepseek.com/v1"
+    instance.api_key = _KEY
+    instance.context_window = 1_000_000
+    instance.degraded_audio = False
+    return instance
+
+
+def _retry_request() -> Any:
+    from axo.llm.base import ChatMessage, ChatRequest
+
+    return ChatRequest(messages=[ChatMessage(role="user", content="hi")])
+
+
+def test_a_429_is_retried_before_any_chunk_is_yielded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**限流不该直接变成用户看到的一句失败**；等待要可见。"""
+    from axo.llm import openai_compat
+
+    client = _RetryClient(
+        [
+            _RetryResponse(429, b'{"error":"rate limited"}', headers={"retry-after": "0"}),
+            _RetryResponse(200, _RETRY_SSE),
+        ]
+    )
+    monkeypatch.setattr(openai_compat, "_client", lambda *_a, **_k: client)
+    slept: list[float] = []
+    monkeypatch.setattr(openai_compat.time, "sleep", lambda seconds: slept.append(seconds))
+
+    chunks = list(_retry_backend().stream(_retry_request()))
+
+    assert client.calls == 2
+    assert chunks[0].notice and "重试" in chunks[0].notice
+    assert "".join(chunk.text for chunk in chunks) == "好了"
+    assert slept == [0.0], "Retry-After: 0 应当被尊重"
+
+
+def test_a_400_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    from axo.llm import openai_compat
+
+    client = _RetryClient([_RetryResponse(400, b'{"error":"bad request"}')])
+    monkeypatch.setattr(openai_compat, "_client", lambda *_a, **_k: client)
+
+    with pytest.raises(ChatBackendError):
+        list(_retry_backend().stream(_retry_request()))
+
+    assert client.calls == 1
+
+
+def test_retries_stop_at_the_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    from axo.llm import openai_compat
+
+    client = _RetryClient([_RetryResponse(503, b"busy") for _ in range(6)])
+    monkeypatch.setattr(openai_compat, "_client", lambda *_a, **_k: client)
+    monkeypatch.setattr(openai_compat.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(ChatBackendError):
+        list(_retry_backend().stream(_retry_request()))
+
+    assert client.calls == openai_compat._MAX_RETRIES + 1
+
+
+def test_the_default_backoff_grows() -> None:
+    from axo.llm import openai_compat
+
+    error = ChatBackendError("x")
+    error.status_code = 500  # type: ignore[attr-defined]
+    error.retry_after = ""  # type: ignore[attr-defined]
+
+    assert openai_compat._retry_delay(error, 0) == pytest.approx(0.5)
+    assert openai_compat._retry_delay(error, 1) == pytest.approx(1.5)
+    assert openai_compat._retry_delay(error, 2) == pytest.approx(4.5)

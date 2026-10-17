@@ -55,6 +55,9 @@ class ChatWorker(QObject):
     failed = Signal(str)
     """出错，参数是可直接显示给用户的句子。"""
 
+    notice = Signal(str)
+    """一句过程提示（限流、重试）。界面上放状态栏，**不进正文**。"""
+
     def __init__(self, backend: ChatBackend, request: ChatRequest) -> None:
         super().__init__()
         self._backend = backend
@@ -103,6 +106,8 @@ class ChatWorker(QObject):
                         f"但请求里{'带了' if self._request.tools else '没有'}工具声明，"
                         "而 ChatWorker 不处理工具调用。带工具的一轮应当交给 AgentWorker。"
                     )
+                if piece.notice:
+                    self.notice.emit(piece.notice)
                 if piece.text:
                     parts.append(piece.text)
                     self.chunk.emit(piece.text)

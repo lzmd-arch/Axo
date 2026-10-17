@@ -80,12 +80,14 @@ from ..agent.loop import (
     LoopDone,
     LoopLimits,
     MessagesAppended,
+    Notice,
     PlanUpdated,
     RoundStarted,
     TextDelta,
     ToolFinished,
     run_agent_loop,
 )
+from ..agent.runlog import RunLog, redact_arguments
 from ..agent.tools import Capture, ToolContext, ToolRegistry
 from ..agent.trace import build_trace
 from ..llm.base import ChatBackend, ChatBackendError, ChatMessage
@@ -161,6 +163,9 @@ class AgentWorker(QObject):
     一致；``detail`` 已按 :data:`_DETAIL_CHARS` 截断。
     """
 
+    notice = Signal(str)
+    """一句过程提示（限流、重试）。界面上放状态栏，**不进正文**。"""
+
     plan_updated = Signal(object)
     """模型更新了多步计划（``tuple[dict]``）。**只显示，不写逐字稿。**"""
 
@@ -204,6 +209,7 @@ class AgentWorker(QObject):
         tools_ceiling: int,
         limits: LoopLimits = DEFAULT_LIMITS,
         approval_timeout: float = APPROVAL_TIMEOUT_S,
+        run_log: RunLog | None = None,
     ) -> None:
         super().__init__()
         self._backend = backend
@@ -215,6 +221,7 @@ class AgentWorker(QObject):
         self._tools_ceiling = tools_ceiling
         self._limits = limits
         self._approval_timeout = approval_timeout
+        self._run_log = run_log
         self._stop_requested = False
         #: 一个槽服务一次生成（见 :class:`ApprovalSlot`），所以它在 ``__init__`` 里
         #: 建、在这个 worker 的一生里不动。下一轮是一个新 worker。
@@ -320,6 +327,7 @@ class AgentWorker(QObject):
         # 配对与截断的判断就全在 ``agent/trace.py`` 里，一行 Qt 都不用碰。
         executed: list[ToolFinished] = []
         appended: list[MessagesAppended] = []
+        logged_steps: list[dict[str, Any]] = []
 
         try:
             for event in run_agent_loop(
@@ -337,7 +345,9 @@ class AgentWorker(QObject):
                 tools_ceiling=self._tools_ceiling,
                 limits=self._limits,
             ):
-                if isinstance(event, TextDelta):
+                if isinstance(event, Notice):
+                    self.notice.emit(event.text)
+                elif isinstance(event, TextDelta):
                     parts.append(event.text)
                     self.chunk.emit(event.text)
                 elif isinstance(event, RoundStarted):
@@ -348,6 +358,17 @@ class AgentWorker(QObject):
                     self.round_started.emit(event.index, event.tools_offered)
                 elif isinstance(event, ToolFinished):
                     executed.append(event)
+                    logged_steps.append(
+                        {
+                            "call_id": event.call_id,
+                            "tool": event.name,
+                            "ok": event.ok,
+                            "denied": event.denied,
+                            "clipped": event.clipped,
+                            "content_chars": len(event.content),
+                            "arguments": redact_arguments(event.name, event.arguments),
+                        }
+                    )
                     self.tool_finished.emit(
                         {
                             "call_id": event.call_id,
@@ -397,6 +418,20 @@ class AgentWorker(QObject):
 
         statistics["interrupted"] = interrupted
         statistics["tool_trace"] = build_trace(executed, appended)
+        if self._run_log is not None:
+            self._run_log.write(
+                {
+                    "kind": "agent_turn",
+                    "session_id": self._ctx.session_id,
+                    "turn_seq": self._ctx.turn_seq,
+                    "interrupted": interrupted,
+                    "stop_reason": statistics.get("stop_reason", ""),
+                    "stop_detail": statistics.get("stop_detail", ""),
+                    "rounds": statistics.get("rounds", 0),
+                    "tool_calls": statistics.get("tool_calls", 0),
+                    "steps": logged_steps,
+                }
+            )
         # 用 return 而不是 try/except/else 收场：``except`` 那两条已经 return 了，
         # 走到这里一定是成功路径。与 ``ChatWorker`` 一样，**要么 finished、
         # 要么 failed，二选一**——两处都发的表现是界面先复位、再报错。

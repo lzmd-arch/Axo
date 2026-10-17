@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import re
 import ssl
+import time
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -154,6 +155,33 @@ def endpoint_problem(base_url: str) -> str:
     )
 
 
+_MAX_RETRIES = 3
+"""首个 chunk 之前最多重试几次。**已经开始 yield 之后一次都不重试。**"""
+
+
+def _retryable(error: ChatBackendError) -> bool:
+    """限流与 5xx 可重试；4xx 里只有 408/429。"""
+    code = getattr(error, "status_code", None)
+    return code in (408, 429, 500, 502, 503, 504)
+
+
+def _retry_delay(error: ChatBackendError, attempt: int) -> float:
+    """等多久。``Retry-After`` 优先（秒数或 HTTP 日期），否则 0.5/1.5/4 秒。"""
+    raw = str(getattr(error, "retry_after", "") or "").strip()
+    if raw:
+        try:
+            return max(0.0, min(30.0, float(raw)))
+        except ValueError:
+            try:
+                from email.utils import parsedate_to_datetime
+
+                when = parsedate_to_datetime(raw)
+                return max(0.0, min(30.0, when.timestamp() - time.time()))
+            except (TypeError, ValueError, OverflowError):
+                pass
+    return min(30.0, 0.5 * (3**attempt))
+
+
 def _client(base_url: str, api_key: str) -> httpx.Client:
     problem = endpoint_problem(base_url)
     if problem:
@@ -233,7 +261,11 @@ def _raise_for_status(response: httpx.Response, *, what: str, api_key: str = "")
         hint = "（云端服务端报错，通常等一会儿就好——不是本机的问题。）"
     else:
         hint = _STATUS_HINTS.get(response.status_code, "")
-    raise ChatBackendError(f"{what}失败：HTTP {response.status_code} {detail}{hint}")
+    error = ChatBackendError(f"{what}失败：HTTP {response.status_code} {detail}{hint}")
+    # **状态码与 Retry-After 挂在异常上**：重试策略按它们决定；消息是给人读的。
+    error.status_code = response.status_code  # type: ignore[attr-defined]
+    error.retry_after = getattr(response, "headers", {}).get("retry-after", "")  # type: ignore[attr-defined]
+    raise error
 
 
 def _wrap_transport_error(exc: Exception, base_url: str, *, what: str, api_key: str = "") -> None:
@@ -520,6 +552,13 @@ class OpenAICompatChatBackend:
     def stream(self, request: ChatRequest) -> Iterator[ChatChunk]:
         """流式对话。异常在**第一次迭代**时抛出（见 :class:`ChatBackend`）。
 
+        **限流与 5xx 在"还没吐出任何一片"之前最多重试三次**（429/500/502/503/504
+        与连接错误），``Retry-After`` 优先、上限 30 秒。已经开始 yield 之后绝不重试——
+        半截回复再发一遍会变成两段拼在一起的话。
+
+        每次等待都会先产出一条带 ``notice`` 的空片：不静默 sleep，界面要能说
+        "限流，1.5 秒后重试"。
+
         **端点不认音频时自动退化重发一次**（2026-10-13 实测逼出来的）：勾了「听得见
         原声」而端点的 content 变体里没有 ``input_audio``（DeepSeek 的 422 原话：
         ``unknown variant input_audio, expected one of text, image_url, file``），那次
@@ -529,23 +568,62 @@ class OpenAICompatChatBackend:
         payload = self._build_payload(request)
 
         with _client(self.base_url, self.api_key) as client:
-            try:
-                with client.stream("POST", "/chat/completions", json=payload) as response:
-                    _raise_for_status(response, what=f"对话（{self.model}）", api_key=self.api_key)
-                    yield from _iter_sse_chunks(response)
-            except ChatBackendError as exc:
-                if not (_audio_rejected(str(exc)) and _request_has_audio(request)):
+            attempts = 0
+            while True:
+                started = False
+                try:
+                    with client.stream("POST", "/chat/completions", json=payload) as response:
+                        try:
+                            _raise_for_status(
+                                response, what=f"对话（{self.model}）", api_key=self.api_key
+                            )
+                        except ChatBackendError as exc:
+                            if _retryable(exc) and attempts < _MAX_RETRIES:
+                                delay = _retry_delay(exc, attempts)
+                                yield ChatChunk(
+                                    notice=(
+                                        f"限流或服务端繁忙，{delay:.1f} 秒后重试"
+                                        f"（{attempts + 1}/{_MAX_RETRIES}）"
+                                    ),
+                                    retry_after=delay,
+                                )
+                                time.sleep(delay)
+                                attempts += 1
+                                continue
+                            raise
+                        for piece in _iter_sse_chunks(response):
+                            started = True
+                            yield piece
+                    return
+                except ChatBackendError as exc:
+                    if _audio_rejected(str(exc)) and _request_has_audio(request):
+                        self.degraded_audio = True
+                        with client.stream(
+                            "POST",
+                            "/chat/completions",
+                            json=self._build_payload(_strip_audio(request)),
+                        ) as response:
+                            _raise_for_status(
+                                response, what=f"对话（{self.model}）", api_key=self.api_key
+                            )
+                            yield from _iter_sse_chunks(response)
+                        return
                     raise
-                self.degraded_audio = True
-                with client.stream(
-                    "POST", "/chat/completions", json=self._build_payload(_strip_audio(request))
-                ) as response:
-                    _raise_for_status(response, what=f"对话（{self.model}）", api_key=self.api_key)
-                    yield from _iter_sse_chunks(response)
-            except (httpx.RequestError, ssl.SSLError) as exc:
-                _wrap_transport_error(
-                    exc, self.base_url, what=f"对话（{self.model}）", api_key=self.api_key
-                )
+                except (httpx.RequestError, ssl.SSLError) as exc:
+                    if not started and attempts < _MAX_RETRIES:
+                        delay = min(30.0, 0.5 * (3**attempts))
+                        yield ChatChunk(
+                            notice=(
+                                f"连不上端点，{delay:.1f} 秒后重试（{attempts + 1}/{_MAX_RETRIES}）"
+                            ),
+                            retry_after=delay,
+                        )
+                        time.sleep(delay)
+                        attempts += 1
+                        continue
+                    _wrap_transport_error(
+                        exc, self.base_url, what=f"对话（{self.model}）", api_key=self.api_key
+                    )
 
     def _build_payload(self, request: ChatRequest) -> dict[str, Any]:
         """把 :class:`ChatRequest` 映射成 ``/chat/completions`` 的请求体。

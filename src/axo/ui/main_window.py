@@ -90,6 +90,7 @@ from ..agent.router import (
     RoutedTurn,
     route_turn,
 )
+from ..agent.runlog import RunLog
 from ..agent.tools import Capture, ToolContext, ToolRegistry
 from ..asr import Transcription
 from ..attachments import Attachment, attachment_for, body_of
@@ -1931,6 +1932,7 @@ class MainWindow(QMainWindow):
         worker = ChatWorker(self._backend, request)
         worker.chunk.connect(self.chat_view.push_token)
         worker.chunk.connect(self._on_pipeline_chunk)
+        worker.notice.connect(self._on_notice)
         worker.finished.connect(self._on_reply_finished)
         worker.failed.connect(self._on_reply_failed)
         worker.finished.connect(thread.quit)
@@ -2245,6 +2247,7 @@ class MainWindow(QMainWindow):
             ctx=ctx,
             budget=self._budget,
             meter=TokenMeter(),
+            run_log=RunLog(data_dir() / "logs" / "agent"),
             # 工具尾巴的额度**不传**：循环自己算「装配完之后还剩多少」。份额拆掉
             # 之后没有第二个数可传，而两个数一旦对不上，账本就废了。
         )
@@ -2256,6 +2259,7 @@ class MainWindow(QMainWindow):
         worker.round_started.connect(self._on_tool_round_started)
         worker.tool_finished.connect(self._on_tool_finished)
         worker.plan_updated.connect(self._on_plan_updated)
+        worker.notice.connect(self._on_notice)
         worker.approval_needed.connect(self._on_approval_needed)
         # 截图那一次的交接：worker 在另一根线程里等，这里在界面线程截。**它必须由界面
         # 线程做**（``grabWindow`` 是 GUI 线程的事），所以走信号回来、结果直连送回去。
@@ -2704,6 +2708,12 @@ class MainWindow(QMainWindow):
         self.chat_view.set_status(
             f"第 {index + 1} 轮" + ("" if tools_offered else "（收尾，不再调工具）")
         )
+
+    @Slot(str)
+    def _on_notice(self, text: str) -> None:
+        """过程提示（限流/重试）：状态栏一行，不插进正文。"""
+        if text:
+            self.chat_view.set_status(text)
 
     @Slot(object)
     def _on_plan_updated(self, plan: Any) -> None:

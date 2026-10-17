@@ -57,8 +57,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field, replace
+from typing import Any
 
 from ..llm.base import ChatBackend, ChatMessage, ChatRequest, ToolCall
 from ..session.budget import IMAGE_TOKENS, TokenBudget, TokenMeter
@@ -77,6 +79,7 @@ __all__ = [
     "LoopDone",
     "LoopLimits",
     "MessagesAppended",
+    "Notice",
     "PlanUpdated",
     "RoundStarted",
     "TextDelta",
@@ -153,6 +156,8 @@ class ToolFinished:
     detail: str = ""
     denied: bool = False
     clipped: bool = False
+    arguments: Mapping[str, Any] = field(default_factory=dict)
+    """模型给的原始参数。**只给 run log 用**（在那里脱敏），不进逐字稿。"""
     preview: str = ""
     """工具产出的、要**显示给用户**的那张图的路径（空串表示没有）。
 
@@ -203,6 +208,13 @@ class MessagesAppended:
 
 
 @dataclass(frozen=True)
+class Notice:
+    """一句给用户看的过程提示（限流等待、重试）。**不是模型正文。**"""
+
+    text: str
+
+
+@dataclass(frozen=True)
 class PlanUpdated:
     """模型更新了多步计划。**只给界面与 run log，不进逐字稿。**"""
 
@@ -243,6 +255,7 @@ Event = (
     | ApprovalRequested
     | ToolFinished
     | MessagesAppended
+    | Notice
     | PlanUpdated
     | LoopDone
 )
@@ -353,6 +366,20 @@ def _fit_tool_tail(
 # ── 主循环 ─────────────────────────────────────────────────────────────────
 
 
+def _parallel_safe(registry: ToolRegistry, call: ToolCall) -> bool:
+    """这个调用能不能与同一轮里的其它调用并行。
+
+    约定属性而不是协议成员：给 ``Tool`` 加一个成员会要求插件工具也长它。
+    有副作用的工具（写、执行、截图、发消息）不标 ``parallel_safe``。
+    """
+    if getattr(call, "argument_error", ""):
+        return False
+    tool = registry.get(call.name)
+    if tool is None or registry.needs_approval(call.name):
+        return False
+    return bool(getattr(tool, "parallel_safe", False))
+
+
 def _context_full(messages: Sequence[ChatMessage], budget: TokenBudget, meter: TokenMeter) -> bool:
     """这一轮还没发，余量已经不够一次收尾。**用同一个 meter 计价。**"""
     used = meter.messages(messages)
@@ -451,6 +478,8 @@ def run_agent_loop(
         parts: list[str] = []
         calls: tuple[ToolCall, ...] = ()
         for piece in backend.stream(request):
+            if piece.notice:
+                yield Notice(piece.notice)
             if piece.text:
                 parts.append(piece.text)
                 yield TextDelta(piece.text)
@@ -488,10 +517,24 @@ def run_agent_loop(
         storable: list[ChatMessage] = [assistant]
 
         pair_no_replay: list[tuple[str, str]] = []
+        # **只读工具并行**：一轮里全是"不弹卡、纯读"的调用时，四个线程一起跑。
+        # 有副作用的调用永远串行、按序——写文件与跑命令的先后是语义的一部分。
+        parallel = bool(calls) and all(_parallel_safe(registry, call) for call in calls)
+        outcomes: list[Any] = []
+        if parallel:
+            with ThreadPoolExecutor(max_workers=min(4, len(calls))) as pool:
+                outcomes = list(
+                    pool.map(
+                        # **每个调用一份 ctx**：派发口会把 call_id 绑在它上面，
+                        # 并发共用一份会让两个调用的溯源指针互相覆盖。
+                        lambda one: registry.dispatch(one, replace(ctx), approved=True),
+                        calls,
+                    )
+                )
         for index, tool_call in enumerate(calls):
             total_calls += 1
             approved = True
-            if registry.needs_approval(tool_call.name):
+            if not parallel and registry.needs_approval(tool_call.name):
                 # 把工具一起递过去：**没有参数的工具只能自己说清范围**
                 # （``gate.summarize``），而这句话的读者是正要点头的那个人。
                 ask = build_request(tool_call, round_index=index, tool=registry.get(tool_call.name))
@@ -499,7 +542,11 @@ def run_agent_loop(
                 # ``None`` = 超时/取消/通道没了 → 拒绝。fail-closed 的理由见 gate.py。
                 approved = resolve_decision(await_approval(ask)) is ApprovalDecision.GRANT
 
-            outcome = registry.dispatch(tool_call, ctx, approved=approved)
+            outcome = (
+                outcomes[index]
+                if parallel
+                else registry.dispatch(tool_call, ctx, approved=approved)
+            )
             # **"拒绝"以循环自己的判断为准，不看 ``outcome.replayable``。** 那个字段
             # 说的是"这个结果值不值得回放"，而这里要知道的是**为什么**不值得——两种
             # 原因在逐字稿里是两个不同的失效，混成一个就分不出该修哪儿。顺序也刻意：
@@ -533,6 +580,7 @@ def run_agent_loop(
                 detail=outcome.detail,
                 denied=not approved,
                 clipped=clipped,
+                arguments=dict(tool_call.arguments),
                 preview=outcome.preview,
             )
             # **图只活在这一次往返里。** 落逐字稿的那条路只存 ``content``、L5 回放

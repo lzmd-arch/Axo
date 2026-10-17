@@ -241,6 +241,7 @@ class GetTimeTool:
         parameters={"type": "object", "properties": {}},
     )
     requires_approval: ClassVar[bool] = False
+    parallel_safe: ClassVar[bool] = True
 
     def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
         moment = ctx.clock()
@@ -293,6 +294,7 @@ class SearchMemoryTool:
         },
     )
     requires_approval: ClassVar[bool] = False
+    parallel_safe: ClassVar[bool] = True
 
     def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
         query = argument_str(arguments, "query")
@@ -344,6 +346,7 @@ class ReadMemoryTool:
         },
     )
     requires_approval: ClassVar[bool] = False
+    parallel_safe: ClassVar[bool] = True
 
     def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
         memory_id = argument_str(arguments, "memory_id")
@@ -391,6 +394,7 @@ class ReadFileTool:
         },
     )
     requires_approval: ClassVar[bool] = False
+    parallel_safe: ClassVar[bool] = True
 
     def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
         raw = argument_str(arguments, "path")
@@ -1010,6 +1014,7 @@ class ListFilesTool:
         },
     )
     requires_approval: ClassVar[bool] = False
+    parallel_safe: ClassVar[bool] = True
 
     def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
         raw = argument_str(arguments, "path", required=False) or "."
@@ -1055,6 +1060,7 @@ class SearchFilesTool:
         },
     )
     requires_approval: ClassVar[bool] = False
+    parallel_safe: ClassVar[bool] = True
 
     def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
         pattern = argument_str(arguments, "pattern")
@@ -1091,6 +1097,7 @@ class SystemInfoTool:
         parameters={"type": "object", "properties": {}},
     )
     requires_approval: ClassVar[bool] = False
+    parallel_safe: ClassVar[bool] = True
 
     def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
         lines = [
@@ -1128,6 +1135,7 @@ class WebSearchTool:
         },
     )
     requires_approval: ClassVar[bool] = False
+    parallel_safe: ClassVar[bool] = True
 
     def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
         query = argument_str(arguments, "query")
@@ -1166,6 +1174,7 @@ class FetchUrlTool:
         },
     )
     requires_approval: ClassVar[bool] = False
+    parallel_safe: ClassVar[bool] = True
 
     def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
         url = argument_str(arguments, "url")
@@ -1212,6 +1221,7 @@ class UpdatePlanTool:
         },
     )
     requires_approval: ClassVar[bool] = False
+    parallel_safe: ClassVar[bool] = True
 
     def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
         raw = arguments.get("steps")

@@ -48,6 +48,7 @@ from axo.agent.tools import (
 )
 from axo.llm.base import (
     ChatBackendError,
+    ChatChunk,
     ChatMessage,
     ToolCall,
     ToolSpec,
@@ -990,3 +991,44 @@ def test_a_plan_update_rides_as_its_own_event(store: MemoryStore) -> None:
     plans = [event for event in events if isinstance(event, PlanUpdated)]
     assert len(plans) == 1
     assert [one["step"] for one in plans[0].plan] == ["读文件", "改文件"]
+
+
+class SlowReadTool:
+    """一个"读得很慢"的工具，用来证明并行真的并行了。"""
+
+    parallel_safe = True
+    requires_approval = False
+    spec = ToolSpec(name="slow_read", description="读得慢", parameters={"type": "object"})
+
+    def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+        import time as _time
+
+        value = str(arguments.get("value", ""))
+        _time.sleep(0.2)
+        return ToolOutcome.success(f"读到 {value}", replayable=False)
+
+
+def test_read_only_calls_in_one_round_run_in_parallel(store: MemoryStore) -> None:
+    backend = ScriptedBackend(
+        script=[
+            [
+                ChatChunk(
+                    tool_calls=(
+                        call("slow_read", call_id="a", value="1"),
+                        call("slow_read", call_id="b", value="2"),
+                    )
+                )
+            ],
+            [text_chunk("好了", done=True)],
+        ]
+    )
+    import time as _time
+
+    started = _time.monotonic()
+    events, done = drive(backend, ToolRegistry([SlowReadTool()]), store)
+    elapsed = _time.monotonic() - started
+
+    finished = [event for event in events if isinstance(event, ToolFinished)]
+    assert [one.content for one in finished] == ["读到 1", "读到 2"], "顺序必须保持"
+    assert done.tool_calls == 2
+    assert elapsed < 0.35, f"两个 0.2 秒的读串行要 0.4 秒以上，实际 {elapsed:.3f}"
