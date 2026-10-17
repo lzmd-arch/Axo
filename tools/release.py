@@ -28,6 +28,7 @@ import hashlib
 import re
 import subprocess
 import sys
+import time
 import zipfile
 from pathlib import Path
 
@@ -212,6 +213,23 @@ def commit_version(version: str) -> None:
         git("commit", "-m", f"版本 {version}")
 
 
+def push_main(attempts: int = 5) -> None:
+    """**先推 main，再建 Release。**
+
+    ``gh release create`` 在远端没有这个 tag 时，是按**默认分支的远端 HEAD** 建
+    标签的——版本号那次提交还留在本地的话，标签就指向上一个提交，而"发出去的
+    版本"与"仓里那个版本的源码"从此对不上。推送是间歇性的（同
+    ``github-push-network-flakiness`` 那条），所以重试几轮再放弃。
+    """
+    for attempt in range(1, attempts + 1):
+        if subprocess.call(["git", "push", "origin", "main"], cwd=str(ROOT)) == 0:
+            print("main 已推送。")
+            return
+        print(f"推送失败（第 {attempt} 次），重试…", flush=True)
+        time.sleep(3)
+    raise SystemExit("推送 main 失败。**别继续发版**——标签会指向旧的提交。")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", action="store_true", help="只做预检，不写任何东西")
@@ -240,6 +258,7 @@ def main(argv: list[str] | None = None) -> int:
 
     bump(args.version)
     commit_version(args.version)
+    push_main()
     run([sys.executable, "tools/build_exe.py", "--release"])
     # 提交与构建之后再看工作树：构建会往 dist/ 写东西，那不是"没提交"。
     zip_path = args.zip_file or DIST / f"axo-{args.version}-win64.zip"
