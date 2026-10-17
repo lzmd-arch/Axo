@@ -1011,3 +1011,59 @@ Live2D 接入（P6b）时把 `setSpeaking` 接在同一个出口上，**不许�
 
 所以 `/v1/audio/speech` 是**我们 sidecar 的对外契约**：引擎换掉时适配关在组件那一侧
 （`adapters/*.py`），Axo 一行不改；任何现成的 OpenAI 形状服务零改动接上。
+
+## 通话模式与扩展工具面（2026-10-17）：**已实现**
+
+### 通话：免按键、停顿断句、半双工
+
+- 状态机在 `axo/call.py`（纯层）：`OFF / LISTENING / CAPTURING / THINKING / SPEAKING /
+  ERROR`，迁移表显式列出；非法迁移返回假、不改状态。看门狗只盖 `CAPTURING` 与
+  `THINKING`（长回复不该被当成卡死），空闲挂断默认 90 秒。
+- **半双工**：`THINKING/SPEAKING` 关麦。Qt 没有回声消除，她说话时开麦会把她自己的
+  声音录成用户输入。插话 = 点「插话」/空格：先停播，再开麦。
+- 识别线程整场只起一次（`SegmentWorker(one_shot=False)`），VAD 在 `axo/vad.py`：
+  自适应噪声底 + 迟滞 + 600 ms 静音判句末；空段静默丢弃。
+- 30 秒不再是通话的总时长边界，只是**单句**上限（到点先交这一段）。
+- 提醒：托盘气泡照发，但不由她开口；到点的提醒下一轮写进 L1（`pending_alerts`）。
+  主动搭话在通话中不启动。
+
+### 分句流式语音
+
+助手回复在通话里按句合成、按句播（`ui/speech_pipeline.py`）：首句完整就开始出声，
+播放第 N 句时第 N+1 句已在合成。**一条回复只产生一条播出回执**；插话/挂断取消管线，
+迟到结果由序号挡掉。
+
+### 模态真相
+
+模型收到的永远是**转写文字**（DeepSeek 当前模型不收音频；官方 harness 也只传文字）。
+L1 会在语音回合写一句事实："你收到的只有文字，原声没有发给你；转写可能没标点，
+同音字可能写错。" 勾了「听得见原声」且端点确实支持 `input_audio` 时才另写一句。
+`_model_can_hear()` 对已知不收音频的 `deepseek-*` 提前返回假，不再先传 1MB 再退化。
+
+### 工具面（在原有的八个 + 条件登记之上）
+
+- 只读：`list_files`、`search_files`、`system_info`、`update_plan`；
+- 联网读：`web_search`、`fetch_url`（DeepSeek 原生 Search/Fetch，默认不登记）；
+- 有副作用：`write_file`、`edit_file`、`run_command`、`open_external`、
+  `clipboard_read`、`clipboard_write`、`show_notification`——全部 `requires_approval`。
+- 写与执行限**同一组可读目录**；数据根永远拒绝。命令环境变量白名单，默认 30 秒、
+  硬顶 120 秒，取消/超时杀整棵进程树。
+- 工具结果仍受两层上限：工具自己按字符裁（并明说），循环再按 token 裁。
+
+### 循环收敛
+
+`LoopLimits` → 硬熔断 100 轮（只防死循环）、连续无新指纹即收尾、按上下文余量收尾。
+`stop_reason` 有 `final / fuse / context_full / no_progress`。参数不是合法 JSON 时
+回灌一条失败结果让模型重发，而不是整轮死掉。只读工具在同一轮里并行（每个调用一份
+ctx，结果仍按原序），有副作用的永远串行。`tool_choice` 透传给声明支持的后端；收尾轮
+用 `none` 保留声明（保提示缓存）。
+
+### 执行轨迹
+
+`<数据目录>/logs/agent/YYYY-MM-DD.jsonl`：每步工具、脱敏参数（正文只留前 200 字 +
+sha1、URL 去掉查询串）、轮次与 `stop_reason`。写盘失败只吞掉，不影响回答。
+
+### 边界
+
+不做鼠标/键盘注入、窗口控制、进程枚举——它们把"一次动作"变成"一次不可审计的会话
+授权"。插件仍与主程序同进程，上述沙箱对插件代码不生效（见 README「插件」）。
