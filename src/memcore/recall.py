@@ -557,14 +557,23 @@ def _scan(
         fused = _fuse(fired, weights)
 
         weight = item.decayed_weight(at, half_life_days=item.tier.half_life_days)
-        score = fused * (_WEIGHT_FLOOR + (1.0 - _WEIGHT_FLOOR) * weight)
+        # ``ranking`` 是**排序用的那个分**：融合分再按可信度/新旧打折。
+        ranking = fused * (_WEIGHT_FLOOR + (1.0 - _WEIGHT_FLOOR) * weight)
 
-        if score < settings.min_score:
+        # **去留看融合分，不看打了折的那个。** 权重是「这条有多可信、多新」，它该
+        # 影响**排序**，不该影响**要不要进上下文**——一条两小时前的 working 记忆
+        # 权重会衰减到 0（WORKING 的半衰期是 0.08 天），而它可能正是唯一答得上来的
+        # 一条。用 ``ranking`` 判阈值时它要再打六折才够得着 ``min_score``，于是
+        # 「完整记忆」在旧记忆上名不副实。
+        #
+        # 阈值本身的量纲因此变了（严格程度略降）：``min_score`` 是按打折后的分标定
+        # 的，现在直接比融合分。这一点由金标准门槛盯着——它跌了会红。
+        if fused < settings.min_score:
             rejected.append(
                 _reject(
                     item,
                     RejectReason.BELOW_THRESHOLD,
-                    score,
+                    fused,
                     detail=_score_detail(lexical, semantic, graph, temporal=temporal),
                 )
             )
@@ -581,7 +590,7 @@ def _scan(
                     semantic=semantic or 0.0,
                     semantic_raw=0.0 if pair is None else pair[0],
                     graph=graph or 0.0,
-                    fused=score,
+                    fused=ranking,
                 ),
                 sdr=item.lex_sdr,
             )
