@@ -186,6 +186,8 @@ class ToolOutcome:
     detail: str = ""
     replayable: bool = True
     images: tuple[str, ...] = ()
+    plan: tuple[Any, ...] = ()
+    """``update_plan`` 交出的步骤清单。**只进界面与 run log，不进逐字稿。**"""
     preview: str = ""
     """给**用户**看一眼的那张图的本地路径（绝对路径）。空串表示没有。
 
@@ -206,6 +208,7 @@ class ToolOutcome:
         replayable: bool = True,
         images: tuple[str, ...] = (),
         preview: str = "",
+        plan: tuple[Any, ...] = (),
     ) -> ToolOutcome:
         return cls(
             ok=True,
@@ -214,6 +217,7 @@ class ToolOutcome:
             replayable=replayable,
             images=images,
             preview=preview,
+            plan=plan,
         )
 
     @classmethod
@@ -330,6 +334,15 @@ class ToolRegistry:
         从参数里找它是错的（模型不会传它），让每个工具从别处取也会各有各的取法——
         而取错的症状是"记忆里的溯源指向另一次调用"，回看时看不出来。
         """
+        if getattr(call, "argument_error", ""):
+            # **参数拼不出来不是终局。** 直接抛会让整轮死掉，而模型完全有机会
+            # 重发一次；这里仍然按协议返回一条 tool 结果（配对不能断）。
+            return ToolOutcome.failure(
+                f"这次调用 {call.name} 的参数不是合法 JSON 对象（{call.argument_error}）。"
+                "请重新发出这次调用，参数要是一个 JSON 对象。",
+                detail=call.argument_error,
+            )
+
         tool = self.get(call.name)
         if tool is None:
             return ToolOutcome.failure(

@@ -80,6 +80,7 @@ from ..agent.loop import (
     LoopDone,
     LoopLimits,
     MessagesAppended,
+    PlanUpdated,
     RoundStarted,
     TextDelta,
     ToolFinished,
@@ -100,6 +101,8 @@ _EMPTY_STATISTICS: dict[str, Any] = {
     "tool_calls": 0,
     "wrapped_up": False,
     "unexecuted": (),
+    "stop_reason": "",
+    "stop_detail": "",
     "tool_trace": (),
 }
 """``finished`` 的第二个参数缺省长什么样。
@@ -157,6 +160,9 @@ class AgentWorker(QObject):
     ``detail``。前五项的语义与 :class:`~axo.agent.loop.ToolFinished`
     一致；``detail`` 已按 :data:`_DETAIL_CHARS` 截断。
     """
+
+    plan_updated = Signal(object)
+    """模型更新了多步计划（``tuple[dict]``）。**只显示，不写逐字稿。**"""
 
     capture_requested = Signal(str)
     """要一张屏幕截图：参数是这次交接的身份（``CaptureSlot`` 的 token）。
@@ -354,6 +360,8 @@ class AgentWorker(QObject):
                             "preview": event.preview,
                         }
                     )
+                elif isinstance(event, PlanUpdated):
+                    self.plan_updated.emit(event.plan)
                 elif isinstance(event, MessagesAppended):
                     appended.append(event)
                     self.messages_appended.emit(event.rows, event.no_replay)
@@ -365,6 +373,8 @@ class AgentWorker(QObject):
                         tool_calls=event.tool_calls,
                         wrapped_up=event.wrapped_up,
                         unexecuted=event.unexecuted,
+                        stop_reason=event.stop_reason,
+                        stop_detail=event.detail,
                     )
 
                 # 停止的判据在**处理完之后**，而且**跳过 ``ToolFinished``**（理由见

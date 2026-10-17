@@ -209,6 +209,7 @@ def test_eight_tools_are_registered_without_a_read_root() -> None:
         "list_reminders",
         "cancel_reminder",
         "system_info",
+        "update_plan",
     ]
 
 
@@ -227,6 +228,7 @@ def test_read_file_appears_once_a_root_is_configured(tmp_path: Path) -> None:
         "list_files",
         "search_files",
         "system_info",
+        "update_plan",
     ]
 
 

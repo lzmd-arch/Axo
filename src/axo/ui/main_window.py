@@ -2255,6 +2255,7 @@ class MainWindow(QMainWindow):
         worker.failed.connect(self._on_reply_failed)
         worker.round_started.connect(self._on_tool_round_started)
         worker.tool_finished.connect(self._on_tool_finished)
+        worker.plan_updated.connect(self._on_plan_updated)
         worker.approval_needed.connect(self._on_approval_needed)
         # 截图那一次的交接：worker 在另一根线程里等，这里在界面线程截。**它必须由界面
         # 线程做**（``grabWindow`` 是 GUI 线程的事），所以走信号回来、结果直连送回去。
@@ -2703,6 +2704,13 @@ class MainWindow(QMainWindow):
         self.chat_view.set_status(
             f"第 {index + 1} 轮" + ("" if tools_offered else "（收尾，不再调工具）")
         )
+
+    @Slot(object)
+    def _on_plan_updated(self, plan: Any) -> None:
+        """多步计划：状态栏一行。**不写逐字稿**（计划会反复变，落成消息会污染回看）。"""
+        steps = [str(one.get("step", "")) for one in plan if isinstance(one, dict)]
+        if steps:
+            self.chat_view.set_status("计划：" + " → ".join(steps[:4]))
 
     @Slot(dict)
     def _on_tool_finished(self, payload: dict) -> None:

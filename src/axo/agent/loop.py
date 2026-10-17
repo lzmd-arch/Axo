@@ -55,6 +55,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 
@@ -75,6 +77,7 @@ __all__ = [
     "LoopDone",
     "LoopLimits",
     "MessagesAppended",
+    "PlanUpdated",
     "RoundStarted",
     "TextDelta",
     "ToolFinished",
@@ -84,19 +87,20 @@ __all__ = [
 
 @dataclass(frozen=True)
 class LoopLimits:
-    """循环的边界。
+    """循环的边界。**按上下文余量与"有没有进展"收敛，不设人为的小上限。**
 
     Attributes:
-        max_rounds: 最多几轮工具调用。到顶之后**再发一次收尾请求**
-            （``tools=()``，请模型基于已有信息作答）——不给这次收尾，用户可能在
-            工具调完之后什么都拿不到。
-
-            4 这个数是 **Step 0 探针量出来的**：实测收敛所需的工具轮次分布最大为 2
-            （``tools/smoke_agent.py`` 的输出留档）。取 4 是给"多一步"留余量，
-            不是拍的——但这个余量对不对，要在真实用法上再看一次。
+        fuse_rounds: 硬熔断。100 轮是一个"肯定是死循环了"的数，不是工作预算——
+            DeepSeek 的 1M 上下文下，大多数任务根本碰不到它。
+        no_progress_rounds: 连续这么多轮没有产生**新的**（工具+参数+结果）指纹，
+            就收尾。模型在原地打转时，再给它十轮也不会更好。
+        max_rounds: **旧字段，兼容用。** 给了就按它收尾（测试与老调用方钉具体形状）；
+            ``None`` 时用 :attr:`fuse_rounds`。
     """
 
-    max_rounds: int = 4
+    fuse_rounds: int = 100
+    no_progress_rounds: int = 2
+    max_rounds: int | None = None
 
 
 DEFAULT_LIMITS = LoopLimits()
@@ -199,6 +203,13 @@ class MessagesAppended:
 
 
 @dataclass(frozen=True)
+class PlanUpdated:
+    """模型更新了多步计划。**只给界面与 run log，不进逐字稿。**"""
+
+    plan: tuple[dict[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
 class LoopDone:
     """循环结束。
 
@@ -221,9 +232,20 @@ class LoopDone:
     tool_calls: int
     wrapped_up: bool
     unexecuted: tuple[str, ...] = ()
+    stop_reason: str = "final"
+    """``final`` / ``fuse`` / ``context_full`` / ``no_progress``。"""
+    detail: str = ""
 
 
-Event = RoundStarted | TextDelta | ApprovalRequested | ToolFinished | MessagesAppended | LoopDone
+Event = (
+    RoundStarted
+    | TextDelta
+    | ApprovalRequested
+    | ToolFinished
+    | MessagesAppended
+    | PlanUpdated
+    | LoopDone
+)
 
 
 # ── 截断与尾巴管理 ─────────────────────────────────────────────────────────
@@ -331,6 +353,19 @@ def _fit_tool_tail(
 # ── 主循环 ─────────────────────────────────────────────────────────────────
 
 
+def _context_full(messages: Sequence[ChatMessage], budget: TokenBudget, meter: TokenMeter) -> bool:
+    """这一轮还没发，余量已经不够一次收尾。**用同一个 meter 计价。**"""
+    used = meter.messages(messages)
+    return used + budget.reserve_output >= budget.usable
+
+
+def _fingerprint(call: ToolCall, result: str) -> str:
+    """一次调用的指纹：工具名 + 规范化参数 + 结果的摘要。"""
+    payload = json.dumps(call.arguments, ensure_ascii=False, sort_keys=True, default=str)
+    digest = hashlib.sha1(result.encode("utf-8")).hexdigest()
+    return f"{call.name}|{payload}|{digest}"
+
+
 def run_agent_loop(
     *,
     backend: ChatBackend,
@@ -378,10 +413,22 @@ def run_agent_loop(
     final_text = ""
     unexecuted: tuple[str, ...] = ()
     wrapped_up = False
+    fuse = limits.fuse_rounds if limits.max_rounds is None else limits.max_rounds
+    stop_reason = ""
+    stop_detail = ""
+    seen: set[str] = set()
+    stagnant_rounds = 0
+    supports_choice = bool(getattr(backend, "supports_tool_choice", False))
 
     while True:
-        wrap = rounds >= limits.max_rounds
-        offered = () if wrap else registry.specs()
+        wrap = bool(stop_reason) or rounds >= fuse
+        if not wrap and _context_full([*messages, *tail], budget, meter):
+            wrap, stop_reason, stop_detail = True, "context_full", "上下文余量不够再走一轮了"
+        if rounds >= fuse and not stop_reason:
+            stop_reason, stop_detail = "fuse", f"到了硬熔断（{fuse} 轮）"
+        # 后端声明支持 ``tool_choice`` 时，收尾轮**保留工具声明**却禁止调用：
+        # 提示缓存不会因为"工具突然消失"而失效。不支持的端点沿用旧路径（去掉 tools）。
+        offered = registry.specs() if (not wrap or supports_choice) else ()
         yield RoundStarted(index=rounds, tools_offered=len(offered), wrapping_up=wrap)
 
         # **重排一遍而不是维护一个 working 列表**：驱逐会把 tail 里的整段删掉，
@@ -397,6 +444,7 @@ def run_agent_loop(
         request = ChatRequest(
             messages=tuple(turn),
             tools=offered,
+            tool_choice=("none" if wrap and supports_choice else None),
             max_tokens=budget.reserve_output or None,
         )
 
@@ -428,6 +476,7 @@ def run_agent_loop(
             unexecuted = tuple(call.name for call in calls)
             final_text = text
             wrapped_up = True
+            stop_reason = stop_reason or "fuse"
             break
 
         assistant = ChatMessage(role="assistant", content=text, tool_calls=calls)
@@ -494,6 +543,8 @@ def run_agent_loop(
             # 两个协议的差别）。``getattr`` 而不是进协议：``ChatBackend`` 是
             # ``@runtime_checkable`` 的，往里加成员等于要求每个后端都长这个属性，
             # 而测试里那一堆假后端根本不需要它。
+            if outcome.plan:
+                yield PlanUpdated(plan=tuple(dict(one) for one in outcome.plan))
             if images and getattr(backend, "images_ride_on", "tool") == "user":
                 row = ChatMessage(role="tool", content=fed, tool_call_id=tool_call.id)
                 tail.append(row)
@@ -515,10 +566,26 @@ def run_agent_loop(
         _fit_tool_tail(tail, pairs, ceiling=tools_ceiling, meter=meter)
         rounds += 1
 
+        # **无进展检测**：同一工具、同一参数、同一结果，再来一次不会有新信息。
+        # 指纹在结果之后算，所以"参数一样但世界变了"不算重复。
+        fresh = False
+        tool_rows = [row for row in storable if row.role == "tool"]
+        for call, row in zip(calls, tool_rows, strict=False):
+            fingerprint = _fingerprint(call, row.content)
+            if fingerprint not in seen:
+                seen.add(fingerprint)
+                fresh = True
+        stagnant_rounds = 0 if fresh else stagnant_rounds + 1
+        if stagnant_rounds >= limits.no_progress_rounds and not stop_reason:
+            stop_reason = "no_progress"
+            stop_detail = f"连续 {stagnant_rounds} 轮没有新信息"
+
     yield LoopDone(
         final_text=final_text,
         rounds=rounds,
         tool_calls=total_calls,
         wrapped_up=wrapped_up,
         unexecuted=unexecuted,
+        stop_reason=stop_reason or "final",
+        detail=stop_detail,
     )

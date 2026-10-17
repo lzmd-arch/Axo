@@ -106,6 +106,7 @@ __all__ = [
     "SearchMemoryTool",
     "SetReminderTool",
     "SystemInfoTool",
+    "UpdatePlanTool",
     "WebSearchTool",
     "WriteFileTool",
     "WriteMemoryTool",
@@ -1178,6 +1179,63 @@ class FetchUrlTool:
         return ToolOutcome.success(head + content, replayable=False)
 
 
+class UpdatePlanTool:
+    """把多步任务的计划摆出来。**不改任何外部状态。**"""
+
+    spec: ClassVar[ToolSpec] = ToolSpec(
+        name="update_plan",
+        description=(
+            "当一件事需要三步以上时，先用它列出步骤；之后每完成一步再更新一次状态。"
+            "步骤状态只有 pending / in_progress / completed。用户会看到这份清单，"
+            "它不会被写进长期记忆。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "step": {"type": "string", "description": "这一步做什么。"},
+                            "status": {
+                                "type": "string",
+                                "enum": ["pending", "in_progress", "completed"],
+                            },
+                        },
+                        "required": ["step", "status"],
+                    },
+                    "description": "按顺序排列的步骤，最多 12 步。",
+                },
+            },
+            "required": ["steps"],
+        },
+    )
+    requires_approval: ClassVar[bool] = False
+
+    def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+        raw = arguments.get("steps")
+        if not isinstance(raw, list) or not raw:
+            raise ToolArgumentError("steps 必须是一个非空数组。")
+        if len(raw) > 12:
+            raise ToolArgumentError("steps 最多 12 步，请合并。")
+        steps: list[dict[str, str]] = []
+        for index, entry in enumerate(raw, start=1):
+            if not isinstance(entry, dict):
+                raise ToolArgumentError(f"第 {index} 步不是对象。")
+            step = str(entry.get("step") or "").strip()
+            status = str(entry.get("status") or "").strip()
+            if not step or status not in ("pending", "in_progress", "completed"):
+                raise ToolArgumentError(f"第 {index} 步缺少 step，或 status 不在允许值里。")
+            steps.append({"step": step[:80], "status": status})
+        lines = [f"{index}. [{one['status']}] {one['step']}" for index, one in enumerate(steps, 1)]
+        return ToolOutcome.success(
+            "计划已更新：\n" + "\n".join(lines),
+            replayable=False,
+            plan=tuple(steps),
+        )
+
+
 def _argument_flag(arguments: dict[str, Any], key: str) -> bool:
     """取一个布尔参数。**不猜**：字符串、数字都算参数写错。"""
     value = arguments.get(key)
@@ -1404,6 +1462,7 @@ def default_tools(
         # 登记它们只会让模型去试一次然后被拒。
         *((ListFilesTool(), SearchFilesTool()) if read_root else ()),
         SystemInfoTool(),
+        UpdatePlanTool(),
         # 联网读**默认不登记**（出网行为）；调用方只在用户打开开关且配了 key 时传
         # ``web``。两个工具与其它只读工具一样不过闸门——是否联网由总开关决定。
         *(

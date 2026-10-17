@@ -26,6 +26,7 @@ from typing import Any
 import pytest
 from fakes import ScriptedBackend, text_chunk, tool_chunk
 
+from axo.agent.catalog import UpdatePlanTool
 from axo.agent.gate import ApprovalDecision, ApprovalRequest, summarize
 from axo.agent.loop import (
     DEFAULT_LIMITS,
@@ -33,6 +34,7 @@ from axo.agent.loop import (
     LoopDone,
     LoopLimits,
     MessagesAppended,
+    PlanUpdated,
     RoundStarted,
     TextDelta,
     ToolFinished,
@@ -913,3 +915,78 @@ def test_output_limits_ride_on_the_backend_quirk(store: MemoryStore) -> None:
         assert backend.requests[0].max_tokens == expected, (
             f"{label}: {backend.requests[0].max_tokens}"
         )
+
+
+# ── A3：参数错误回灌、无进展、tool_choice、计划 ────────────────────────────
+
+
+def test_an_unparseable_argument_is_fed_back_not_fatal(store: MemoryStore) -> None:
+    """参数拼不成 JSON 对象时，模型要有机会重发——整轮不该死。"""
+    bad = ToolCall(id="c1", name="spy", arguments={}, argument_error="Expecting value")
+    backend = ScriptedBackend(script=[[tool_chunk(bad)], [text_chunk("好了", done=True)]])
+
+    events, done = drive(backend, ToolRegistry([SpyTool()]), store)
+
+    finished = [event for event in events if isinstance(event, ToolFinished)]
+    assert len(finished) == 1
+    assert finished[0].ok is False
+    assert "JSON" in finished[0].content
+    assert done.rounds == 1
+
+
+def test_repeating_the_same_call_with_the_same_result_stops(store: MemoryStore) -> None:
+    """**原地打转**：同一工具、同一参数、同一结果再来一次不会有新信息。"""
+    backend = ScriptedBackend(
+        script=[
+            [tool_chunk(call("spy", call_id="c1"))],
+            [tool_chunk(call("spy", call_id="c2"))],
+            [text_chunk("就这样吧", done=True)],
+        ]
+    )
+
+    events, done = drive(
+        backend,
+        ToolRegistry([SpyTool()]),
+        store,
+        limits=LoopLimits(no_progress_rounds=1),
+    )
+
+    assert done.stop_reason == "no_progress"
+    assert "没有新信息" in done.detail
+    assert backend.requests[-1].tools == (), "收尾轮不该再给工具"
+
+
+def test_a_backend_that_supports_tool_choice_keeps_the_declarations(
+    store: MemoryStore,
+) -> None:
+    """收尾轮用 ``tool_choice=none`` 禁止调用，但**保留工具声明**（保提示缓存）。"""
+    backend = ScriptedBackend(script=[[tool_chunk(call("spy"))], [text_chunk("好了", done=True)]])
+    backend.supports_tool_choice = True  # type: ignore[attr-defined]
+
+    _events, done = drive(
+        backend, ToolRegistry([SpyTool()]), store, limits=LoopLimits(max_rounds=1)
+    )
+
+    assert done.wrapped_up is True
+    assert backend.requests[-1].tool_choice == "none"
+    assert backend.requests[-1].tools, "支持 tool_choice 时不该把工具声明整个拿掉"
+
+
+def test_a_plan_update_rides_as_its_own_event(store: MemoryStore) -> None:
+    plan_call = ToolCall(
+        id="p1",
+        name="update_plan",
+        arguments={
+            "steps": [
+                {"step": "读文件", "status": "in_progress"},
+                {"step": "改文件", "status": "pending"},
+            ]
+        },
+    )
+    backend = ScriptedBackend(script=[[tool_chunk(plan_call)], [text_chunk("好", done=True)]])
+
+    events, _done = drive(backend, ToolRegistry([UpdatePlanTool()]), store)
+
+    plans = [event for event in events if isinstance(event, PlanUpdated)]
+    assert len(plans) == 1
+    assert [one["step"] for one in plans[0].plan] == ["读文件", "改文件"]
