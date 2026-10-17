@@ -382,8 +382,9 @@ def test_a_failed_cloud_list_still_offers_something_to_pick(
     made[0].failed.emit("连不上 https://api.deepseek.com/v1（超时）")
 
     assert [data for _label, data in window.model_combo.items] == [
+        "deepseek-flash",
+        "deepseek-v4-pro",
         "deepseek-chat",
-        "deepseek-reasoner",
     ]
     assert window.down == ["连不上 https://api.deepseek.com/v1（超时）"]
 
@@ -495,12 +496,12 @@ def test_a_cloud_list_with_no_memory_picks_our_default_not_the_first(
     made[0].loaded.emit(
         [
             {"name": "aaa-first-alphabetically", "capabilities": ("completion",)},
-            {"name": "deepseek-chat", "capabilities": ("completion",)},
+            {"name": "deepseek-flash", "capabilities": ("completion",)},
             {"name": "zzz-last", "capabilities": ("completion",)},
         ]
     )
 
-    assert window.model_combo.currentData() == "deepseek-chat"
+    assert window.model_combo.currentData() == "deepseek-flash"
 
 
 # ── 构造对话后端 ────────────────────────────────────────────────────────────

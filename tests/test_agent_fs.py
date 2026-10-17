@@ -22,8 +22,13 @@ from axo.agent.fs import (
     DEFAULT_MAX_LINES,
     MAX_READ_BYTES,
     ReadFileError,
+    WriteFileError,
+    list_entries,
     read_text,
+    resolve_for_write,
     resolve_within,
+    search_text,
+    write_text_atomic,
 )
 
 
@@ -279,3 +284,159 @@ def test_limits_are_sane() -> None:
     """
     assert MAX_READ_BYTES > 0
     assert DEFAULT_MAX_LINES > 0
+
+
+# ── 写：边界、原子性与上限 ──────────────────────────────────────────────────
+
+
+def test_write_refuses_when_no_root_is_configured() -> None:
+    """没配目录 = 工具不可用，**不猜一个默认目录**（同读的那条纪律）。"""
+    with pytest.raises(WriteFileError, match="没有配置可写目录"):
+        resolve_for_write([], "a.txt")
+
+
+def test_write_resolves_inside_the_root(root: Path) -> None:
+    target = resolve_for_write([root], "新文件.txt")
+
+    assert target == (root / "新文件.txt").resolve()
+
+
+def test_write_refuses_an_escape(root: Path) -> None:
+    with pytest.raises(WriteFileError, match="不在允许写入的目录里"):
+        resolve_for_write([root], "../secret.txt")
+
+
+def test_write_refuses_the_data_root_even_when_it_is_under_a_root(tmp_path: Path) -> None:
+    """数据根可能就在读取根底下；**deny 比"在根里"更严格**。"""
+    area = tmp_path / "work"
+    data = area / "data"
+    (data / "memory").mkdir(parents=True)
+
+    with pytest.raises(WriteFileError, match="数据目录"):
+        resolve_for_write([area], "data/memory/mem.db", deny=[data])
+
+
+def test_write_refuses_a_missing_parent_unless_asked(root: Path) -> None:
+    with pytest.raises(WriteFileError, match="不存在"):
+        resolve_for_write([root], "新的/子目录/文件.txt")
+
+    target = resolve_for_write([root], "新的/子目录/文件.txt", create_dirs=True)
+    assert target.parent.name == "子目录"
+
+
+def test_write_is_atomic_and_leaves_no_temporary_file(root: Path) -> None:
+    target = root / "备忘.txt"
+
+    write_text_atomic(target, "换掉\n")
+    write_text_atomic(target, "再换掉\n")
+
+    assert target.read_text(encoding="utf-8") == "再换掉\n"
+    assert not list(root.glob(".axo-*.tmp")), "临时文件没清掉"
+
+
+def test_write_refuses_to_overwrite_a_directory(root: Path) -> None:
+    with pytest.raises(WriteFileError, match="目录"):
+        write_text_atomic(root, "x")
+
+
+def test_append_counts_the_existing_size(root: Path) -> None:
+    target = root / "日志.txt"
+    write_text_atomic(target, "12345")
+
+    with pytest.raises(WriteFileError, match="超过"):
+        write_text_atomic(target, "67890", append=True, max_bytes=8)
+
+    write_text_atomic(target, "678", append=True, max_bytes=8)
+    assert target.read_text(encoding="utf-8") == "12345678"
+
+
+def test_write_rejects_oversized_content(root: Path) -> None:
+    with pytest.raises(WriteFileError, match="超过单次上限"):
+        write_text_atomic(root / "大.txt", "x" * 10, max_bytes=5)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="保留设备名只在 Windows 上有意义")
+def test_write_refuses_windows_reserved_names(root: Path) -> None:
+    with pytest.raises(WriteFileError, match="保留设备名"):
+        resolve_for_write([root], "CON.txt")
+    with pytest.raises(WriteFileError, match="冒号"):
+        resolve_for_write([root], "a:b.txt")
+
+
+# ── 列目录 ─────────────────────────────────────────────────────────────────
+
+
+def test_list_entries_puts_directories_first_and_reports_the_total(tmp_path: Path) -> None:
+    area = tmp_path / "清单"
+    (area / "子目录").mkdir(parents=True)
+    for name in ("b.txt", "a.txt"):
+        (area / name).write_text("x", encoding="utf-8")
+
+    names, total = list_entries(area, limit=2)
+
+    assert total == 3
+    assert names[0] == "子目录/"
+    assert len(names) == 2
+
+
+def test_list_entries_on_a_file_is_one_entry(tmp_path: Path) -> None:
+    file = tmp_path / "一个.txt"
+    file.write_text("x", encoding="utf-8")
+
+    assert list_entries(file) == (["一个.txt"], 1)
+
+
+def test_list_entries_reports_a_missing_path(tmp_path: Path) -> None:
+    with pytest.raises(ReadFileError, match="不存在"):
+        list_entries(tmp_path / "没有")
+
+
+# ── 全文搜索 ───────────────────────────────────────────────────────────────
+
+
+def test_search_finds_lines_and_is_case_insensitive_by_default(root: Path) -> None:
+    (root / "笔记.txt").write_text("第一行\nAlpha 在这里\n第三行", encoding="utf-8")
+
+    hits = search_text(root, "alpha")
+
+    assert len(hits) == 1
+    assert hits[0].path.name == "笔记.txt"
+    assert hits[0].line_no == 2
+    assert "Alpha" in hits[0].line
+
+
+def test_search_respects_case_when_asked(root: Path) -> None:
+    (root / "笔记.txt").write_text("Alpha", encoding="utf-8")
+
+    assert search_text(root, "alpha", case_sensitive=True) == []
+
+
+def test_search_skips_binary_files(root: Path) -> None:
+    (root / "二进制.bin").write_bytes(b"alpha\x00alpha")
+
+    assert search_text(root, "alpha") == []
+
+
+def test_search_rejects_a_bad_regex(root: Path) -> None:
+    with pytest.raises(ReadFileError, match="正则"):
+        search_text(root, "(")
+
+
+def test_search_stops_at_the_result_cap(root: Path) -> None:
+    (root / "很多.txt").write_text("命中\n" * 10, encoding="utf-8")
+
+    hits = search_text(root, "命中", max_results=3)
+
+    assert len(hits) == 3
+
+
+def test_search_does_not_follow_a_symlink_out_of_the_root(root: Path, tmp_path: Path) -> None:
+    outside = tmp_path / "外面.txt"
+    outside.write_text("alpha", encoding="utf-8")
+    link = root / "链接.txt"
+    try:
+        link.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("这个环境建不了符号链接")
+
+    assert search_text(root, "alpha") == []

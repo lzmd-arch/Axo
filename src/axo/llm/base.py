@@ -93,6 +93,14 @@ class ToolCall:
     id: str
     name: str
     arguments: dict[str, Any] = field(default_factory=dict)
+    argument_error: str = ""
+    """解析这次调用的参数时出的错（空串 = 没出错）。
+
+    **不抛异常，把它交回给模型。** 云端流式拼出来的 ``arguments`` 偶尔不是合法
+    JSON；直接抛 :class:`ChatBackendError` 会让整轮对话死掉，而模型本来完全有
+    机会重发一次。消费端（``ToolRegistry.dispatch``）看到非空时返回一条失败结果，
+    仍然按协议补一条 ``tool`` 行——配对断了比参数错更糟。
+    """
 
     def __post_init__(self) -> None:
         if not isinstance(self.arguments, dict):
@@ -213,6 +221,12 @@ class ChatRequest:
     max_tokens: int | None = None
     stop: Sequence[str] = ()
     tools: Sequence[ToolSpec] = ()
+    tool_choice: str | None = None
+    """``"none"`` / ``"auto"`` / ``"required"``，或后端自己的值。``None`` = 不传。
+
+    收尾轮用它保留工具声明却禁止调用：提示缓存不会因为"工具突然消失"而失效，
+    模型也少了"我好像忘了带工具"这种噪声。
+    """
     extra: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -249,6 +263,10 @@ class ChatChunk:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     tool_calls: tuple[ToolCall, ...] = ()
+    retry_after: float | None = None
+    """后端建议等多少秒再重试（来自 ``Retry-After``）。只在重试提示片上有值。"""
+    notice: str = ""
+    """给用户看的一句话（例如「限流，1.5 秒后重试」）。**不是模型正文**。"""
     raw: dict[str, Any] = field(default_factory=dict)
 
 

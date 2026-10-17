@@ -19,10 +19,12 @@ from axo.llm.base import ChatBackendError
 from axo.llm.openai_compat import (
     DEFAULT_OPENAI_MODEL,
     FALLBACK_CLOUD_MODELS,
+    _known_context_window,
     _parse_models,
     endpoint_problem,
     fallback_models,
     pick_cloud_chat_model,
+    supports_audio_input,
 )
 
 #: ``list_local_models`` 返回的条目里有的键。**云端条目必须全都有**——少了哪个，
@@ -209,3 +211,38 @@ def test_a_file_url_is_refused() -> None:
     """别让 ``file://`` 之类的东西从"不是 http"这条缝里溜过去。"""
     assert endpoint_problem("file:///etc/passwd")
     assert endpoint_problem("ftp://example.com/v1")
+
+
+# ── 2026-10 的模型事实 ──────────────────────────────────────────────────────
+
+
+def test_the_default_model_is_the_current_one() -> None:
+    """默认值跟着官方当前模型走；旧名字会被转发，但账本里记的应该是真名。"""
+    assert DEFAULT_OPENAI_MODEL == "deepseek-flash"
+    assert DEFAULT_OPENAI_MODEL in FALLBACK_CLOUD_MODELS
+
+
+def test_known_models_get_their_documented_context_window() -> None:
+    """1M 是官方定价页写着的数；**问端点仍优先**，这张表只管问不到的时候。"""
+    assert _known_context_window("deepseek-flash") == 1_000_000
+    assert _known_context_window("deepseek-v4-pro") == 1_000_000
+    assert _known_context_window("未知模型") == 131072
+
+
+def test_fallback_windows_follow_the_known_table() -> None:
+    for entry in fallback_models():
+        if entry["name"].startswith("deepseek-"):
+            assert entry["context_window"] == 1_000_000, entry["name"]
+
+
+def test_deepseek_models_do_not_accept_audio() -> None:
+    """2026-10 已核实：两个当前模型都不收 ``input_audio``。
+
+    这条提前门控的收益是**不发那段必定被拒的 1 MB 上传**；对未知端点仍然按
+    "可能收"处理，让退化重发去回答。
+    """
+    assert supports_audio_input("deepseek-flash") is False
+    assert supports_audio_input("deepseek-v4-pro") is False
+    assert supports_audio_input("deepseek-chat") is False
+    assert supports_audio_input("gpt-4o-audio-preview") is True
+    assert supports_audio_input("qwen2-audio") is True

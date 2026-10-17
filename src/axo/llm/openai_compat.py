@@ -60,10 +60,11 @@ __all__ = [
     "pick_cloud_chat_model",
     "probe",
     "query_context_window",
+    "supports_audio_input",
 ]
 
 DEFAULT_OPENAI_BASE_URL = "https://api.deepseek.com/v1"
-DEFAULT_OPENAI_MODEL = "deepseek-chat"
+DEFAULT_OPENAI_MODEL = "deepseek-flash"
 
 #: ``model_id`` 的前缀，也是 :meth:`~.settings_store.BackendSettings` 里
 #: :data:`~.settings_store.PROVIDER_CLOUD` 那一侧在会话 ``model_ref`` 上留下的来源名。
@@ -79,7 +80,11 @@ MODEL_ID_PREFIX = "openai-compat"
 #: worker 自己吞掉错误返回这一份，症状就是"列表里为什么是这几个"没有任何地方
 #: 说得出来（``loaded`` 信号只有一个 ``list``，装不下"我用了兜底，因为……"）。
 #: 什么时候用它、以及要不要同时把那句原因写进状态栏，由主窗口决定。
-FALLBACK_CLOUD_MODELS: tuple[str, ...] = ("deepseek-chat", "deepseek-reasoner")
+FALLBACK_CLOUD_MODELS: tuple[str, ...] = (
+    "deepseek-flash",
+    "deepseek-v4-pro",
+    "deepseek-chat",
+)
 
 #: 端点不报上下文窗口时的兜底值（token），128K。
 #:
@@ -88,6 +93,19 @@ FALLBACK_CLOUD_MODELS: tuple[str, ...] = ("deepseek-chat", "deepseek-reasoner")
 #: 就回 ``context_window``。猜错的代价只在"算大"这个方向上：预算算大 → 服务端静默
 #: 截断，而截掉的是最早的消息，正是人格锚所在的位置。
 _DEFAULT_CLOUD_CONTEXT_WINDOW = 131072
+
+#: 已经核实过窗口的模型（2026-10，DeepSeek 官方定价页：两个当前模型都是 1M 上下文、
+#: 384K 输出；旧名字会被转发到 V4.1-Flash，因此同按 1M 处理）。
+#:
+#: **问端点仍然优先**：这张表只在端点不报、或问了问不到时用。写在这里而不是散在
+#: 兜底清单里，是为了让"这个数从哪来"有一处可查——算小了只是少放历史，算大了
+#: 会撞上服务端静默截断，截掉的是最早的人格锚。
+_KNOWN_CONTEXT_WINDOWS: dict[str, int] = {
+    "deepseek-flash": 1_000_000,
+    "deepseek-v4-pro": 1_000_000,
+    "deepseek-chat": 1_000_000,
+    "deepseek-reasoner": 1_000_000,
+}
 
 #: 连接要快失败（地址写错时不该让设置页卡住），读取要长超时（云端排队 + 长回复）。
 #: connect 比 Ollama 那份（5 秒）宽一点：这里多一次 DNS 与 TLS 握手。
@@ -339,7 +357,7 @@ def fallback_models() -> list[dict[str, Any]]:
     这一次连问都没问。
     """
     return [
-        _cloud_entry(name, context_window=_DEFAULT_CLOUD_CONTEXT_WINDOW)
+        _cloud_entry(name, context_window=_known_context_window(name))
         for name in FALLBACK_CLOUD_MODELS
     ]
 
@@ -373,10 +391,10 @@ def query_context_window(
         with _client(base_url, api_key) as client:
             response = client.get("/models")
             if not response.is_success:
-                return _DEFAULT_CLOUD_CONTEXT_WINDOW
+                return _known_context_window(model)
             entries = _parse_models(response.text)
     except (httpx.RequestError, ssl.SSLError, ChatBackendError, ValueError):
-        return _DEFAULT_CLOUD_CONTEXT_WINDOW
+        return _known_context_window(model)
 
     for entry in entries:
         if entry["name"] == model:
@@ -386,7 +404,22 @@ def query_context_window(
             if isinstance(window, int) and window >= 512:
                 return window
             break
-    return _DEFAULT_CLOUD_CONTEXT_WINDOW
+    return _known_context_window(model)
+
+
+def _known_context_window(model: str) -> int:
+    """这个模型已经核实过的窗口；不认识就退回保守的 128K。"""
+    return _KNOWN_CONTEXT_WINDOWS.get(model.strip().lower(), _DEFAULT_CLOUD_CONTEXT_WINDOW)
+
+
+def supports_audio_input(model: str) -> bool:
+    """这个模型收不收 ``input_audio``。
+
+    **DeepSeek 的两个当前模型都不收音频**（2026-10 已核实），旧名字同理。未知
+    端点上的模型一律当作"可能收"——真正的答案由端点自己给（``degraded_audio``
+    那条退化重发兜底），而这里提前返回假只会让将来支持音频的端点永远用不上。
+    """
+    return not model.strip().lower().startswith("deepseek-")
 
 
 def probe(base_url: str = DEFAULT_OPENAI_BASE_URL, *, api_key: str = "") -> tuple[bool, str]:

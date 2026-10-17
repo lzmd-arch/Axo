@@ -37,16 +37,33 @@ P3a 里最容易写出"看起来在工作"的一段代码的地方：一个没�
 from __future__ import annotations
 
 import codecs
+import contextlib
+import os
+import re
+import sys
+import tempfile
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 __all__ = [
     "DEFAULT_MAX_LINES",
+    "MAX_LIST_ENTRIES",
     "MAX_READ_BYTES",
+    "MAX_SEARCH_BYTES",
+    "MAX_SEARCH_FILES",
+    "MAX_SEARCH_RESULTS",
+    "MAX_WRITE_BYTES",
     "NUL_PROBE_BYTES",
     "ReadFileError",
+    "SearchHit",
+    "WriteFileError",
+    "list_entries",
     "read_text",
+    "resolve_for_write",
     "resolve_within",
+    "search_text",
+    "write_text_atomic",
 ]
 
 MAX_READ_BYTES = 64 * 1024
@@ -212,3 +229,291 @@ def read_text(
     if notes:
         body += f"{_SNIP}{'；'.join(notes)}…]"
     return body
+
+
+# ── 写：边界、原子写、目录与搜索 ─────────────────────────────────────────────
+
+
+MAX_WRITE_BYTES = 1024 * 1024
+"""一次最多写多少字节。**与读的上限是两件事**：读大了只是占上下文，写大了会
+悄悄覆盖掉一个用户没打算换掉的文件，所以这里比读更紧。"""
+
+MAX_LIST_ENTRIES = 200
+"""列目录一次最多回灌多少项。总数另报，模型知道自己看到的是不是全部。"""
+
+MAX_SEARCH_RESULTS = 50
+MAX_SEARCH_FILES = 200
+MAX_SEARCH_BYTES = 4 * 1024 * 1024
+"""全文搜索的三道闸：命中数、扫描文件数、读入总字节。谁先到就停，并说明。"""
+
+_SEARCH_LINE_CHARS = 300
+
+_RESERVED_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{index}" for index in range(1, 10)}
+    | {f"LPT{index}" for index in range(1, 10)}
+)
+
+
+class WriteFileError(Exception):
+    """写不了。消息是**写给模型看的**——它会被原样回灌。"""
+
+
+@dataclass(frozen=True)
+class SearchHit:
+    """一条命中：哪个文件、第几行、那一行是什么。"""
+
+    path: Path
+    line_no: int
+    line: str
+
+
+def resolve_for_write(
+    roots: Sequence[Path],
+    raw: str,
+    *,
+    create_dirs: bool = False,
+    deny: Sequence[Path] = (),
+) -> Path:
+    """把模型给的路径解析成**确定在某个允许目录里**、可以写的绝对路径。
+
+    与 :func:`resolve_within` 共用 ``is_relative_to`` 那条判据，但**不要求文件
+    已经存在**——写新文件是常态。
+
+    ``deny`` 是永远不许写的目录（调用方传数据根）：模型不该改自己的记忆库、
+    设置与日志。它比"路径不在根里"更严格，因为数据根**可能**就在某个读取根
+    底下。
+
+    Raises:
+        WriteFileError: 没配根、路径为空、越界、落在 deny 里，或者是一个
+            Windows 上根本建不出来的名字。
+    """
+    if not roots:
+        raise WriteFileError("写入工具没有配置可写目录，当前不可用。请用户先到设置里添加一个目录。")
+
+    wanted = raw.strip()
+    if not wanted:
+        raise WriteFileError("path 参数是空的，请给出要写的文件路径。")
+
+    # **先看名字本身。** 像 ``a:b.txt`` 这种在 Windows 上会被解析成"盘符相对路径"，
+    # 交给 ``(anchor / wanted).resolve()`` 之后会跑到根外面，于是用户拿到的错误是
+    # "不在允许目录里"——原因对、方向错，而真正的问题是这个名字根本写不出来。
+    problem = _windows_name_problem(Path(wanted))
+    if problem:
+        raise WriteFileError(problem)
+
+    denied = [Path(one).expanduser().resolve() for one in deny]
+    for root in roots:
+        anchor = Path(root).expanduser().resolve()
+        candidate = (anchor / wanted).resolve()
+        if not candidate.is_relative_to(anchor):
+            continue
+        for blocked in denied:
+            if candidate == blocked or candidate.is_relative_to(blocked):
+                raise WriteFileError(
+                    f"路径 {raw!r} 落在不允许写入的数据目录里（{blocked}）。"
+                    "那是程序自己的记忆与设置，不能由工具改写。"
+                )
+        problem = _windows_name_problem(candidate)
+        if problem:
+            raise WriteFileError(problem)
+        if not create_dirs and not candidate.parent.is_dir():
+            raise WriteFileError(
+                f"{candidate.parent} 不存在。要新建目录，请把 create_dirs 设为 true。"
+            )
+        return candidate
+
+    allowed = "、".join(str(root) for root in roots)
+    raise WriteFileError(
+        f"路径 {raw!r} 不在允许写入的目录里。允许的目录：{allowed}。"
+        "请用相对于这些目录的路径，或者告诉用户去设置里添加目录。"
+    )
+
+
+def write_text_atomic(
+    path: Path,
+    content: str,
+    *,
+    append: bool = False,
+    create_dirs: bool = False,
+    max_bytes: int = MAX_WRITE_BYTES,
+) -> int:
+    """写一个 UTF-8 文本文件，返回写入的字节数。
+
+    覆盖模式下走**同目录临时文件 + ``os.replace``**：写到一半断电或进程被杀时，
+    原来的文件还在（``os.replace`` 在同一卷上是原子的）。追加模式没法原子，
+    但仍然先查大小上限，避免把磁盘写满。
+
+    Raises:
+        WriteFileError: 超长、父目录不存在、路径是目录、或者系统拒绝写。
+    """
+    payload = content.encode("utf-8")
+    if len(payload) > max_bytes:
+        raise WriteFileError(
+            f"要写的内容有 {len(payload)} 字节，超过单次上限 {max_bytes} 字节。"
+            "请分几次写，或者先问用户。"
+        )
+
+    if path.exists() and path.is_dir():
+        raise WriteFileError(f"{path} 是一个目录，不能当文件写。")
+
+    parent = path.parent
+    if not parent.is_dir():
+        if not create_dirs:
+            raise WriteFileError(f"{parent} 不存在。要新建目录，请把 create_dirs 设为 true。")
+        try:
+            parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise WriteFileError(f"建目录失败：{exc}") from exc
+
+    if append:
+        current = path.stat().st_size if path.exists() else 0
+        if current + len(payload) > max_bytes:
+            raise WriteFileError(
+                f"追加之后文件会超过 {max_bytes} 字节（现在 {current} 字节）。"
+                "请换一个文件，或者先问用户。"
+            )
+        try:
+            with path.open("ab") as handle:
+                handle.write(payload)
+        except OSError as exc:
+            raise WriteFileError(f"写文件失败：{exc}") from exc
+        return len(payload)
+
+    handle = None
+    temporary = ""
+    try:
+        descriptor, temporary = tempfile.mkstemp(dir=str(parent), prefix=".axo-", suffix=".tmp")
+        handle = os.fdopen(descriptor, "wb")
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+        handle.close()
+        handle = None
+        Path(temporary).replace(path)
+    except OSError as exc:
+        raise WriteFileError(f"写文件失败：{exc}") from exc
+    finally:
+        if handle is not None:
+            handle.close()
+        if temporary and Path(temporary).exists():
+            with contextlib.suppress(OSError):
+                Path(temporary).unlink()
+    return len(payload)
+
+
+def list_entries(path: Path, *, limit: int = MAX_LIST_ENTRIES) -> tuple[list[str], int]:
+    """列目录。返回 ``(最多 limit 项, 总项数)``；目录名带结尾斜杠。
+
+    总项数单独给，是为了让模型知道"你看到的是不是全部"——它看不到"还有 37 项"
+    的时候，会以为目录里就这些。
+    """
+    limit = max(1, int(limit))
+    if not path.exists():
+        raise ReadFileError(f"目录不存在：{path}")
+    if path.is_file():
+        return [path.name], 1
+    if not path.is_dir():
+        raise ReadFileError(f"{path} 不是目录，也不是文件。")
+
+    try:
+        with os.scandir(path) as iterator:
+            entries = list(iterator)
+    except OSError as exc:
+        raise ReadFileError(f"列目录失败：{exc}") from exc
+
+    def is_directory(entry: os.DirEntry[str]) -> bool:
+        try:
+            return entry.is_dir()
+        except OSError:
+            return False
+
+    entries.sort(key=lambda entry: (0 if is_directory(entry) else 1, entry.name.lower()))
+    names = [entry.name + ("/" if is_directory(entry) else "") for entry in entries[:limit]]
+    return names, len(entries)
+
+
+def search_text(
+    base: Path,
+    pattern: str,
+    *,
+    glob_pattern: str = "*",
+    max_results: int = MAX_SEARCH_RESULTS,
+    max_files: int = MAX_SEARCH_FILES,
+    max_bytes: int = MAX_SEARCH_BYTES,
+    case_sensitive: bool = False,
+) -> list[SearchHit]:
+    """在目录里按正则搜文本。**尽力而为：读不了的文件跳过，不因此失败。**
+
+    三道闸（命中数、文件数、字节数）谁先到就停。返回的列表只包含命中；调用方
+    需要知道"有没有提前停"时，自己对照上限与返回值。
+
+    Raises:
+        ReadFileError: 基准路径不存在，或者正则写错了。
+    """
+    if not base.exists():
+        raise ReadFileError(f"搜索起点不存在：{base}")
+    flags = 0 if case_sensitive else re.IGNORECASE
+    try:
+        matcher = re.compile(pattern, flags)
+    except re.error as exc:
+        raise ReadFileError(f"正则表达式写错了：{exc}") from exc
+
+    base_resolved = base.resolve()
+    candidates = [base] if base.is_file() else list(base.rglob(glob_pattern))
+
+    hits: list[SearchHit] = []
+    scanned_files = 0
+    scanned_bytes = 0
+    for candidate in candidates:
+        if len(hits) >= max_results or scanned_files >= max_files:
+            break
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if not resolved.is_relative_to(base_resolved):
+            continue  # 符号链接指向根外
+        if not resolved.is_file() or resolved.is_symlink():
+            continue
+        scanned_files += 1
+        try:
+            data = resolved.read_bytes()
+        except OSError:
+            continue
+        if b"\x00" in data[:NUL_PROBE_BYTES]:
+            continue
+        if scanned_bytes + len(data) > max_bytes:
+            data = data[: max(0, max_bytes - scanned_bytes)]
+        scanned_bytes += len(data)
+        try:
+            text = data.decode("utf-8", "strict")
+        except UnicodeDecodeError:
+            continue
+        for number, line in enumerate(text.splitlines(), start=1):
+            if matcher.search(line):
+                hits.append(
+                    SearchHit(path=resolved, line_no=number, line=line.strip()[:_SEARCH_LINE_CHARS])
+                )
+                if len(hits) >= max_results:
+                    break
+    return hits
+
+
+def _windows_name_problem(path: Path) -> str:
+    """Windows 上建不出来的名字，**在写之前就说**，而不是让系统抛一个 WinError。"""
+    if sys.platform != "win32":
+        return ""
+    for index, part in enumerate(path.parts):
+        if index == 0 and part.endswith(":" + os.sep):
+            continue
+        if part in (".", ".."):
+            continue  # 相对路径分量，交给 is_relative_to 判越界
+        if ":" in part:
+            return f"路径分量 {part!r} 里含有冒号，Windows 会把它当成数据流语法。"
+        if part.endswith((" ", ".")):
+            return f"路径分量 {part!r} 以空格或点结尾，Windows 上建不出来。"
+        stem = part.split(".", 1)[0].upper()
+        if stem in _RESERVED_NAMES:
+            return f"{part!r} 是 Windows 的保留设备名，不能当文件名用。"
+    return ""
