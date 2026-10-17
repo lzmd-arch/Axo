@@ -128,7 +128,9 @@ def _client(host: str, allow_remote: bool) -> httpx.Client:
             f"把它指向远程主机会让这个假设失效。若确实要这么做（例如自建的内网推理机），"
             f"显式传 allow_remote=True。"
         )
-    return httpx.Client(base_url=host, timeout=_TIMEOUT)
+    # **本机不走代理**（同 ``llm/speech.py`` 那条）：``allow_remote`` 为假时地址
+    # 必须是本机，而本机的请求被送去代理的结局是一个空正文的 502。
+    return httpx.Client(base_url=host, timeout=_TIMEOUT, trust_env=allow_remote)
 
 
 def _raise_for_status(response: httpx.Response, *, what: str) -> None:

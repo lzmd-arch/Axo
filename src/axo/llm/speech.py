@@ -24,6 +24,8 @@ OpenAI 形状的接口），而"HTTP 客户端住 llm/"是这一层的既有秩�
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 import httpx
 
 from ..tts import DEFAULT_SPEECH_ENDPOINT, SpeechResult, speech_payload
@@ -33,6 +35,18 @@ __all__ = ["RemoteSpeech"]
 _TIMEOUT_S = 30.0
 """合成超时。**比生成宽**：克隆 TTS 第一次合成要加载参考音（几秒到十几秒），而
 卡在"正在说"上的体验比慢一点差得多；超时之后照样回一句人话。"""
+
+
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]", "0.0.0.0"})
+
+
+def _is_loopback(base_url: str) -> bool:
+    """这个地址是不是本机。**本机的请求不许经过代理。**
+
+    判据只看主机名，不解析域名：`localhost` 与 IP 字面量都在名单里，其余一律当远程
+    （远程经不经代理由环境变量说了算，那是用户自己的网络配置）。
+    """
+    return (urlsplit(base_url).hostname or "").lower() in _LOOPBACK_HOSTS
 
 
 class RemoteSpeech:
@@ -63,6 +77,11 @@ class RemoteSpeech:
                 base_url=self.base_url,
                 timeout=self.timeout,
                 transport=self._transport,
+                # **本机地址不走代理。** httpx 默认认 HTTP_PROXY/HTTPS_PROXY，而
+                # 一个 127.0.0.1 的请求被送去代理的结局是代理回一个 502（**空的**）
+                # ——用户看到的是「组件回了 HTTP 502（没有正文）」，而真相是组件
+                # 根本没在跑。2026-10-17 实测踩到。
+                trust_env=not _is_loopback(self.base_url),
             ) as client:
                 response = client.post("/v1/audio/speech", json=body)
         except httpx.HTTPError as exc:

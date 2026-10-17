@@ -14,7 +14,9 @@ import json
 from pathlib import Path
 
 import httpx
+import pytest
 
+from axo.llm.ollama import _client as _ollama_client
 from axo.llm.speech import RemoteSpeech
 from axo.tts import (
     SpeechReceipt,
@@ -175,3 +177,72 @@ def test_the_receipt_is_a_one_line_signal_with_a_timestamp() -> None:
 
     long_text = SpeechReceipt(at=0.0, text="一" * 100, ok=True).describe(at="00:00")
     assert len(long_text) < 80, "回执要最小——整句塞进上下文是浪费（模型自己有全文）"
+
+
+# ── 本机地址不走代理 ────────────────────────────────────────────────────────
+
+
+def test_a_local_endpoint_never_goes_through_a_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """**本机的请求不许经过代理。**
+
+    httpx 默认认 HTTP_PROXY/HTTPS_PROXY，而一个 127.0.0.1 的请求被送去代理的结局是
+    代理回一个 502（**空的**）——用户看到的是「组件回了 HTTP 502（没有正文）」，
+    而真相是组件根本没在跑。2026-10-17 实测踩到。
+    """
+    seen: dict[str, object] = {}
+    real = httpx.Client
+
+    class Spy(real):  # type: ignore[misc, valid-type]
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            seen.update(kwargs)
+            super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(httpx, "Client", Spy)
+    speech = RemoteSpeech(
+        "http://127.0.0.1:8800",
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200, content=b"RIFF")),
+    )
+
+    speech.synthesize("你好")
+
+    assert seen.get("trust_env") is False
+
+
+def test_a_remote_endpoint_leaves_the_proxy_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    """远程地址经不经代理由用户自己的网络配置说了算——这里不替它决定。"""
+    seen: dict[str, object] = {}
+    real = httpx.Client
+
+    class Spy(real):  # type: ignore[misc, valid-type]
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            seen.update(kwargs)
+            super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(httpx, "Client", Spy)
+    speech = RemoteSpeech(
+        "http://tts.example.com:8800",
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200, content=b"RIFF")),
+    )
+
+    speech.synthesize("你好")
+
+    assert seen.get("trust_env") is True
+
+
+@pytest.mark.parametrize(
+    ("host", "allow_remote", "expected"),
+    [
+        ("http://127.0.0.1:11434", False, False),
+        ("http://localhost:11434", False, False),
+        ("http://10.0.0.5:11434", True, True),
+    ],
+)
+def test_the_ollama_client_only_trusts_the_environment_when_it_may_go_remote(
+    host: str, allow_remote: bool, expected: bool
+) -> None:
+    """同一条：本机不走代理，而"允许远程"意味着用户自己掌控那条链路。"""
+    client = _ollama_client(host, allow_remote)
+    try:
+        assert client.trust_env is expected
+    finally:
+        client.close()
