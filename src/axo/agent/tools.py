@@ -136,6 +136,16 @@ class ToolContext:
     call_id: str = ""
     clock: Callable[[], datetime] = datetime.now
     read_root: tuple[Path, ...] = ()
+    write_root: tuple[Path, ...] = ()
+    """允许**写**的目录。默认空 = 写入工具不登记（同 ``read_root``）。"""
+    data_root: Path | None = None
+    """程序自己的数据目录。**永远不许写**——模型不该改自己的记忆库、设置与日志。"""
+    allow_commands: bool = False
+    """允许执行命令。默认假；打开后每次执行仍然过闸门。"""
+    cancel: Any = None
+    """取消信号（``threading.Event``）。**只给会阻塞的工具**（命令执行）用。"""
+    net: Any = None
+    """:mod:`axo.agent.net` 的实例（联网搜索/抓取）。``None`` = 不登记那两个工具。"""
     capture: Callable[[], Capture] | None = None
 
 

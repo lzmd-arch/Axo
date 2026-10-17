@@ -79,6 +79,10 @@ _K_READ_ROOTS = "tools/read_roots"
 _K_CLOUD_VISION = "tools/cloud_vision"
 _K_AUDIO_IN = "tools/audio_in"
 
+_K_WRITE_ROOTS = "tools/write_roots"
+_K_WEB_ENABLED = "tools/web_enabled"
+_K_WEB_REQUIRE_APPROVAL = "tools/web_require_approval"
+_K_ALLOW_COMMANDS = "tools/allow_commands"
 _K_SPEECH_ENABLED = "speech/enabled"
 _K_SPEECH_VOLUME = "speech/volume"
 _K_SPEECH_VOICE = "speech/voice"
@@ -218,6 +222,17 @@ class ToolSettings:
     """
 
     read_roots: tuple[Path, ...] = ()
+    write_roots: tuple[Path, ...] = ()
+    """允许**写**的目录。**默认空 = 写入工具不登记。** 与 :attr:`read_roots` 分开：
+    读是看，写是改，一次授权不该自动扩成另一次。数据根（记忆库/设置/日志）永远
+    被拒绝，即使它在某个写根底下。"""
+    allow_commands: bool = False
+    """允许模型在本机执行命令。**默认关**——这是权限面最大的一格，用户要显式打开。
+    打开后每次执行仍然逐次确认。"""
+    web_enabled: bool = False
+    """允许联网搜索与抓取。**默认关**：这是出网行为，URL 会离开本机。"""
+    web_require_approval: bool = False
+    """每次联网都确认一次（给在意隐私的人）。默认关，只保留总开关。"""
     cloud_vision: bool = False
     audio_in: bool = False
     """**当前模型听得见原声吗**——由用户声明，与 :attr:`cloud_vision` 同一族。
@@ -493,6 +508,10 @@ class SettingsStore:
         """
         return ToolSettings(
             read_roots=_as_path_list(self._backend.value(_K_READ_ROOTS, [])),
+            write_roots=_as_path_list(self._backend.value(_K_WRITE_ROOTS, [])),
+            allow_commands=_as_bool(self._backend.value(_K_ALLOW_COMMANDS, False)),
+            web_enabled=_as_bool(self._backend.value(_K_WEB_ENABLED, False)),
+            web_require_approval=_as_bool(self._backend.value(_K_WEB_REQUIRE_APPROVAL, False)),
             cloud_vision=_as_bool(self._backend.value(_K_CLOUD_VISION, False)),
             audio_in=_as_bool(self._backend.value(_K_AUDIO_IN, False)),
         )
@@ -501,6 +520,10 @@ class SettingsStore:
         """写回。**写字符串列表**——``QSettings`` 存得住列表，但读回来的形状要看
         平台（见 :func:`_as_path_list`），所以读取侧不依赖写入侧。"""
         self._backend.setValue(_K_READ_ROOTS, [str(root) for root in settings.read_roots])
+        self._backend.setValue(_K_WRITE_ROOTS, [str(root) for root in settings.write_roots])
+        self._backend.setValue(_K_ALLOW_COMMANDS, settings.allow_commands)
+        self._backend.setValue(_K_WEB_ENABLED, settings.web_enabled)
+        self._backend.setValue(_K_WEB_REQUIRE_APPROVAL, settings.web_require_approval)
         self._backend.setValue(_K_CLOUD_VISION, settings.cloud_vision)
         self._backend.setValue(_K_AUDIO_IN, settings.audio_in)
 

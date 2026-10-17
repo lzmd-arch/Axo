@@ -28,14 +28,19 @@ import pytest
 from axo.agent.catalog import (
     MAX_REMINDER_CHARS,
     MAX_WRITE_CHARS,
+    FetchUrlTool,
     ForgetMemoryTool,
     GetTimeTool,
+    ListFilesTool,
     LookAtScreenTool,
     ReadFileTool,
     ReadMemoryTool,
+    SearchFilesTool,
     SearchMemoryTool,
     SendStickerTool,
     SetReminderTool,
+    SystemInfoTool,
+    WebSearchTool,
     WriteMemoryTool,
     default_tools,
 )
@@ -200,6 +205,7 @@ def test_eight_tools_are_registered_without_a_read_root() -> None:
         "set_reminder",
         "list_reminders",
         "cancel_reminder",
+        "system_info",
     ]
 
 
@@ -215,6 +221,9 @@ def test_read_file_appears_once_a_root_is_configured(tmp_path: Path) -> None:
         "list_reminders",
         "cancel_reminder",
         "read_file",
+        "list_files",
+        "search_files",
+        "system_info",
     ]
 
 
@@ -1093,3 +1102,100 @@ def test_the_sticker_tool_is_replayable(tmp_path: Path, ctx: ToolContext) -> Non
     tool = SendStickerTool(stickers_in(_sticker_dir(tmp_path)))
 
     assert tool.run({"name": "开心"}, ctx).replayable is True
+
+
+# ── 只读工具面：目录、搜索、系统信息、联网（A1） ────────────────────────────
+
+
+class FakeNet:
+    available = True
+
+    def __init__(self) -> None:
+        self.searched: list[tuple[str, int]] = []
+        self.fetched: list[str] = []
+
+    def search(self, query: str, *, count: int = 8) -> list[Any]:
+        from axo.net import WebHit
+
+        self.searched.append((query, count))
+        return [WebHit(title="结果一", url="https://example.com/1", summary="摘要")]
+
+    def fetch(self, url: str) -> tuple[str, str]:
+        self.fetched.append(url)
+        return "标题", "正文"
+
+
+def test_list_files_reports_the_total(tmp_path: Path) -> None:
+    (tmp_path / "子目录").mkdir()
+    (tmp_path / "a.txt").write_text("x", encoding="utf-8")
+    args = {"path": ".", "limit": 1}
+    context = ToolContext(store=MemoryStore(":memory:"), read_root=(tmp_path,))
+
+    outcome = ListFilesTool().run(args, context)
+
+    assert outcome.ok
+    assert "共 2 项" in outcome.content
+    assert "还有 1 项" in outcome.content
+
+
+def test_search_files_returns_file_and_line(tmp_path: Path) -> None:
+    (tmp_path / "笔记.txt").write_text("第一行\nalpha\n", encoding="utf-8")
+    context = ToolContext(store=MemoryStore(":memory:"), read_root=(tmp_path,))
+
+    outcome = SearchFilesTool().run({"pattern": "alpha"}, context)
+
+    assert outcome.ok
+    assert "笔记.txt:2" in outcome.content
+
+
+def test_search_files_says_so_when_nothing_matches(tmp_path: Path) -> None:
+    context = ToolContext(store=MemoryStore(":memory:"), read_root=(tmp_path,))
+
+    outcome = SearchFilesTool().run({"pattern": "不存在"}, context)
+
+    assert outcome.ok and "没有找到" in outcome.content
+
+
+def test_system_info_is_a_few_facts(tmp_path: Path) -> None:
+    context = ToolContext(store=MemoryStore(":memory:"), data_root=tmp_path)
+
+    outcome = SystemInfoTool().run({}, context)
+
+    assert outcome.ok
+    assert "Python" in outcome.content
+    assert "系统" in outcome.content
+
+
+def test_web_search_formats_sources(tmp_path: Path) -> None:
+    net = FakeNet()
+    context = ToolContext(store=MemoryStore(":memory:"), net=net)
+
+    outcome = WebSearchTool().run({"query": "最近的新闻", "count": 3}, context)
+
+    assert outcome.ok and "https://example.com/1" in outcome.content
+    assert net.searched == [("最近的新闻", 3)]
+
+
+def test_fetch_url_returns_title_and_body() -> None:
+    net = FakeNet()
+    context = ToolContext(store=MemoryStore(":memory:"), net=net)
+
+    outcome = FetchUrlTool().run({"url": "https://example.com"}, context)
+
+    assert outcome.ok and "标题" in outcome.content and "正文" in outcome.content
+
+
+def test_web_tools_fail_cleanly_without_a_channel() -> None:
+    context = ToolContext(store=MemoryStore(":memory:"))
+
+    assert WebSearchTool().run({"query": "x"}, context).ok is False
+    assert FetchUrlTool().run({"url": "https://example.com"}, context).ok is False
+
+
+def test_web_tools_appear_only_with_a_channel(tmp_path: Path) -> None:
+    """**联网默认不登记**：没有 key/开关关着时，模型看不到这两个名字。"""
+    without = [tool.spec.name for tool in default_tools(read_root=(tmp_path,))]
+    with_web = [tool.spec.name for tool in default_tools(read_root=(tmp_path,), web=FakeNet())]
+
+    assert "web_search" not in without and "fetch_url" not in without
+    assert "web_search" in with_web and "fetch_url" in with_web

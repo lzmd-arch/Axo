@@ -1064,3 +1064,25 @@ def test_the_proactive_settings_survive_a_round_trip(settings: ProactiveSettings
     store.save_proactive(settings)
 
     assert store.load_proactive() == settings
+
+
+def test_web_and_command_switches_default_off_and_roundtrip() -> None:
+    """联网与执行都是**出网/改机**的行为，默认关；写根跟着读根走。"""
+    from axo.ui.settings_store import ToolSettings
+
+    defaults = SettingsStore(FakeBackend()).load_tools()
+    assert defaults.web_enabled is False
+    assert defaults.web_require_approval is False
+    assert defaults.allow_commands is False
+    assert defaults.write_roots == ()
+
+    store = SettingsStore(FakeBackend())
+    original = ToolSettings(
+        read_roots=(Path("C:/work"),),
+        write_roots=(Path("C:/work"),),
+        web_enabled=True,
+        web_require_approval=True,
+        allow_commands=True,
+    )
+    store.save_tools(original)
+    assert store.load_tools() == original

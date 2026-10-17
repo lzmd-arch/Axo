@@ -881,6 +881,9 @@ class ToolPage(QWidget):
     vision_changed = Signal(bool)
     """「当前模型看得见图」变了。**与目录分开一个信号**：它不是一次授权，而是一句对模型能力的声明。"""
     audio_changed = Signal(bool)
+    web_changed = Signal(bool)
+    web_approval_changed = Signal(bool)
+    commands_changed = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -894,6 +897,9 @@ class ToolPage(QWidget):
         self._snapshot: tuple[Path, ...] = ()
         self._vision_snapshot = False
         self._audio_snapshot = False
+        self._web_snapshot = False
+        self._web_approval_snapshot = False
+        self._commands_snapshot = False
 
         outer.addWidget(_section("可读目录"))
 
@@ -976,6 +982,37 @@ class ToolPage(QWidget):
             )
         )
 
+        outer.addSpacing(6)
+        outer.addWidget(_section("联网"))
+        self.web_box = QCheckBox("允许联网搜索与抓取（DeepSeek 官方 Search / Fetch）", self)
+        self.web_box.setObjectName("webEnabledBox")
+        self.web_box.toggled.connect(self._on_web_toggled)
+        outer.addWidget(self.web_box)
+        outer.addWidget(
+            _hint(
+                "**这是出网行为**：你让它查的东西会作为关键词/网址发给 DeepSeek，"
+                "并从网上取回内容放进上下文。记忆库与聊天记录仍然不出这台机器。"
+                "需要先在后端页填好 DeepSeek 的 key。"
+            )
+        )
+        self.web_approval_box = QCheckBox("每次联网都先问一句", self)
+        self.web_approval_box.setObjectName("webApprovalBox")
+        self.web_approval_box.toggled.connect(self._on_web_approval_toggled)
+        outer.addWidget(self.web_approval_box)
+
+        outer.addSpacing(6)
+        outer.addWidget(_section("执行"))
+        self.commands_box = QCheckBox("允许在本机执行命令（每次执行都会先确认）", self)
+        self.commands_box.setObjectName("allowCommandsBox")
+        self.commands_box.toggled.connect(self._on_commands_toggled)
+        outer.addWidget(self.commands_box)
+        outer.addWidget(
+            _hint(
+                "命令在**可读目录**里执行，且每次都要你点一次头。输出有上限、可以随时停止。"
+                "这是权限面最大的一格，默认关。"
+            )
+        )
+
         self.note = _hint("")
         self.note.setObjectName("toolNote")
         outer.addWidget(self.note)
@@ -1004,6 +1041,15 @@ class ToolPage(QWidget):
         blocked = self.audio_box.blockSignals(True)
         self.audio_box.setChecked(settings.audio_in)
         self.audio_box.blockSignals(blocked)
+        for box, value, name in (
+            (self.web_box, settings.web_enabled, "_web_snapshot"),
+            (self.web_approval_box, settings.web_require_approval, "_web_approval_snapshot"),
+            (self.commands_box, settings.allow_commands, "_commands_snapshot"),
+        ):
+            setattr(self, name, bool(value))
+            blocked = box.blockSignals(True)
+            box.setChecked(bool(value))
+            box.blockSignals(blocked)
         self.set_note("")
 
     def set_note(self, text: str) -> None:
@@ -1016,6 +1062,24 @@ class ToolPage(QWidget):
     def audio(self) -> bool:
         """「当前模型听得见原声」这一格。"""
         return self.audio_box.isChecked()
+
+    def web_enabled(self) -> bool:
+        return self.web_box.isChecked()
+
+    def web_require_approval(self) -> bool:
+        return self.web_approval_box.isChecked()
+
+    def allow_commands(self) -> bool:
+        return self.commands_box.isChecked()
+
+    def _on_web_toggled(self, checked: bool) -> None:
+        self.web_changed.emit(bool(checked))
+
+    def _on_web_approval_toggled(self, checked: bool) -> None:
+        self.web_approval_changed.emit(bool(checked))
+
+    def _on_commands_toggled(self, checked: bool) -> None:
+        self.commands_changed.emit(bool(checked))
 
     def _on_audio_toggled(self, checked: bool) -> None:
         self.audio_changed.emit(bool(checked))
@@ -1051,6 +1115,27 @@ class ToolPage(QWidget):
             self.audio_box.setChecked(self._audio_snapshot)
             self.audio_box.blockSignals(blocked)
             self.audio_changed.emit(self._audio_snapshot)
+        for box, value, signal, _name in (
+            (self.web_box, self._web_snapshot, self.web_changed, "_web_snapshot"),
+            (
+                self.web_approval_box,
+                self._web_approval_snapshot,
+                self.web_approval_changed,
+                "_web_approval_snapshot",
+            ),
+            (
+                self.commands_box,
+                self._commands_snapshot,
+                self.commands_changed,
+                "_commands_snapshot",
+            ),
+        ):
+            if box.isChecked() == value:
+                continue
+            blocked = box.blockSignals(True)
+            box.setChecked(value)
+            box.blockSignals(blocked)
+            signal.emit(value)
 
     # ── 增删 ────────────────────────────────────────────────────────────────
 
@@ -1997,6 +2082,9 @@ class SettingsDialog(QDialog):
     theme_changed = Signal(object)
     backend_changed = Signal(object)
     tools_changed = Signal(object)
+    web_changed = Signal(bool)
+    web_approval_changed = Signal(bool)
+    commands_changed = Signal(bool)
     vision_changed = Signal(bool)
     voice_changed = Signal(object)
     audio_changed = Signal(bool)
@@ -2119,6 +2207,9 @@ class SettingsDialog(QDialog):
         # 工具页**是**"边改边生效"的，与后端页的「应用地址」不同：加/删一条可读目录
         # 没有"应用"这一步可等——它只是一行设置，而且底部有「撤销修改」兜着。
         self.tools.roots_changed.connect(self.tools_changed)
+        self.tools.web_changed.connect(self.web_changed)
+        self.tools.web_approval_changed.connect(self.web_approval_changed)
+        self.tools.commands_changed.connect(self.commands_changed)
         self.tools.vision_changed.connect(self.vision_changed)
         self.tools.audio_changed.connect(self.audio_changed)
         self.speech.changed.connect(self.voice_changed)

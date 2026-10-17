@@ -97,7 +97,10 @@ def test_changing_the_directories_is_saved_right_away(tmp_path: Path) -> None:
     MainWindow._on_tools_changed(window, (tmp_path,))  # type: ignore[arg-type]
 
     assert window._read_roots == (tmp_path,)
-    assert store.load_tools() == ToolSettings(read_roots=(tmp_path,)), "没落到设置里"
+    # **写根跟着读根走**（用户拍板：写入与执行限现有读取根），所以它也该存下来。
+    assert store.load_tools() == ToolSettings(read_roots=(tmp_path,), write_roots=(tmp_path,)), (
+        "没落到设置里"
+    )
 
 
 def test_the_directories_reach_the_tool_set_after_a_restart(tmp_path: Path) -> None:

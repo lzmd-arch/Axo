@@ -129,6 +129,7 @@ from ..memory import (
 )
 from ..memory.browse import format_ts
 from ..memory.consolidation import ConsolidationRun, last_run, summary_line
+from ..net import DeepSeekWeb
 from ..paths import (
     data_dir,
     data_root_source,
@@ -553,6 +554,9 @@ class MainWindow(QMainWindow):
         #: :meth:`_model_can_see`）。本机不走这一位：那边 Ollama 自己会报。
         self._cloud_vision: bool = self._tool_settings.cloud_vision
         self._audio_in: bool = self._tool_settings.audio_in
+        self._web_enabled: bool = self._tool_settings.web_enabled
+        self._web_require_approval: bool = self._tool_settings.web_require_approval
+        self._allow_commands: bool = self._tool_settings.allow_commands
         #: 用不用**任务记忆**（:class:`~axo.memory.policy.TaskPolicy`）。
         #: 默认关，存在 ``QSettings`` 的 ``memory/*`` 里，由设置窗口的「记忆」页改。
         self._task_memory: bool = self._settings_store.load_memory().task_memory
@@ -1952,6 +1956,7 @@ class MainWindow(QMainWindow):
         builtin = default_tools(
             read_root=self._read_roots,
             vision=self._model_can_see(),
+            web=(self._web_backend() if callable(getattr(self, "_web_backend", None)) else None),
             # **每轮现扫**：用户往 ``stickers/`` 里丢一张图，下一轮她就用得上。
             # 目录是空的就返回空元组，工具随之不登记。
             stickers=stickers_in(stickers_dir()),
@@ -1962,6 +1967,22 @@ class MainWindow(QMainWindow):
         loaded = load_plugins(plugins_dir(), taken=[tool.spec.name for tool in builtin])
         self._report_plugin_issues(loaded.issues)
         return ToolRegistry([*builtin, *loaded.tools])
+
+    def _web_backend(self) -> DeepSeekWeb | None:
+        """联网读的通道。**默认没有**：开关关着、没 key、或端点不是官方地址。
+
+        用 DeepSeek 官方 Search/Fetch 而不是自己抓网页（见 ``agent/net.py``）：
+        同一把 key、失败不计费，而且网页抓取的安全边界由官方那侧承担。
+        """
+        if not getattr(self, "_web_enabled", False):
+            return None
+        backend = self._backend_settings
+        if not backend.is_cloud or not backend.api_key.strip():
+            return None
+        if "api.deepseek.com" not in backend.cloud_base_url:
+            # 自建网关不一定代理了这两个端点；静默登记会让模型拿到一串 404。
+            return None
+        return DeepSeekWeb(backend.api_key)
 
     def _report_plugin_issues(self, issues: Sequence[PluginIssue]) -> None:
         """插件装不上时**说一句**（每个会话只说一次）。
@@ -2206,6 +2227,12 @@ class MainWindow(QMainWindow):
             fired=self._reminders_fired,
             cancellations=self._reminders_cancelled,
             read_root=self._read_roots,
+            # **写与执行限的是同一组根**（用户拍板）：读是看、写是改，但"能读的地方"
+            # 就是用户已经授权过的地方；一次授权不该自动扩成另一次。
+            write_root=self._read_roots,
+            data_root=data_dir(),
+            allow_commands=self._allow_commands,
+            net=self._web_backend(),
         )
         thread = QThread(self)
         worker = AgentWorker(
@@ -3610,6 +3637,9 @@ class MainWindow(QMainWindow):
                 dialog.tools_changed.connect(self._on_tools_changed)
                 dialog.vision_changed.connect(self._on_cloud_vision_changed)
                 dialog.audio_changed.connect(self._on_cloud_audio_changed)
+                dialog.web_changed.connect(self._on_web_changed)
+                dialog.web_approval_changed.connect(self._on_web_approval_changed)
+                dialog.commands_changed.connect(self._on_commands_changed)
                 dialog.voice_changed.connect(self._on_voice_settings_changed)
                 dialog.memory_changed.connect(self._on_memory_changed)
                 dialog.reminders_changed.connect(self._on_reminders_changed)
@@ -3756,7 +3786,13 @@ class MainWindow(QMainWindow):
         （重开窗口那条路走的正是第二处）。所以拼装只有一个出处。
         """
         return ToolSettings(
-            read_roots=self._read_roots, cloud_vision=self._cloud_vision, audio_in=self._audio_in
+            read_roots=self._read_roots,
+            write_roots=self._read_roots,
+            allow_commands=bool(getattr(self, "_allow_commands", False)),
+            web_enabled=bool(getattr(self, "_web_enabled", False)),
+            web_require_approval=bool(getattr(self, "_web_require_approval", False)),
+            cloud_vision=self._cloud_vision,
+            audio_in=self._audio_in,
         )
 
     @Slot(bool)
@@ -3771,6 +3807,21 @@ class MainWindow(QMainWindow):
         中途改变。
         """
         self._cloud_vision = bool(flag)
+        self._settings_store.save_tools(self._current_tool_settings())
+
+    @Slot(bool)
+    def _on_web_changed(self, flag: bool) -> None:
+        self._web_enabled = bool(flag)
+        self._settings_store.save_tools(self._current_tool_settings())
+
+    @Slot(bool)
+    def _on_web_approval_changed(self, flag: bool) -> None:
+        self._web_require_approval = bool(flag)
+        self._settings_store.save_tools(self._current_tool_settings())
+
+    @Slot(bool)
+    def _on_commands_changed(self, flag: bool) -> None:
+        self._allow_commands = bool(flag)
         self._settings_store.save_tools(self._current_tool_settings())
 
     @Slot(bool)

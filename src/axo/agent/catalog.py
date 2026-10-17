@@ -42,6 +42,9 @@
 from __future__ import annotations
 
 import base64
+import platform
+import shutil
+import sys
 import time
 from collections.abc import Sequence
 from datetime import datetime
@@ -54,8 +57,17 @@ from memcore.recall import RecallConfig, recall
 from ..llm.base import ToolSpec
 from ..memory.forget import can_soft_forget, soft_forgotten
 from ..memory.policy import MemoryDraft
+from ..net import DEFAULT_COUNT, WebError
 from ..stickers import Sticker, catalog_line, find_in
-from .fs import ReadFileError, read_text, resolve_within
+from .fs import (
+    MAX_LIST_ENTRIES,
+    MAX_SEARCH_RESULTS,
+    ReadFileError,
+    list_entries,
+    read_text,
+    resolve_within,
+    search_text,
+)
 from .reminders import (
     REPEAT_DAILY,
     REPEAT_ONCE,
@@ -76,14 +88,19 @@ from .tools import (
 )
 
 __all__ = [
+    "FetchUrlTool",
     "ForgetMemoryTool",
+    "ListFilesTool",
     "ListRemindersTool",
     "CancelReminderTool",
     "GetTimeTool",
     "ReadFileTool",
     "ReadMemoryTool",
+    "SearchFilesTool",
     "SearchMemoryTool",
     "SetReminderTool",
+    "SystemInfoTool",
+    "WebSearchTool",
     "WriteMemoryTool",
     "default_tools",
 ]
@@ -964,12 +981,203 @@ class LookAtScreenTool:
         )
 
 
+class ListFilesTool:
+    """列一个目录。**只读，不过闸门。**"""
+
+    spec: ClassVar[ToolSpec] = ToolSpec(
+        name="list_files",
+        description=(
+            "列出允许目录里某个文件夹的内容。用户说「那个文件夹里有什么」「都有哪些文件」"
+            "时用它。不传 path 就列第一个允许目录的根。目录名带结尾斜杠。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "相对于允许目录的文件夹路径；不传 = 根。",
+                },
+                "limit": {"type": "integer", "description": "最多列多少项（默认 200）。"},
+            },
+        },
+    )
+    requires_approval: ClassVar[bool] = False
+
+    def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+        raw = argument_str(arguments, "path", required=False) or "."
+        limit = argument_int(
+            arguments, "limit", default=MAX_LIST_ENTRIES, minimum=1, maximum=MAX_LIST_ENTRIES
+        )
+        assert limit is not None
+        try:
+            path = resolve_within(ctx.read_root, raw)
+            names, total = list_entries(path, limit=limit)
+        except ReadFileError as exc:
+            return ToolOutcome.failure(str(exc))
+        body = "\n".join(names) if names else "（空目录）"
+        if total > len(names):
+            body += f"\n\n…还有 {total - len(names)} 项没列出来（可以调大 limit 或在子目录里列）"
+        return ToolOutcome.success(f"{path}（共 {total} 项）：\n{body}", replayable=False)
+
+
+class SearchFilesTool:
+    """在允许目录里按正则搜文本。**只读，不过闸门。**"""
+
+    spec: ClassVar[ToolSpec] = ToolSpec(
+        name="search_files",
+        description=(
+            "在允许目录里按正则搜索文件内容，返回命中的文件、行号与那一行。用户说"
+            "「哪里写了……」「帮我找一下包含……的文件」时用它。文件很多时会提前停下并说明。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "正则表达式。"},
+                "path": {
+                    "type": "string",
+                    "description": "搜索起点（相对路径）；默认第一个允许目录。",
+                },
+                "glob": {"type": "string", "description": "只搜匹配这个通配符的文件，例如 *.py。"},
+                "max_results": {
+                    "type": "integer",
+                    "description": "最多返回多少条命中（默认 20）。",
+                },
+            },
+            "required": ["pattern"],
+        },
+    )
+    requires_approval: ClassVar[bool] = False
+
+    def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+        pattern = argument_str(arguments, "pattern")
+        raw = argument_str(arguments, "path", required=False) or "."
+        glob_pattern = argument_str(arguments, "glob", required=False) or "*"
+        limit = argument_int(
+            arguments, "max_results", default=20, minimum=1, maximum=MAX_SEARCH_RESULTS
+        )
+        assert limit is not None
+        try:
+            base = resolve_within(ctx.read_root, raw)
+            hits = search_text(base, pattern, glob_pattern=glob_pattern, max_results=limit)
+        except ReadFileError as exc:
+            return ToolOutcome.failure(str(exc))
+        if not hits:
+            return ToolOutcome.success(f"没有找到匹配 {pattern!r} 的内容。", replayable=False)
+        lines = [f"{hit.path}:{hit.line_no}: {hit.line}" for hit in hits]
+        body = "\n".join(lines)
+        if len(hits) >= limit:
+            body += f"\n\n（只给了前 {limit} 条；要更多请换更具体的关键词或调大 max_results）"
+        return ToolOutcome.success(body, replayable=False)
+
+
+class SystemInfoTool:
+    """这台机器的基本情况。**只读，不过闸门。**"""
+
+    spec: ClassVar[ToolSpec] = ToolSpec(
+        name="system_info",
+        description=(
+            "查看这台机器的大致情况：操作系统、Python 版本、当前目录、磁盘剩余空间。"
+            "用户问「你跑在什么机器上」「磁盘还有多少」时用它。**不要用它代替告诉用户"
+            "具体某个文件的内容。**"
+        ),
+        parameters={"type": "object", "properties": {}},
+    )
+    requires_approval: ClassVar[bool] = False
+
+    def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+        lines = [
+            f"系统：{platform.platform()}",
+            f"Python：{sys.version.split()[0]}",
+            f"当前目录：{Path.cwd()}",
+        ]
+        root = ctx.data_root or Path.cwd()
+        try:
+            usage = shutil.disk_usage(root)
+            free_gb = usage.free / (1024**3)
+            total_gb = usage.total / (1024**3)
+            lines.append(f"数据盘（{root.anchor}）：剩余 {free_gb:.1f} GB / 共 {total_gb:.1f} GB")
+        except OSError:
+            pass
+        return ToolOutcome.success("\n".join(lines), replayable=False)
+
+
+class WebSearchTool:
+    """联网搜索（DeepSeek 原生）。**只读，但会让关键词离开本机。**"""
+
+    spec: ClassVar[ToolSpec] = ToolSpec(
+        name="web_search",
+        description=(
+            "联网搜索最新信息。用户问「最近」「现在」「查一下」这类需要网络的问题时用它。"
+            "搜索会把关键词发给搜索服务；结果里带来源网址，回答时要说明来源。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "搜索词（最多 128 字）。"},
+                "count": {"type": "integer", "description": "要几条结果（默认 8，最多 50）。"},
+            },
+            "required": ["query"],
+        },
+    )
+    requires_approval: ClassVar[bool] = False
+
+    def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+        query = argument_str(arguments, "query")
+        count = argument_int(arguments, "count", default=DEFAULT_COUNT, minimum=1, maximum=50)
+        assert count is not None
+        if ctx.net is None:
+            return ToolOutcome.failure("这一轮没有联网搜索通道。")
+        try:
+            hits = ctx.net.search(query, count=count)
+        except WebError as exc:
+            return ToolOutcome.failure(str(exc))
+        if not hits:
+            return ToolOutcome.success("搜索没有返回结果。", replayable=False)
+        lines = []
+        for index, hit in enumerate(hits, start=1):
+            summary = hit.summary or hit.snippet
+            lines.append(f"{index}. {hit.title}\n   {hit.url}\n   {summary}")
+        return ToolOutcome.success("\n".join(lines), replayable=False)
+
+
+class FetchUrlTool:
+    """抓一页正文（DeepSeek 原生 Fetch）。**只读。**"""
+
+    spec: ClassVar[ToolSpec] = ToolSpec(
+        name="fetch_url",
+        description=(
+            "抓取一个网页的正文（Markdown）。需要读某篇具体页面时用它；只知道要查什么时"
+            "先用 web_search。正文可能被截断，会明确说明。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "http/https 地址。"},
+            },
+            "required": ["url"],
+        },
+    )
+    requires_approval: ClassVar[bool] = False
+
+    def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+        url = argument_str(arguments, "url")
+        if ctx.net is None:
+            return ToolOutcome.failure("这一轮没有联网抓取通道。")
+        try:
+            title, content = ctx.net.fetch(url)
+        except WebError as exc:
+            return ToolOutcome.failure(str(exc))
+        head = f"{title}\n{url}\n\n" if title else f"{url}\n\n"
+        return ToolOutcome.success(head + content, replayable=False)
+
+
 def default_tools(
     *,
     read_root: Sequence[Path] = (),
     vision: bool = False,
     stickers: Sequence[Sticker] = (),
     plugins: Sequence[Tool] = (),
+    web: Any | None = None,
 ) -> tuple[Tool, ...]:
     """十个工具。
 
@@ -1005,6 +1213,17 @@ def default_tools(
         ListRemindersTool(),
         CancelReminderTool(),
         *((ReadFileTool(),) if read_root else ()),
+        # 目录与搜索与 read_file 同一个前提：**没有可读目录时它们注定失败**，
+        # 登记它们只会让模型去试一次然后被拒。
+        *((ListFilesTool(), SearchFilesTool()) if read_root else ()),
+        SystemInfoTool(),
+        # 联网读**默认不登记**（出网行为）；调用方只在用户打开开关且配了 key 时传
+        # ``web``。两个工具与其它只读工具一样不过闸门——是否联网由总开关决定。
+        *(
+            (WebSearchTool(), FetchUrlTool())
+            if web is not None and getattr(web, "available", False)
+            else ()
+        ),
         # 追加，不插队（见上面那条"顺序就是声明顺序"）。
         *((LookAtScreenTool(),) if vision else ()),
         # 没有表情包就不登记它——同 ``read_file`` 与 ``look_at_screen`` 那条账。
