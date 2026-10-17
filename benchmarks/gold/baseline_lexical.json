@@ -3,12 +3,12 @@
   "corpus": {
     "schema_version": 1,
     "memories": {
-      "count": 200,
-      "sha256": "69ca657ee25337575ee6324acc2675238f3717b86ef5063e91614c4e2ee3d850"
+      "count": 208,
+      "sha256": "de0c66cfccb026209c896e32ad5425f826f3c192b13acd78c8643f89c835dd5d"
     },
     "queries": {
-      "count": 76,
-      "sha256": "697cb4f75f7a0df2aca8bc7cf76197b724cbd4a963f3a0cde46d017565eb7cf2"
+      "count": 85,
+      "sha256": "300afc501eb78d8b740850e12184f916fc39184e676881c1e29ba8e80f75f517"
     }
   },
   "channels": [
@@ -18,29 +18,31 @@
   "config": {
     "lexical_weight": 0.9,
     "semantic_weight": 0.45,
+    "time_weight": 1.0,
     "graph_weight": 0.0,
+    "graph_decay": 0.5,
     "min_score": 0.1,
     "redundancy_threshold": 0.7,
     "mmr_lambda": 0.75,
-    "max_items": 8,
+    "max_items": null,
     "candidate_limit": 200,
     "max_rejected": 40
   },
   "metrics": {
-    "hit@1": 0.8823529411764706,
-    "recall@1": 0.8823529411764706,
-    "hit@3": 0.9411764705882353,
-    "recall@3": 0.9411764705882353,
-    "hit@5": 0.9558823529411765,
-    "recall@5": 0.9558823529411765,
-    "hit@8": 0.9558823529411765,
-    "recall@8": 0.9558823529411765,
-    "mrr": 0.9073529411764707,
-    "mrr_answered": 0.9492307692307693,
-    "false_injection_rate": 0.8205128205128205,
-    "no_answer_injections": 2.375,
-    "auc": 0.9092946725860155,
-    "hard_negative_auc": 0.9118961675579322
+    "hit@1": 0.8961038961038961,
+    "recall@1": 0.8961038961038961,
+    "hit@3": 0.922077922077922,
+    "recall@3": 0.922077922077922,
+    "hit@5": 0.935064935064935,
+    "recall@5": 0.935064935064935,
+    "hit@8": 0.948051948051948,
+    "recall@8": 0.948051948051948,
+    "mrr": 0.9095238095238095,
+    "mrr_answered": 0.9593607305936073,
+    "false_injection_rate": 0.8679245283018868,
+    "no_answer_injections": 6.5,
+    "auc": 0.9289143735081895,
+    "hard_negative_auc": 0.9301729397753113
   },
   "per_category": {
     "budget": {
@@ -76,7 +78,7 @@
     "paraphrase": {
       "n": 5,
       "hit@1": 0.2,
-      "mrr": 0.33999999999999997
+      "mrr": 0.30666666666666664
     },
     "pinned_twin": {
       "n": 2,
@@ -86,10 +88,15 @@
     "redundant_pair": {
       "n": 5,
       "hit@1": 0.6,
-      "mrr": 0.7333333333333333
+      "mrr": 0.6333333333333333
     },
     "session_exclude": {
       "n": 3,
+      "hit@1": 1.0,
+      "mrr": 1.0
+    },
+    "temporal": {
+      "n": 9,
       "hit@1": 1.0,
       "mrr": 1.0
     }
@@ -102,6 +109,6 @@
     "false_injection_rate": 0.05,
     "auc": 0.02
   },
-  "frozen_at": "2026-10-10T02:33:38Z",
+  "frozen_at": "2026-10-17T10:13:17Z",
   "note": "这是**实测值，不是目标值**。门槛 = 本文件的值 ± tolerance，方向见 tools/bench_recall.py 的 LOWER_IS_BETTER。改语料要同时改 freeze.json 并重跑 --freeze。"
 }

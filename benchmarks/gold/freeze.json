@@ -1,23 +1,24 @@
 {
   "schema_version": 1,
   "memories": {
-    "count": 200,
-    "sha256": "69ca657ee25337575ee6324acc2675238f3717b86ef5063e91614c4e2ee3d850"
+    "count": 208,
+    "sha256": "de0c66cfccb026209c896e32ad5425f826f3c192b13acd78c8643f89c835dd5d"
   },
   "queries": {
-    "count": 76,
-    "sha256": "697cb4f75f7a0df2aca8bc7cf76197b724cbd4a963f3a0cde46d017565eb7cf2"
+    "count": 85,
+    "sha256": "300afc501eb78d8b740850e12184f916fc39184e676881c1e29ba8e80f75f517"
   },
   "categories": {
     "name_number": 30,
-    "exact": 8,
+    "temporal": 9,
     "distractor_topic": 8,
+    "exact": 8,
     "no_answer": 8,
-    "redundant_pair": 5,
     "budget": 5,
     "paraphrase": 5,
+    "redundant_pair": 5,
+    "session_exclude": 3,
     "cold_twin": 2,
-    "pinned_twin": 2,
-    "session_exclude": 3
+    "pinned_twin": 2
   }
 }
