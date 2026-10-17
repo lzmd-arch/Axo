@@ -34,7 +34,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -722,6 +722,27 @@ class MemoryStore:
                 [(memory_id,) for memory_id in memory_ids],
             )
             self._connection.commit()
+
+    def set_tiers(self, rows: Sequence[tuple[str, Tier]]) -> int:
+        """批量改层级，返回真的写了几行。
+
+        **只动 ``tier`` 这一列**——与 :meth:`bump_reinforce` 同一条纪律（那个只动
+        ``reinforce_count``）。它不改正文、不改权重、不改任何时间戳。
+
+        空列表直接返回（同 ``bump_reinforce`` 那条理由：空事务也要付代价）。
+        写不存在的 id 不会报错——记忆可能在这一轮跑的过程中被用户删掉了，而那不该
+        让整轮巩固失败。
+        """
+        if not rows:
+            return 0
+        with self._lock:
+            before = self._connection.total_changes
+            self._connection.executemany(
+                "UPDATE memories SET tier = ? WHERE memory_id = ?",
+                [(tier.value, memory_id) for memory_id, tier in rows],
+            )
+            self._connection.commit()
+            return self._connection.total_changes - before
 
     def reinforce_stats(self) -> tuple[int, int]:
         """``(被加固过的记忆条数, 加固总次数)``。**空库是 ``(0, 0)``。**

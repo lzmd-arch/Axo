@@ -176,3 +176,34 @@ def test_the_write_side_uses_the_same_grouping_as_the_pure_layer() -> None:
     planned = entry.plan_merges(items)
 
     assert [group.memory_ids for group in planned] == [group.memory_ids for group in groups]
+
+
+def test_a_reinforced_memory_climbs_a_tier(data_dir: Path) -> None:
+    """**真跑一轮**：回放认得出自己两次 → 升一层，并落一条 promote 事件。
+
+    这一条把纯层的判据与写库接起来看：run.moved 说升了谁，库里就该真的变，事件账里
+    就该有一条 promote。三处对不上任何一处，都是「记账说做了、实际没做」。
+    """
+    with MemoryStore(memory_db_path()) as store:
+        for one in _fragments():
+            store.add(one.copy(reinforce_count=1))
+        tiers_before = {item.memory_id: item.tier for item in store.load_all()}
+
+        run = entry.run_consolidation(store, _one_cluster(), at=AT)
+
+        promoted = {move.memory_id for move in run.moved if move.decision == "promote"}
+        assert promoted, "这一轮认出了自己，应该至少升一条"
+        for memory_id in promoted:
+            assert store.get(memory_id).tier is Tier.LONGTERM
+        for memory_id, tier in tiers_before.items():
+            if memory_id not in promoted:
+                assert store.get(memory_id).tier is tier, f"{memory_id} 的层被顺手改了"
+
+        rows = [
+            json.loads(line)
+            for line in run.events_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        promote_rows = [row for row in rows if row.get("decision") == "promote"]
+        assert {row["memory_id"] for row in promote_rows} == promoted
+        assert all(row["detail"]["to"] == "longterm" for row in promote_rows)

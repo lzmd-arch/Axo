@@ -40,8 +40,10 @@ from typing import Any
 from memcore.consolidation import (
     BASE_SEED,
     DEFAULT_DROP,
+    DEMOTE,
     MAX_CLUSTER,
     MERGE,
+    PROMOTE,
     REINFORCE,
     RunReport,
     append_events,
@@ -53,6 +55,7 @@ from memcore.ids import new_ulid
 from memcore.merge import FragmentGroup, group_fragments, render_group
 from memcore.sdr import encode_lexical
 from memcore.store import MemoryStore
+from memcore.tiers import TierMove, plan_tier_moves
 from memcore.types import MemoryItem, MemoryKind
 
 from ..paths import consolidation_events_path, consolidation_last_path, snapshot_dir
@@ -149,6 +152,9 @@ class ConsolidationRun:
     reinforced: int
     """真的 ``+1`` 了的条数，= ``len(report.reinforced)``。"""
 
+    moved: tuple[TierMove, ...]
+    """这一轮升降了哪些层。**算「记账」，不是「改记忆」**——只动 ``tier`` 一列。"""
+
     merged: tuple[MemoryItem, ...]
     """归并出来的派生条目。它们是**新增的行**，不改任何既有行——见
     :func:`write_merges`。"""
@@ -211,9 +217,12 @@ def run_consolidation(
 
     # 归并的**规划**排在快照之前，**写**排在快照之后——见 plan_merges 的注释。
     planned_merges = plan_merges(items)
+    # 升降层同理：先算，快照之后才写。``reinforced`` 传进去是为了让「这一轮刚被认出」
+    # 一次就能凑够第二次（SQL 层的自增还没发生）。
+    planned_moves = plan_tier_moves(items, now=at, reinforced=report.reinforced)
 
     snapshot_path: Path | None = None
-    if snapshot and (report.reinforced or planned_merges):
+    if snapshot and (report.reinforced or planned_merges or planned_moves):
         # 空转的一轮（一条都没加固）不拍：整库复制是几百 MB 的写，而它保护的那次
         # 修改根本不存在。**判断用的是 `reinforced` 而不是"跑完没有"**——只有
         # 认出自己才会写库，串扰与跳过都只进事件。
@@ -244,6 +253,17 @@ def run_consolidation(
     )
     written += merges.events_written
 
+    moves = write_tier_moves(
+        store,
+        planned_moves,
+        events_path=events_path,
+        run_id=report.run_id,
+        at=at,
+        run_seed=report.run_seed,
+        seq_from=written,
+    )
+    written += moves
+
     # ``last.json`` 排在**所有写之后**，而且**空轮也写**（见模块文档第 3 条）。
     # ``newest_id`` 在这里现问一次库，不用上面那份 ``items``：那一份是这一轮**开始时**
     # 读的，而这一轮可能跑了几分钟——期间写进来的新记忆才是"下次该不该跑"要看的。
@@ -255,6 +275,7 @@ def run_consolidation(
         events_written=written,
         reinforced=len(report.reinforced),
         merged=merges.created,
+        moved=tuple(planned_moves),
         snapshot=snapshot_path,
     )
 
@@ -323,6 +344,46 @@ def write_merges(
             events_path,
         )
     return MergeResult(created=tuple(created), events_written=written)
+
+
+def write_tier_moves(
+    store: MemoryStore,
+    moves: Sequence[TierMove],
+    *,
+    events_path: Path,
+    run_id: str,
+    at: float,
+    run_seed: int,
+    seq_from: int = 0,
+) -> int:
+    """把升降写进库、并落事件行。返回写了多少条事件。
+
+    **一次 ``executemany`` 改完**，然后按条落事件：层级是单列更新，拆成逐条写只会
+    多付几百次事务的钱；而事件是证据，逐条落才有「崩在中间留下的是对得上账的前缀」
+    那个性质。
+    """
+    if not moves:
+        return 0
+    store.set_tiers([(move.memory_id, move.to_tier) for move in moves])
+    append_events(
+        tuple(
+            {
+                "run_id": run_id,
+                "run_seed": run_seed,
+                "seq": seq_from + index,
+                "memory_id": move.memory_id,
+                "decision": PROMOTE if move.decision == "promote" else DEMOTE,
+                "at": at,
+                "epoch": 0,
+                "jaccard": None,
+                "confused_with": None,
+                "detail": {"from": move.from_tier.value, "to": move.to_tier.value},
+            }
+            for index, move in enumerate(moves)
+        ),
+        events_path,
+    )
+    return len(moves)
 
 
 def _covered_fragments(items: Sequence[MemoryItem]) -> set[frozenset[str]]:

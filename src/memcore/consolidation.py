@@ -83,6 +83,8 @@ SLEEP_CONFUSION = "sleep_confusion"
 SLEEP_REPLAY_MISS = "sleep_replay_miss"
 SKIP = "skip"
 MERGE = "merge"
+PROMOTE = "promote"
+DEMOTE = "demote"
 """碎条目归并成一条派生条目。**只增不改**：写出的是新的一行，原句一字不动。
 
 回放那三个决策改的都是 ``reinforce_count``，这一条**什么旧账都不改**——它只是
