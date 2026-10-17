@@ -67,6 +67,20 @@ class RemoteSpeech:
         #: 真调用方不传，走网络（与 ``openai_compat`` 各后端同姿态）。
         self._transport = transport
 
+    def probe(self, *, timeout: float = 0.5) -> bool:
+        """端口上有没有东西在答。**只看它活着，不看它答得对不对。**
+
+        自动启动之前先问这一句：已经有东西在响应就不该再拉一个（否则会起第二个、
+        抢不到端口，然后在组件的日志里留下一串与用户无关的错）。
+        """
+        try:
+            with httpx.Client(
+                base_url=self.base_url, timeout=timeout, trust_env=not _is_loopback(self.base_url)
+            ) as client:
+                return client.get("/v1/audio/speech").status_code < 500
+        except httpx.HTTPError:
+            return False
+
     def synthesize(self, text: str, *, voice: str = "") -> SpeechResult:
         """合成一段。**不抛**（见模块文档）。"""
         body = speech_payload(text.strip(), voice=voice, model=self.model)

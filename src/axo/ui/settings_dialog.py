@@ -1857,6 +1857,31 @@ class SpeechPage(QWidget):
             )
         )
 
+        outer.addWidget(_section("启动"))
+        self.autostart_box = QCheckBox("启动时自动拉起组件", self)
+        self.autostart_box.setObjectName("speechAutostartBox")
+        self.autostart_box.setChecked(self._snapshot.autostart)
+        self.autostart_box.toggled.connect(self._on_toggled)
+        outer.addWidget(self.autostart_box)
+
+        command_row = QHBoxLayout()
+        self.command_edit = QLineEdit(self._snapshot.launch_command, self)
+        self.command_edit.setObjectName("speechLaunchCommand")
+        self.command_edit.setPlaceholderText("组件启动命令（一个 .bat / .exe 的路径）")
+        self.command_edit.editingFinished.connect(self._on_toggled)
+        command_row.addWidget(self.command_edit, 1)
+        self.command_button = QPushButton("选择…", self)
+        self.command_button.clicked.connect(self._on_pick_command)
+        command_row.addWidget(self.command_button)
+        outer.addLayout(command_row)
+        outer.addWidget(
+            _hint(
+                "组件是独立进程（torch 不进本仓那条纪律），所以这里要一条**启动命令**。"
+                "程序起来时会先探一眼端口：已经有东西在答就不拉；退出时**只收自己拉的那个**，"
+                "你自己开着的那个不动。"
+            )
+        )
+
         self.note = _hint("")
         self.note.setObjectName("speechNote")
         outer.addWidget(self.note)
@@ -1882,6 +1907,8 @@ class SpeechPage(QWidget):
         self.volume_box.setValue(settings.volume)
         self._fill_voices(settings.voice)
         self.endpoint_edit.setText(settings.base_url)
+        self.autostart_box.setChecked(settings.autostart)
+        self.command_edit.setText(settings.launch_command)
         self._syncing = False
         self.set_note("")
 
@@ -1891,7 +1918,23 @@ class SpeechPage(QWidget):
             volume=self.volume_box.value(),
             voice=str(self.voice_combo.currentData() or ""),
             base_url=self.endpoint_edit.text().strip(),
+            autostart=self.autostart_box.isChecked(),
+            launch_command=self.command_edit.text().strip(),
         )
+
+    def _on_pick_command(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+
+        chosen, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择语音组件的启动命令",
+            self.command_edit.text().strip(),
+            "启动命令 (*.bat *.cmd *.exe);;所有文件 (*)",
+        )
+        if not chosen:
+            return
+        self.command_edit.setText(chosen)
+        self._on_toggled()
 
     def revert(self) -> None:
         if self.settings() == self._snapshot:

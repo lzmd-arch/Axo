@@ -384,6 +384,27 @@ def test_speech_settings_roundtrip_and_clamp() -> None:
     assert SettingsStore(FakeBackend({"speech/enabled": "false"})).load_voice().enabled is False
 
 
+def test_speech_autostart_defaults_off_and_roundtrips() -> None:
+    """「启动时拉起语音组件」**默认关**：组件是独立进程、路径只有用户知道，我们不猜。
+
+    这一项只做"替你按一下启动"，所以命令与开关一起往返——只存开关不存命令，等于
+    开了一个永远拉不起来的功能。
+    """
+    from axo.ui.settings_store import SpeechSettings
+
+    assert SettingsStore(FakeBackend()).load_voice().autostart is False
+    assert SettingsStore(FakeBackend()).load_voice().launch_command == ""
+
+    store = SettingsStore(FakeBackend())
+    original = SpeechSettings(autostart=True, launch_command="C:/组件/启动.bat")
+    store.save_voice(original)
+    assert store.load_voice() == original
+
+    assert (
+        SettingsStore(FakeBackend({"speech/autostart": "false"})).load_voice().autostart is False
+    ), "注册表里读回来的 'false' 是真值，这里必须走 _as_bool"
+
+
 def test_audio_in_is_off_by_default() -> None:
     """「当前模型听得见原声」默认关——勾上是一次**用户声明**（云端/兼容端点问不到
     能力），不是我们的猜测。默认开的话，转写文字那条兜底路会被悄悄换掉。"""

@@ -183,6 +183,7 @@ from .settings_store import (
     wallpaper_file,
 )
 from .speech_player import SpeechPlayer, TtsWorker
+from .speech_process import SpeechLauncher
 from .theme import Resolved, Theme, resolve
 from .theme_qt import QSettingsBackend, apply_theme, os_color_scheme
 from .thread_tracking import track, wait_for_all
@@ -769,6 +770,9 @@ class MainWindow(QMainWindow):
         self._pending_images: tuple[str, ...] = ()
         #: 已经报过的插件问题（同一句话只说一次，见 :meth:`_report_plugin_issues`）。
         self._plugin_issues: set[str] = set()
+        #: 这一趟是不是我们把语音组件拉起来的（是才由我们收，见
+        #: :meth:`_autostart_speech` 与 ``ui/speech_process.py``）。
+        self._speech_launcher: SpeechLauncher | None = None
         #: **播出回执**（``tts.SpeechReceipt``）：她说的那句出没出声。**下一轮进
         #: 环境槽后即清**——它是一条关于「刚说那句」的信号，不是常驻状态。
         self._speech_receipt: Any = None
@@ -899,6 +903,10 @@ class MainWindow(QMainWindow):
         # :meth:`_shutdown`。
         if self._consolidation_enabled:
             self._consolidation_scheduler.start()
+
+        # **她开口的那一侧也要有人按一下启动。** 组件是独立进程（torch 不进本仓），
+        # 这一句只是「替用户按一下」：先探端口、没在跑才拉，退出时只收自己拉的那个。
+        self._autostart_speech()
 
     # ── 外观 ────────────────────────────────────────────────────────────────
 
@@ -4218,6 +4226,29 @@ class MainWindow(QMainWindow):
         )
         return answer == QMessageBox.StandardButton.Yes
 
+    def _autostart_speech(self) -> None:
+        """程序起来时把语音组件拉起来（设置里开着、且配了命令的话）。
+
+        **先探再拉**：端口上已经有东西在答就不拉（用户自己开着的那个，我们不动）。
+        拉起来了就说一句——第一次合成要加载模型，这段时间她的话只出字，而用户看到
+        的应该是一个解释而不是一段沉默。
+        """
+        settings = self._voice_settings
+        command = settings.launch_command.strip()
+        if not settings.autostart or not command:
+            return
+        launcher = SpeechLauncher(command, probe=RemoteSpeech(settings.base_url).probe)
+        note = launcher.ensure()
+        self._speech_launcher = launcher if launcher.started else None
+        if note:
+            self.chat_view.append_message("system", note)
+        elif launcher.started:
+            self.chat_view.append_message(
+                "system",
+                "**正在启动语音组件。** 第一次合成要加载模型，可能要等十几秒到一分钟；"
+                "这期间她的话只出字，不会没声没息。",
+            )
+
     def _shutdown(self) -> None:
         """**唯一的退出路径。** 幂等。
 
@@ -4291,6 +4322,11 @@ class MainWindow(QMainWindow):
         # 它（比提醒那条更坏）会去起一个**写库**的线程——那个线程在解释器收尾时
         # 还在跑，就是下一次 ``0xC0000409``。
         self._consolidation_scheduler.stop()
+        # **只收自己拉起来的那个语音组件进程树。** 用户自己开着的那个我们不知道
+        # 从哪儿来的，也不该动（见 ``ui/speech_process.py`` 的模块文档）。
+        if self._speech_launcher is not None:
+            self._speech_launcher.stop()
+            self._speech_launcher = None
         # **摘掉托盘图标。** 留着的话，Windows 上那个死图标要等鼠标划过才消失——
         # 用户看到的是"我已经退出了，它还在那儿"。
         self._tray.hide()

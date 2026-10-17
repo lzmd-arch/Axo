@@ -83,6 +83,8 @@ _K_SPEECH_ENABLED = "speech/enabled"
 _K_SPEECH_VOLUME = "speech/volume"
 _K_SPEECH_VOICE = "speech/voice"
 _K_SPEECH_BASE_URL = "speech/base_url"
+_K_SPEECH_AUTOSTART = "speech/autostart"
+_K_SPEECH_COMMAND = "speech/launch_command"
 
 _K_TASK_MEMORY = "memory/task_memory"
 _K_GRAPH_CHANNEL = "memory/graph_channel"
@@ -247,12 +249,19 @@ class SpeechSettings:
             这个产品的脸之一，而 ``getVoices()`` 那种系统清单在不同机器上差得远，
             自己放参考音才可预期）。
         base_url: 语音组件（离线克隆 TTS 那个独立程序）的根地址。
+        autostart: **程序启动时把组件拉起来**（默认关）。组件仍是独立进程，这一项只是
+            "替你按一下启动"：先探端口，没在跑才拉；退出时只收自己拉的那个。
+        launch_command: 启动命令（一个 ``.bat`` / ``.cmd`` / ``.exe`` 的路径）。
+            空串 = 不自动启动——**不猜路径**：组件装在哪儿是用户的事，
+            而猜错一个路径的后果是每次开机多一行错。
     """
 
     enabled: bool = True
     volume: int = 80
     voice: str = ""
     base_url: str = DEFAULT_SPEECH_ENDPOINT
+    autostart: bool = False
+    launch_command: str = ""
 
 
 @dataclass(frozen=True)
@@ -501,6 +510,8 @@ class SettingsStore:
             volume=volume,
             voice=self._text(_K_SPEECH_VOICE),
             base_url=base_url,
+            autostart=_as_bool(self._backend.value(_K_SPEECH_AUTOSTART, False), False),
+            launch_command=self._text(_K_SPEECH_COMMAND),
         )
 
     def save_voice(self, settings: SpeechSettings) -> None:
@@ -509,6 +520,8 @@ class SettingsStore:
         self._backend.setValue(_K_SPEECH_VOLUME, settings.volume)
         self._backend.setValue(_K_SPEECH_VOICE, settings.voice)
         self._backend.setValue(_K_SPEECH_BASE_URL, settings.base_url)
+        self._backend.setValue(_K_SPEECH_AUTOSTART, bool(settings.autostart))
+        self._backend.setValue(_K_SPEECH_COMMAND, settings.launch_command)
 
     # ── 记忆 ────────────────────────────────────────────────────────────────
 
