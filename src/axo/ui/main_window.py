@@ -789,6 +789,8 @@ class MainWindow(QMainWindow):
         self._speech_pipeline: SpeechPipeline | None = None
         self._pipeline_fed = False
         self._pipeline_text = ""
+        #: 这一轮走的是工具循环（agent）：**中间几轮的"边想边说"不念**，只念最终回答。
+        self._agent_turn = False
         #: 通话期间到点、但没有由她开口的提醒。下一轮 L1 里告诉她。
         self._call_pending_alerts: list[str] = []
         #: 正在念/正要念的那句（回执要引用它；合成与播放是两步）。
@@ -1724,6 +1726,7 @@ class MainWindow(QMainWindow):
             pipeline.reset()
         self._pipeline_fed = False
         self._pipeline_text = ""
+        self._agent_turn = False
         if self._call.live:
             # 打字/语音提交时，通话的麦克风必须先关：不然她一边回答、一边还在录。
             self._call.on_user_turn_started()
@@ -2226,6 +2229,7 @@ class MainWindow(QMainWindow):
     def _start_agent_turn(self, assembly: Assembly, registry: ToolRegistry) -> None:
         """起一轮带工具的请求。"""
         assert self._backend is not None and self._budget is not None
+        self._agent_turn = True
         self._agent_cancel = threading.Event()
         ctx = ToolContext(
             store=self._memory,
@@ -2537,6 +2541,7 @@ class MainWindow(QMainWindow):
         """生成中的一段字：说出来的那一轮交给语音管线。"""
         if (
             self._call.live
+            and not getattr(self, "_agent_turn", False)
             and self._spoken_reply
             and self._voice_settings.enabled
             and self._speech_pipeline is not None
@@ -2629,6 +2634,9 @@ class MainWindow(QMainWindow):
                 else:
                     self._speak_reply(text)
         if self._call.live:
+            if will_speak and (self._speech_pipeline is None or not self._speech_pipeline.active):
+                # 管线已经收场（例如句子全空）——别再把她推进 SPEAKING。
+                will_speak = False
             # 她把话说完了：进入 SPEAKING 等播放结束，或者直接回到聆听。
             self._call.on_reply_finished(will_speak=will_speak)
         if interrupted:
