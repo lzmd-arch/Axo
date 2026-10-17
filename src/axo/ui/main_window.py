@@ -44,7 +44,7 @@ from typing import Any
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
-from PySide6.QtCore import QObject, Qt, QThread, QTimer, QUrl, Signal, Slot
+from PySide6.QtCore import QMetaObject, QObject, Qt, QThread, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -779,6 +779,10 @@ class MainWindow(QMainWindow):
         self._pending_images: tuple[str, ...] = ()
         #: 已经报过的插件问题（同一句话只说一次，见 :meth:`_report_plugin_issues`）。
         self._plugin_issues: set[str] = set()
+        #: 桌面工具（剪贴板/托盘/打开外部）的回调是**界面线程的事**，而工具跑在
+        #: agent 工作线程里——这里是一个最小交接队列（同 ``agent/handoff`` 的理由）。
+        self._ui_calls: list[tuple[Any, Any, dict[str, Any]]] = []
+        self._ui_calls_lock = threading.Lock()
         #: 这一趟是不是我们把语音组件拉起来的（是才由我们收，见
         #: :meth:`_autostart_speech` 与 ``ui/speech_process.py``）。
         self._speech_launcher: SpeechLauncher | None = None
@@ -1974,6 +1978,41 @@ class MainWindow(QMainWindow):
         self._report_plugin_issues(loaded.issues)
         return ToolRegistry([*builtin, *loaded.tools])
 
+    def _ui_call(self, func: Any, *args: Any) -> Any:
+        """在**界面线程**执行一个回调，工作线程等结果。
+
+        剪贴板与托盘都是界面线程的东西（Qt 的对象有线程亲和面）；而工具跑在
+        ``AgentWorker`` 的线程里。直接在那边调会有两类症状：偶发崩溃，或者"有时
+        生效有时不生效"——按机器与时序漂移。
+
+        **已经是在界面线程**（例如以后有直接调用）就同步执行，不走队列。
+        """
+        if QThread.currentThread() is self.thread():
+            return func(*args)
+        # **事件要放进 box 里再排队**：界面线程执行完靠它叫醒这里；漏了的话
+        # 工作线程会白等满五秒然后报"界面没有响应"。
+        box: dict[str, Any] = {"done": threading.Event()}
+        done = box["done"]
+        with self._ui_calls_lock:
+            self._ui_calls.append((func, args, box))
+        QMetaObject.invokeMethod(self, "_run_ui_calls", Qt.ConnectionType.QueuedConnection)
+        if not done.wait(5.0):
+            return "界面没有响应，这个操作没有执行。"
+        return box.get("value", "")
+
+    @Slot()
+    def _run_ui_calls(self) -> None:
+        with self._ui_calls_lock:
+            pending, self._ui_calls = self._ui_calls, []
+        for func, args, box in pending:
+            try:
+                box["value"] = func(*args)
+            except Exception as exc:  # noqa: BLE001 — 不能把界面线程炸掉
+                box["value"] = f"操作失败：{type(exc).__name__}: {exc}"
+            done = box.get("done")
+            if done is not None:
+                done.set()
+
     def _open_external(self, target: str, kind: str) -> str:
         """用系统默认程序打开。返回空串 = 成功了，否则一句原因。"""
         url = QUrl(target) if kind == "url" else QUrl.fromLocalFile(target)
@@ -2251,10 +2290,10 @@ class MainWindow(QMainWindow):
             allow_commands=self._allow_commands,
             cancel=self._agent_cancel,
             net=self._web_backend(),
-            open_external=self._open_external,
-            clipboard_read=lambda: QApplication.clipboard().text(),
-            clipboard_write=self._write_clipboard,
-            notify=lambda title, body: self._tray.show_message(title, body),
+            open_external=lambda target, kind: self._ui_call(self._open_external, target, kind),
+            clipboard_read=lambda: self._ui_call(lambda: QApplication.clipboard().text()),
+            clipboard_write=lambda text: self._ui_call(self._write_clipboard, text),
+            notify=lambda title, body: self._ui_call(lambda: self._tray.show_message(title, body)),
         )
         thread = QThread(self)
         worker = AgentWorker(
