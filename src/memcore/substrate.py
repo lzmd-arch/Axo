@@ -32,8 +32,9 @@ W 是 Hebbian 外积和 ``W = Σ_m a_m a_mᵀ``，其中 ``a_m`` 是第 m 条记
 
 ## 与 ``biosnn_bus`` 的关系，说实话
 
-:meth:`Substrate.to_spike` 是骨架库在本仓的**第一个真正的调用者**（
-:meth:`~memcore.types.SDR.to_spike_train` 此前零调用者）。但要说清楚它是什么：
+:meth:`Substrate.to_spike` 是骨架库在本仓的**唯一运行时消费者**——探针在
+:meth:`Substrate._check_probe` 里过一次 ``SpikeTrain``（校验形状、回读 ``rates``）。
+但要说清楚它是什么：
 ``biosnn_bus`` 里只有 :class:`~biosnn_bus.SpikeTrain`、``Membrane``、
 ``FusionChannel`` 三个**类型**，没有任何网络、没有任何计算可以"接线"上去。
 所以 ``to_spike`` 的产物是一个**类型级的边界对象**，不是一次仿真，也不代表有
@@ -207,12 +208,22 @@ class Substrate:
     # ── 推理 ────────────────────────────────────────────────────────────────
 
     def _check_probe(self, probe: SDR) -> np.ndarray:
+        """宽度校验 + **从骨架库的类型边界进来**。
+
+        ``SpikeTrain`` 在构造时校验 ``(T, N)`` 形状，``rates`` 回读逐神经元发放率
+        ——与 :meth:`~memcore.types.SDR.to_dense` 是同一组数（实测逐位相等，只有
+        dtype 不同，转回 float32 即可）。
+
+        **这是 ``biosnn_bus`` 在本仓唯一的运行时消费者，而它带来的是一次校验、
+        不是一次计算**——那个库里没有网络（见模块文档「与 biosnn_bus 的关系」）。
+        把它放在探针这一侧是因为一次 ``complete`` 只过一条探针，而不是逐行过。
+        """
         if probe.width != self.width:
             raise SDRCapacityError(
                 f"探针的宽度是 {probe.width}，基质的是 {self.width}——"
                 f"不同宽度的位索引不是同一套坐标。"
             )
-        return probe.to_dense()
+        return np.asarray(self.to_spike(probe).rates, dtype=np.float32)
 
     def respond(self, probe: SDR) -> np.ndarray:
         """一步迭代 ``W p``，返回 ``(N,)`` 的稠密激活。

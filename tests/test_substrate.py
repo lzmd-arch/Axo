@@ -238,3 +238,57 @@ def test_config_changes_the_built_patterns() -> None:
     assert Substrate.build(items).idx.shape[1] == SubstrateConfig().k
     narrow = Substrate.build(items, config=SubstrateConfig(k=16))
     assert narrow.idx.shape[1] == 16
+
+
+# ── 骨架库的类型边界 ──────────────────────────────────────────────────────
+
+
+def _two_row_substrate() -> tuple[Substrate, SDR]:
+    """两行的小基质，加一个能从它里面被认出来的探针。"""
+    codes = [
+        encode_assoc(encode_lexical(text), k=8, mode="weight")
+        for text in ("路由器在书房。", "冰箱调到四度。")
+    ]
+    built = Substrate.build(
+        [
+            SimpleNamespace(memory_id=f"m{index}", assoc_sdr=code, lex_sdr=None)
+            for index, code in enumerate(codes)
+        ],
+        config=SubstrateConfig(k=8, mode="weight"),
+    )
+    return built, codes[0]
+
+
+def test_the_probe_crosses_the_spike_boundary_without_changing_a_value() -> None:
+    """探针过一次 ``SpikeTrain`` 再回来，**逐位相同**。
+
+    这是「让骨架库真的在数据路径上」必须付的证明：类型边界不该顺手把数值改了。
+    实测 ``rates`` 与 ``to_dense()`` 逐位相等，只有 dtype 从 float32 变成 float64。
+    """
+    substrate, probe = _two_row_substrate()
+
+    dense = substrate._check_probe(probe)
+
+    assert np.array_equal(dense, probe.to_dense())
+    assert dense.dtype == np.float32
+
+
+def test_complete_really_goes_through_the_library(monkeypatch: pytest.MonkeyPatch) -> None:
+    """**接线守卫**：``complete`` 真的调了 ``to_spike``——不是"有个方法但没人调"。
+
+    纯层全绿不等于接线在，而这一条正是那个形状：``to_spike`` 曾经存在、有文档、
+    零调用者。
+    """
+    substrate, probe = _two_row_substrate()
+    seen: list[object] = []
+    original = Substrate.to_spike
+
+    def spy(self: Substrate, pattern: SDR) -> object:
+        seen.append(pattern)
+        return original(self, pattern)
+
+    monkeypatch.setattr(Substrate, "to_spike", spy)
+
+    substrate.complete(probe, top=1)
+
+    assert len(seen) == 1, f"complete 没走类型边界（to_spike 被调了 {len(seen)} 次）"
