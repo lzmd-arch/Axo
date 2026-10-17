@@ -1971,6 +1971,15 @@ class MainWindow(QMainWindow):
         self._report_plugin_issues(loaded.issues)
         return ToolRegistry([*builtin, *loaded.tools])
 
+    def _open_external(self, target: str, kind: str) -> str:
+        """用系统默认程序打开。返回空串 = 成功了，否则一句原因。"""
+        url = QUrl(target) if kind == "url" else QUrl.fromLocalFile(target)
+        return "" if QDesktopServices.openUrl(url) else f"系统打不开 {target}。"
+
+    def _write_clipboard(self, text: str) -> str:
+        QApplication.clipboard().setText(text)
+        return ""
+
     def _web_backend(self) -> DeepSeekWeb | None:
         """联网读的通道。**默认没有**：开关关着、没 key、或端点不是官方地址。
 
@@ -2238,6 +2247,10 @@ class MainWindow(QMainWindow):
             allow_commands=self._allow_commands,
             cancel=self._agent_cancel,
             net=self._web_backend(),
+            open_external=self._open_external,
+            clipboard_read=lambda: QApplication.clipboard().text(),
+            clipboard_write=self._write_clipboard,
+            notify=lambda title, body: self._tray.show_message(title, body),
         )
         thread = QThread(self)
         worker = AgentWorker(

@@ -93,6 +93,8 @@ from .tools import (
 
 __all__ = [
     "EditFileTool",
+    "ClipboardReadTool",
+    "ClipboardWriteTool",
     "FetchUrlTool",
     "ForgetMemoryTool",
     "ListFilesTool",
@@ -109,6 +111,8 @@ __all__ = [
     "UpdatePlanTool",
     "WebSearchTool",
     "WriteFileTool",
+    "OpenExternalTool",
+    "ShowNotificationTool",
     "WriteMemoryTool",
     "default_tools",
 ]
@@ -1424,6 +1428,130 @@ class RunCommandTool:
         return ToolOutcome.failure(text, replayable=False)
 
 
+class OpenExternalTool:
+    """用系统默认程序打开一个文件或网址。**过闸门。**"""
+
+    spec: ClassVar[ToolSpec] = ToolSpec(
+        name="open_external",
+        description=(
+            "在用户机器上用默认程序打开一个文件或网址。用户说「打开那个文件」"
+            "「帮我打开这个链接」时用它。路径必须在允许目录里；网址只接受 http/https。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "target": {"type": "string", "description": "文件路径（相对允许目录）或网址。"},
+                "kind": {"type": "string", "enum": ["path", "url"], "description": "默认 path。"},
+            },
+            "required": ["target"],
+        },
+    )
+    requires_approval: ClassVar[bool] = True
+
+    def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+        target = argument_str(arguments, "target")
+        kind = argument_str(arguments, "kind", required=False) or "path"
+        if kind not in ("path", "url"):
+            raise ToolArgumentError(f"kind 只能是 path 或 url，收到 {kind!r}。")
+        if ctx.open_external is None:
+            return ToolOutcome.failure("这一轮没有打开外部程序的通道。")
+        if kind == "url":
+            if not target.lower().startswith(("http://", "https://")):
+                return ToolOutcome.failure("只打开 http/https 网址。")
+            resolved = target
+        else:
+            try:
+                resolved = str(resolve_within(ctx.read_root, target))
+            except ReadFileError as exc:
+                return ToolOutcome.failure(str(exc))
+            if not Path(resolved).exists():
+                return ToolOutcome.failure(f"文件不存在：{resolved}")
+        problem = ctx.open_external(resolved, kind)
+        if problem:
+            return ToolOutcome.failure(problem)
+        return ToolOutcome.success(f"已交给系统打开：{resolved}", replayable=False)
+
+
+class ClipboardReadTool:
+    """读剪贴板。**过闸门**：里面可能是密码。"""
+
+    spec: ClassVar[ToolSpec] = ToolSpec(
+        name="clipboard_read",
+        description=(
+            "读当前剪贴板里的文字。用户说「帮我看看剪贴板里是什么」时用它。"
+            "**剪贴板里可能有密码之类的隐私，每次都会先问用户。**"
+        ),
+        parameters={"type": "object", "properties": {}},
+    )
+    requires_approval: ClassVar[bool] = True
+
+    def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+        if ctx.clipboard_read is None:
+            return ToolOutcome.failure("这一轮没有剪贴板通道。")
+        text = ctx.clipboard_read() or ""
+        if not text:
+            return ToolOutcome.success("剪贴板里没有文字。", replayable=False)
+        return ToolOutcome.success(_clip(text, 16_000), replayable=False)
+
+
+class ClipboardWriteTool:
+    """写剪贴板。**过闸门**：会覆盖用户原来复制的东西。"""
+
+    spec: ClassVar[ToolSpec] = ToolSpec(
+        name="clipboard_write",
+        description=(
+            "把一段文字放进剪贴板。用户说「复制一下」「放到剪贴板」时用它。"
+            "**会覆盖原来的内容**，每次都会先问用户。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {"text": {"type": "string", "description": "要放进去的文字。"}},
+            "required": ["text"],
+        },
+    )
+    requires_approval: ClassVar[bool] = True
+
+    def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+        text = argument_str(arguments, "text", required=False)
+        if not text:
+            return ToolOutcome.failure("没有要复制的文字。")
+        if ctx.clipboard_write is None:
+            return ToolOutcome.failure("这一轮没有剪贴板通道。")
+        problem = ctx.clipboard_write(text)
+        if problem:
+            return ToolOutcome.failure(problem)
+        return ToolOutcome.success(f"已放进剪贴板（{len(text)} 字）。", replayable=False)
+
+
+class ShowNotificationTool:
+    """发一条桌面通知。**过闸门**：它是一种打扰。"""
+
+    spec: ClassVar[ToolSpec] = ToolSpec(
+        name="show_notification",
+        description=(
+            "在桌面上弹一条通知。用户说「提醒我一下」「弹个通知」时用它。"
+            "**通知也是一种打扰**，每次都会先问用户；真正到点提醒请用 set_reminder。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "标题（最多 200 字）。"},
+                "body": {"type": "string", "description": "正文（最多 200 字）。"},
+            },
+            "required": ["title", "body"],
+        },
+    )
+    requires_approval: ClassVar[bool] = True
+
+    def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+        title = argument_str(arguments, "title")[:200]
+        body = argument_str(arguments, "body", required=False)[:200]
+        if ctx.notify is None:
+            return ToolOutcome.failure("这一轮没有通知通道。")
+        ctx.notify(title, body)
+        return ToolOutcome.success("通知已弹出。", replayable=True)
+
+
 def default_tools(
     *,
     read_root: Sequence[Path] = (),
@@ -1484,6 +1612,12 @@ def default_tools(
         # 有可写根、用户没关命令执行；``edit_file`` 与 ``write_file`` 同一前提。
         *((WriteFileTool(), EditFileTool()) if write_root else ()),
         *((RunCommandTool(),) if write_root and allow_commands else ()),
+        # 桌面操作：会打开东西、覆盖剪贴板、弹通知——都要过闸门。通道由主窗口注入，
+        # 没注入时工具自己回一句"这一轮没有桌面通道"。
+        OpenExternalTool(),
+        ClipboardReadTool(),
+        ClipboardWriteTool(),
+        ShowNotificationTool(),
         # 追加，不插队（见上面那条"顺序就是声明顺序"）。
         *((LookAtScreenTool(),) if vision else ()),
         # 没有表情包就不登记它——同 ``read_file`` 与 ``look_at_screen`` 那条账。

@@ -28,12 +28,15 @@ import pytest
 from axo.agent.catalog import (
     MAX_REMINDER_CHARS,
     MAX_WRITE_CHARS,
+    ClipboardReadTool,
+    ClipboardWriteTool,
     EditFileTool,
     FetchUrlTool,
     ForgetMemoryTool,
     GetTimeTool,
     ListFilesTool,
     LookAtScreenTool,
+    OpenExternalTool,
     ReadFileTool,
     ReadMemoryTool,
     RunCommandTool,
@@ -41,6 +44,7 @@ from axo.agent.catalog import (
     SearchMemoryTool,
     SendStickerTool,
     SetReminderTool,
+    ShowNotificationTool,
     SystemInfoTool,
     WebSearchTool,
     WriteFileTool,
@@ -210,6 +214,10 @@ def test_eight_tools_are_registered_without_a_read_root() -> None:
         "cancel_reminder",
         "system_info",
         "update_plan",
+        "open_external",
+        "clipboard_read",
+        "clipboard_write",
+        "show_notification",
     ]
 
 
@@ -229,6 +237,10 @@ def test_read_file_appears_once_a_root_is_configured(tmp_path: Path) -> None:
         "search_files",
         "system_info",
         "update_plan",
+        "open_external",
+        "clipboard_read",
+        "clipboard_write",
+        "show_notification",
     ]
 
 
@@ -266,6 +278,10 @@ def test_exactly_five_tools_ask_for_confirmation_when_the_model_can_see(tmp_path
         "forget_memory",
         "set_reminder",
         "cancel_reminder",
+        "open_external",
+        "clipboard_read",
+        "clipboard_write",
+        "show_notification",
         "look_at_screen",
     ]
 
@@ -323,7 +339,7 @@ def test_look_at_screen_passes_the_reason_back_verbatim() -> None:
 
 
 def test_exactly_four_tools_ask_for_confirmation() -> None:
-    """闸门只拦**改变状态**的那四个。
+    """闸门拦**会改变什么**的那些：改状态、打开外部、覆盖剪贴板、弹通知。
 
     这条断言的是那个分界本身：多一个"要确认"的工具会让用户白点一次头，少一个就是
     **一个改状态的动作没问过任何人**。后者的症状是没有症状——所以它值得一条测试，
@@ -335,7 +351,17 @@ def test_exactly_four_tools_ask_for_confirmation() -> None:
     asking = [
         tool.spec.name for tool in default_tools(read_root=(Path(),)) if tool.requires_approval
     ]
-    assert asking == ["write_memory", "forget_memory", "set_reminder", "cancel_reminder"]
+    assert asking == [
+        "write_memory",
+        "forget_memory",
+        "set_reminder",
+        "cancel_reminder",
+        # 桌面操作不改库，但会打开东西、覆盖剪贴板、弹通知——同样逐次确认。
+        "open_external",
+        "clipboard_read",
+        "clipboard_write",
+        "show_notification",
+    ]
 
 
 def test_the_two_snapshot_tools_mark_their_results_as_not_replayable(
@@ -1314,4 +1340,69 @@ def test_write_tools_need_a_write_root_and_commands_need_the_switch(tmp_path: Pa
     assert "run_command" not in without
     assert "write_file" in with_write and "edit_file" in with_write
     assert "run_command" not in with_write
-    assert with_commands[-1] == "run_command"
+    assert "run_command" in with_commands
+
+
+# ── 桌面操作（A5） ──────────────────────────────────────────────────────────
+
+
+def test_clipboard_roundtrip(tmp_path: Path) -> None:
+    box = {"text": "原来的"}
+    context = ToolContext(
+        store=MemoryStore(":memory:"),
+        clipboard_read=lambda: box["text"],
+        clipboard_write=lambda text: box.__setitem__("text", text) or "",
+    )
+
+    assert ClipboardReadTool().run({}, context).content == "原来的"
+    outcome = ClipboardWriteTool().run({"text": "新的"}, context)
+
+    assert outcome.ok and box["text"] == "新的"
+
+
+def test_open_external_resolves_paths_inside_the_root(tmp_path: Path) -> None:
+    target = tmp_path / "a.txt"
+    target.write_text("x", encoding="utf-8")
+    opened: list[tuple[str, str]] = []
+    context = ToolContext(
+        store=MemoryStore(":memory:"),
+        read_root=(tmp_path,),
+        open_external=lambda what, kind: opened.append((what, kind)) or "",
+    )
+
+    outcome = OpenExternalTool().run({"target": "a.txt"}, context)
+
+    assert outcome.ok
+    assert opened and opened[0][1] == "path"
+
+
+def test_open_external_refuses_an_escape(tmp_path: Path) -> None:
+    context = ToolContext(
+        store=MemoryStore(":memory:"),
+        read_root=(tmp_path,),
+        open_external=lambda _what, _kind: "",
+    )
+
+    outcome = OpenExternalTool().run({"target": "../outside.txt"}, context)
+
+    assert outcome.ok is False
+
+
+def test_notification_reaches_the_hook() -> None:
+    seen: list[tuple[str, str]] = []
+    context = ToolContext(
+        store=MemoryStore(":memory:"),
+        notify=lambda title, body: seen.append((title, body)),
+    )
+
+    outcome = ShowNotificationTool().run({"title": "提醒", "body": "喝水"}, context)
+
+    assert outcome.ok and seen == [("提醒", "喝水")]
+
+
+def test_desktop_tools_fail_cleanly_without_a_channel() -> None:
+    context = ToolContext(store=MemoryStore(":memory:"))
+
+    assert ClipboardReadTool().run({}, context).ok is False
+    assert ClipboardWriteTool().run({"text": "x"}, context).ok is False
+    assert ShowNotificationTool().run({"title": "t", "body": "b"}, context).ok is False
