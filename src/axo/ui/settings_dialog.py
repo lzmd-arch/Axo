@@ -1857,6 +1857,18 @@ class SpeechPage(QWidget):
             )
         )
 
+        self.segmented_box = QCheckBox("分段语音（实验）：停顿一下自动提交", self)
+        self.segmented_box.setObjectName("speechSegmentedBox")
+        self.segmented_box.setChecked(self._snapshot.segmented)
+        self.segmented_box.toggled.connect(self._on_toggled)
+        outer.addWidget(self.segmented_box)
+        outer.addWidget(
+            _hint(
+                "不用再按一次麦克风：停顿约半秒就结束这一句并提交。安静环境里好用；"
+                "嘈杂环境里如果它老是提前截断，关掉它、照旧按停。"
+            )
+        )
+
         outer.addWidget(_section("启动"))
         self.autostart_box = QCheckBox("启动时自动拉起组件", self)
         self.autostart_box.setObjectName("speechAutostartBox")
@@ -1909,6 +1921,7 @@ class SpeechPage(QWidget):
         self.endpoint_edit.setText(settings.base_url)
         self.autostart_box.setChecked(settings.autostart)
         self.command_edit.setText(settings.launch_command)
+        self.segmented_box.setChecked(settings.segmented)
         self._syncing = False
         self.set_note("")
 
@@ -1920,6 +1933,7 @@ class SpeechPage(QWidget):
             base_url=self.endpoint_edit.text().strip(),
             autostart=self.autostart_box.isChecked(),
             launch_command=self.command_edit.text().strip(),
+            segmented=self.segmented_box.isChecked(),
         )
 
     def _on_pick_command(self) -> None:

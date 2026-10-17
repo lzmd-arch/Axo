@@ -145,6 +145,14 @@ class Vad:
     def in_speech(self) -> bool:
         return self._in_speech
 
+    def reset(self) -> None:
+        """强制结束当前这一段（到 30 秒上限时用）。**噪声底保留**——它描述的是
+        房间，不是这一句话。"""
+        self._in_speech = False
+        self._voiced_frames = 0
+        self._silence_frames = 0
+        self._above_start = 0
+
     def push(self, frame: np.ndarray) -> str:
         """喂一帧，返回事件。帧长不必精确——短帧只是让判断粗一点。"""
         db = rms_db(frame)

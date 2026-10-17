@@ -188,7 +188,7 @@ from .theme import Resolved, Theme, resolve
 from .theme_qt import QSettingsBackend, apply_theme, os_color_scheme
 from .thread_tracking import track, wait_for_all
 from .tray import TrayController, build_icon
-from .voice import DecodeWorker, VoiceRecorder
+from .voice import DecodeWorker, SegmentWorker, VoiceRecorder
 from .widgets import SESSION_TIME_ROLE, SESSION_TITLE_ROLE, ElidedLabel, SessionItemDelegate
 from .window_place import place_window
 
@@ -2238,14 +2238,22 @@ class MainWindow(QMainWindow):
             # 也不要让这次点击静默消失。
             self.chat_view.set_status("等她说完再说话")
             return
-        worker = DecodeWorker()
+        # **两种听法共用采集层，worker 分开**（见 ui/voice.py 的类文档）：
+        # 分段模式的收场是"每次停顿交一段"，听写模式是"按停交整段"。
+        segmented = self._voice_settings.segmented
+        worker = SegmentWorker() if segmented else DecodeWorker()
         problem = worker.recognizer.problem
         if problem:
             self.chat_view.append_message("system", f"**语音输入用不了**\n\n{problem}")
             return
         thread = QThread(self)
-        worker.done.connect(self._on_voice_done)
-        worker.done.connect(thread.quit)
+        if segmented:
+            worker.utterances.connect(self._on_segment_utterance)
+            worker.problem.connect(self._on_segment_problem)
+            worker.finished.connect(thread.quit)
+        else:
+            worker.done.connect(self._on_voice_done)
+            worker.done.connect(thread.quit)
         self._track(thread, worker, what="语音解码线程", slot="voice")
         problem = self._voice.start(worker.push)
         if problem:
@@ -2300,6 +2308,42 @@ class MainWindow(QMainWindow):
         # 失败要说出来（同 `_remember` 那条纪律）：不说的话，用户对着屏幕说了半天、
         # 界面回到空闲、而没有任何一处提到那句话去哪了。
         self.chat_view.append_message("system", f"**没有听清**\n\n{result.reason}")
+
+    @Slot(object)
+    def _on_segment_utterance(self, result: Transcription) -> None:
+        """分段模式交来一句：**停录，然后走与打字同一条提交路。**
+
+        停录先于提交、状态先于停录：``self._voice.stop()`` 会同步发 ``finished``，
+        而 :meth:`_on_voice_finished` 读的是 ``_voice_state``——先把状态清掉，那道
+        闸才会放行，不会绕回 :meth:`_end_voice` 再交一遍。
+
+        分段模式目前是**一次按压一句**（worker 的 ``one_shot``）：这一句交出去之后
+        录音就结束，下一句要再按一次。连续免按键听是通话模式的事。
+        """
+        if self._voice_state == "":
+            return
+        self._set_voice_state("")
+        self._voice.stop()
+        worker = self._voice_worker
+        if worker is not None:
+            worker.stop(discard=False)
+        if result.ok:
+            self._on_submit(result.text, spoken=True, audio=result.audio)
+            return
+        self.chat_view.append_message("system", f"**没有听清**\n\n{result.reason}")
+
+    @Slot(str)
+    def _on_segment_problem(self, problem: str) -> None:
+        """分段 worker 起不来（模型/库不在）：收掉录音并说出来。"""
+        if self._voice_state != "":
+            self._set_voice_state("")
+            self._voice.stop()
+        worker = self._voice_worker
+        if worker is not None:
+            worker.stop(discard=True)
+        if self._voice_thread is not None:
+            self._voice_thread.quit()
+        self.chat_view.append_message("system", f"**语音输入用不了**\n\n{problem}")
 
     def _discard_voice(self) -> None:
         """用户开口说话了 → **这一遍不要了**（在 :meth:`_on_submit` 开头调）。"""

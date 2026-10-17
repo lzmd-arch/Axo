@@ -28,10 +28,20 @@ class FakeVosk:
     用户开口前那几百毫秒，而不是几条 CPU 指令）。
     """
 
-    def __init__(self, *, text: str = "该睡了", raw: object | None = None, boom: str = "") -> None:
+    def __init__(
+        self,
+        *,
+        text: str = "该睡了",
+        raw: object | None = None,
+        boom: str = "",
+        finalize: bool = False,
+        partial: str = "",
+    ) -> None:
         self.text = text
         self.raw = raw
         self.boom = boom
+        self.finalize = finalize
+        self.partial_text = partial
         self.loaded = 0
         self.sessions: list[FakeVosk._Session] = []
 
@@ -52,7 +62,13 @@ class FakeVosk:
 
             def AcceptWaveform(self, data: bytes) -> bool:  # noqa: N802 (vosk 命名)
                 self.audio += data
-                return True
+                return fake.finalize
+
+            def Result(self) -> str:  # noqa: N802
+                return json.dumps({"text": fake.text})
+
+            def PartialResult(self) -> str:  # noqa: N802
+                return json.dumps({"partial": fake.partial_text})
 
             def FinalResult(self) -> str:  # noqa: N802
                 if fake.raw is not None:
@@ -288,3 +304,47 @@ def test_the_recording_comes_back_with_the_text(
     clip = decode_wav(result.audio)
     assert clip is not None
     assert clip.pcm == bytes([1, 2]) * 80, "原声没带全——模型听到的会是半句话"
+
+
+# ── 端点、复用与 partial（通话的前提） ─────────────────────────────────────
+
+
+def test_an_endpoint_returns_true_and_takes_that_segment(
+    monkeypatch: pytest.MonkeyPatch, model_dir: Path
+) -> None:
+    """vosk 说"这段完了"时要**立刻**取走 Result，否则下一次会话把它覆盖。"""
+    fake = FakeVosk(text="第一段", raw={"text": ""}, finalize=True)
+    _install(monkeypatch, fake)
+    recognizer = Recognizer(model_dir=model_dir)
+
+    assert recognizer.feed(b"\x01\x00" * 100) is True
+    assert recognizer.finish().text == "第一段"
+
+
+def test_reset_starts_a_new_session_without_reloading_the_model(
+    monkeypatch: pytest.MonkeyPatch, model_dir: Path
+) -> None:
+    """通话里每句都重载模型的话，首字延迟会从一两百毫秒变成一两秒。"""
+    fake = FakeVosk()
+    _install(monkeypatch, fake)
+    recognizer = Recognizer(model_dir=model_dir)
+    recognizer.feed(b"\x01\x00" * 100)
+
+    recognizer.reset()
+
+    assert fake.loaded == 1
+    assert len(fake.sessions) == 2
+    assert fake.sessions[1].rate == SAMPLE_RATE
+
+
+def test_partial_is_available_but_never_enters_the_final_text(
+    monkeypatch: pytest.MonkeyPatch, model_dir: Path
+) -> None:
+    """partial 只给界面看：它会被不断修订，**永不提交**。"""
+    fake = FakeVosk(partial="正在说")
+    _install(monkeypatch, fake)
+    recognizer = Recognizer(model_dir=model_dir)
+    recognizer.feed(b"\x01\x00" * 100)
+
+    assert recognizer.partial() == "正在说"
+    assert "正在说" not in recognizer.finish().text

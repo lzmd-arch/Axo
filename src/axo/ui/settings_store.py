@@ -85,6 +85,7 @@ _K_SPEECH_VOICE = "speech/voice"
 _K_SPEECH_BASE_URL = "speech/base_url"
 _K_SPEECH_AUTOSTART = "speech/autostart"
 _K_SPEECH_COMMAND = "speech/launch_command"
+_K_SPEECH_SEGMENTED = "speech/segmented"
 
 _K_TASK_MEMORY = "memory/task_memory"
 _K_GRAPH_CHANNEL = "memory/graph_channel"
@@ -254,6 +255,9 @@ class SpeechSettings:
         launch_command: 启动命令（一个 ``.bat`` / ``.cmd`` / ``.exe`` 的路径）。
             空串 = 不自动启动——**不猜路径**：组件装在哪儿是用户的事，
             而猜错一个路径的后果是每次开机多一行错。
+        segmented: **分段语音（实验）**：说话停顿一下自动结束并提交，不必再按一次
+            麦克风。默认关——端点检测在安静房间里好用，在嘈杂环境里还需要用户
+            自己按停；等实测过一批再考虑默认开。
     """
 
     enabled: bool = True
@@ -262,6 +266,7 @@ class SpeechSettings:
     base_url: str = DEFAULT_SPEECH_ENDPOINT
     autostart: bool = False
     launch_command: str = ""
+    segmented: bool = False
 
 
 @dataclass(frozen=True)
@@ -512,6 +517,7 @@ class SettingsStore:
             base_url=base_url,
             autostart=_as_bool(self._backend.value(_K_SPEECH_AUTOSTART, False), False),
             launch_command=self._text(_K_SPEECH_COMMAND),
+            segmented=_as_bool(self._backend.value(_K_SPEECH_SEGMENTED, False), False),
         )
 
     def save_voice(self, settings: SpeechSettings) -> None:
@@ -522,6 +528,7 @@ class SettingsStore:
         self._backend.setValue(_K_SPEECH_BASE_URL, settings.base_url)
         self._backend.setValue(_K_SPEECH_AUTOSTART, bool(settings.autostart))
         self._backend.setValue(_K_SPEECH_COMMAND, settings.launch_command)
+        self._backend.setValue(_K_SPEECH_SEGMENTED, bool(settings.segmented))
 
     # ── 记忆 ────────────────────────────────────────────────────────────────
 

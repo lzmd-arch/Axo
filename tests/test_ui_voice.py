@@ -24,7 +24,7 @@ import pytest
 
 from axo.asr import Transcription
 from axo.ui import voice as voice_module
-from axo.ui.voice import MAX_SECONDS, DecodeWorker, VoiceRecorder
+from axo.ui.voice import MAX_SECONDS, DecodeWorker, SegmentWorker, VoiceRecorder
 
 pytestmark = pytest.mark.gui
 
@@ -240,3 +240,153 @@ def test_the_worker_builds_a_real_recognizer_by_default(qapp: Any) -> None:
 
     assert hasattr(worker.recognizer, "feed")
     assert hasattr(worker.recognizer, "finish")
+
+
+# ── 分段识别（V1） ─────────────────────────────────────────────────────────
+
+
+class FakeSegmentRecognizer:
+    """够 ``SegmentWorker`` 用的识别器替身。"""
+
+    def __init__(self, *, text: str = "分段说完了", problem: str = "") -> None:
+        self.text = text
+        self.problem = problem
+        self.fed = 0
+        self.resets = 0
+
+    def feed(self, pcm: bytes) -> bool:
+        self.fed += 1
+        return False
+
+    def finish(self) -> Transcription:
+        if self.problem:
+            return Transcription(reason=self.problem)
+        return Transcription(text=self.text)
+
+    def reset(self) -> None:
+        self.resets += 1
+
+    def partial(self) -> str:
+        return ""
+
+
+def _tone_bytes(frames: int, *, amplitude: float = 0.1) -> bytes:
+    import numpy as np
+
+    sample_rate = 16000
+    size = int(sample_rate * 0.02) * frames
+    wave = np.sin(2 * np.pi * 440 * np.arange(size) / sample_rate)
+    return (wave * amplitude * 32767).astype("<i2").tobytes()
+
+
+def _silence_bytes(frames: int) -> bytes:
+    return b"\x00\x00" * 320 * frames
+
+
+def _run_segment_worker(
+    recognizer: FakeSegmentRecognizer, chunks: list[bytes], *, discard: bool = False
+) -> tuple[list[Transcription], list[str]]:
+    worker = SegmentWorker(recognizer)  # type: ignore[arg-type]
+    utterances: list[Transcription] = []
+    problems: list[str] = []
+    worker.utterances.connect(utterances.append)
+    worker.problem.connect(problems.append)
+    for chunk in chunks:
+        worker.push(chunk)
+    # **必须叫停**：run 的循环是"直到停止且队列为空"，不停下来会在空队列上空转。
+    worker.stop(discard=discard)
+    worker.run()
+    return utterances, problems
+
+
+def test_a_pause_ends_a_segment_and_emits_the_wav(qapp: Any) -> None:
+    recognizer = FakeSegmentRecognizer()
+
+    utterances, problems = _run_segment_worker(
+        recognizer,
+        [_silence_bytes(10), _tone_bytes(25), _silence_bytes(40)],
+    )
+
+    assert problems == []
+    assert len(utterances) == 1
+    assert utterances[0].text == "分段说完了"
+    assert utterances[0].audio.startswith(b"RIFF")
+    assert recognizer.resets >= 1
+
+
+def test_a_blip_is_dropped_without_an_utterance(qapp: Any) -> None:
+    recognizer = FakeSegmentRecognizer()
+
+    utterances, _problems = _run_segment_worker(
+        recognizer,
+        [_silence_bytes(10), _tone_bytes(5), _silence_bytes(40)],
+    )
+
+    assert utterances == []
+    assert recognizer.resets >= 1
+
+
+def test_stopping_mid_sentence_still_hands_over_that_sentence(qapp: Any) -> None:
+    """用户按停时正说着最后一句：**这一段仍然要交**，不能吞掉。"""
+    recognizer = FakeSegmentRecognizer()
+
+    utterances, _problems = _run_segment_worker(
+        recognizer,
+        [_silence_bytes(10), _tone_bytes(20)],
+    )
+
+    assert len(utterances) == 1
+
+
+def test_discard_suppresses_the_tail(qapp: Any) -> None:
+    recognizer = FakeSegmentRecognizer()
+
+    utterances, problems = _run_segment_worker(
+        recognizer,
+        [_silence_bytes(10), _tone_bytes(20)],
+        discard=True,
+    )
+
+    assert utterances == []
+    assert problems == []
+
+
+def test_a_missing_model_is_reported_once_and_nothing_is_emitted(qapp: Any) -> None:
+    recognizer = FakeSegmentRecognizer(problem="语音模型加载不了：目录不在")
+
+    utterances, problems = _run_segment_worker(recognizer, [_tone_bytes(20)])
+
+    assert utterances == []
+    assert problems == ["语音模型加载不了：目录不在"]
+
+
+def test_a_call_recording_can_run_without_the_30_second_cap(
+    qapp: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """通话整段不该被 30 秒切断；那条边界改由可见状态与空闲挂断承担。"""
+    monkeypatch.setattr(voice_module, "MAX_SECONDS", 0.05)
+    factory, _built = _factory()
+    recorder = VoiceRecorder(source_factory=factory, max_seconds=None)
+    finished: list[str] = []
+    recorder.finished.connect(lambda: finished.append("x"))
+    recorder.start(lambda _pcm: None)
+
+    deadline = time.monotonic() + 0.3
+    while time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(0.01)
+
+    assert recorder.listening is True
+    assert finished == []
+    recorder.stop()
+
+
+def test_the_default_cap_still_follows_the_module_constant(
+    qapp: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """默认值在**构造时**解析，而不是在函数定义时绑定——否则改常量对它无效。"""
+    monkeypatch.setattr(voice_module, "MAX_SECONDS", 0.05)
+    factory, _built = _factory()
+    recorder = VoiceRecorder(source_factory=factory)
+
+    assert recorder._max_seconds == 0.05

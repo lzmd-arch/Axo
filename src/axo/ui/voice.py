@@ -35,12 +35,14 @@ import threading
 from collections.abc import Callable
 from typing import Protocol
 
+import numpy as np
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
 from ..asr import SAMPLE_RATE, Recognizer, Transcription
 from ..audio import AudioClip
+from ..vad import FRAME_MS, Vad, frame_size, level_percent
 
-__all__ = ["MAX_SECONDS", "DecodeWorker", "SourceFactory", "VoiceRecorder"]
+__all__ = ["MAX_SECONDS", "DecodeWorker", "SegmentWorker", "SourceFactory", "VoiceRecorder"]
 
 MAX_SECONDS = 30
 """一次最长录多久（秒）。
@@ -48,6 +50,10 @@ MAX_SECONDS = 30
 **它是一条隐私边界，不是体验参数**：忘了按第二次（或者按完就走了）不该让麦克风一直开着。
 到点自己停，并且照常把已经录到的部分交出去。
 """
+
+#: 构造期的"没传"哨兵。**默认值不能写成 ``MAX_SECONDS``**：那是在函数定义时
+#: 求值的，模块常量之后被改（测试就这么做）也影响不到已经绑定的默认参数。
+_UNSET_CAP = object()
 
 
 class _AudioSource(Protocol):
@@ -83,10 +89,14 @@ class VoiceRecorder(QObject):
         *,
         sample_rate: int = SAMPLE_RATE,
         source_factory: SourceFactory | None = None,
+        max_seconds: float | None | object = _UNSET_CAP,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._sample_rate = sample_rate
+        #: ``None`` = 不设上限。**通话模式用它**：整段通话不该被 30 秒切断，
+        #: 那条边界改由可见状态与空闲挂断承担（见 ``axo.call``）。
+        self._max_seconds = MAX_SECONDS if max_seconds is _UNSET_CAP else max_seconds
         self._factory = source_factory or _qt_source_factory(sample_rate)
         self._source: _AudioSource | None = None
         self._sink: Callable[[bytes], None] | None = None
@@ -113,7 +123,8 @@ class VoiceRecorder(QObject):
             return problem
         self._source = source
         self._sink = sink
-        self._cap.start(MAX_SECONDS * 1000)
+        if self._max_seconds is not None:
+            self._cap.start(max(1, int(self._max_seconds * 1000)))
         return ""
 
     def stop(self) -> None:
@@ -255,3 +266,162 @@ class _QtSource:
         raw = bytes(data)
         if raw:
             self._on_chunk(raw)
+
+
+class SegmentWorker(QObject):
+    """边听边切段：一个 VAD 决定句子从哪儿到哪儿，每段单独交出去。
+
+    **与 :class:`DecodeWorker` 分开，而不是塞进同一个类。** 两者的生命周期不同：
+    听写是"一次录音一个结果"，通话是"一直开着的麦克风，每次停顿交一段"。塞在一起
+    之后，``stop()`` 的含义要按模式分叉，而分叉过的那条路最容易在收尾时漏掉一种
+    状态（例如"停止了但还在说话"）。
+
+    这个 worker 也不 ``moveToThread``（同本项目其它 worker）：``started`` 直连
+    :meth:`run`，音频片走标准库队列，Qt 信号只往界面方向发。
+
+    Signals:
+        utterances: 一段有效语音（``Transcription``，带该段 WAV）。
+        level: 0–100 的输入电平，每帧一次（50 Hz）。消费方自己合帧。
+        speech_started / speech_ended: 一段的开始与收场（含丢弃）。
+        problem: 模型/库不可用，只发一次。
+        finished: ``run()`` 退出。**接 ``QThread.quit`` 用。**
+    """
+
+    utterances = Signal(object)
+    level = Signal(int)
+    speech_started = Signal()
+    speech_ended = Signal()
+    problem = Signal(str)
+    finished = Signal()
+
+    #: 开口之前留住的帧数。240 ms 足够覆盖第一个音节的起音，又不至于把上一句的
+    #: 尾巴带进来。
+    PRE_ROLL_FRAMES = 12
+
+    def __init__(
+        self,
+        recognizer: Recognizer | None = None,
+        *,
+        one_shot: bool = True,
+        max_segment_seconds: float = MAX_SECONDS,
+        vad: Vad | None = None,
+    ) -> None:
+        super().__init__()
+        self._recognizer = recognizer if recognizer is not None else Recognizer()
+        self._vad = vad if vad is not None else Vad()
+        self._one_shot = one_shot
+        self._max_ms = max(1, int(max_segment_seconds * 1000))
+        self._frame_bytes = frame_size() * 2  # int16
+        self._queue: queue.Queue[bytes] = queue.Queue()
+        self._stopping = threading.Event()
+        self._discard = False
+        self._pending = b""
+        self._recent: list[bytes] = []
+        self._segment = b""
+        self._segment_ms = 0
+        self._emitted = False
+
+    @property
+    def recognizer(self) -> Recognizer:
+        return self._recognizer
+
+    @property
+    def emitted(self) -> bool:
+        return self._emitted
+
+    def push(self, pcm: bytes) -> None:
+        """一片音频。**任意线程。**"""
+        if not self._discard and pcm:
+            self._queue.put(bytes(pcm))
+
+    def stop(self, *, discard: bool = False) -> None:
+        """收尾。``discard=True`` 时连正在说的那一段也不要。"""
+        self._discard = discard
+        self._stopping.set()
+
+    @Slot()
+    def run(self) -> None:
+        """线程入口。**模型不可用时只发一次 problem 就退出。**"""
+        try:
+            if self._recognizer.problem:
+                self.problem.emit(self._recognizer.problem)
+                return
+            while not self._stopping.is_set() or not self._queue.empty():
+                try:
+                    piece = self._queue.get(timeout=0.05)
+                except queue.Empty:
+                    continue
+                self._consume(piece)
+                if self._one_shot and self._emitted:
+                    break
+            if not self._discard and (self._segment or self._vad.in_speech):
+                # 用户按停时正说着最后一句：**这一段仍然要交**，丢掉它等于把
+                # 用户刚说的话吞了。
+                self._finish_segment()
+        finally:
+            self.finished.emit()
+
+    # ── 内部 ────────────────────────────────────────────────────────────────
+
+    def _consume(self, piece: bytes) -> None:
+        data = self._pending + piece
+        usable = len(data) - (len(data) % self._frame_bytes)
+        self._pending = data[usable:]
+        for offset in range(0, usable, self._frame_bytes):
+            self._step(data[offset : offset + self._frame_bytes])
+            if self._one_shot and self._emitted:
+                break
+
+    def _step(self, frame: bytes) -> None:
+        samples = np.frombuffer(frame, dtype=np.int16)
+        self.level.emit(level_percent(samples))
+        event = self._vad.push(samples)
+        self._recognizer.feed(frame)
+
+        self._recent.append(frame)
+        if len(self._recent) > self.PRE_ROLL_FRAMES:
+            del self._recent[0]
+
+        if event == "start":
+            # 把开口前的那几帧也带上：VAD 要等连续几帧才确认，不带的话第一个
+            # 音节会被切掉半个。
+            self._segment = b"".join(self._recent)
+            self._segment_ms = 0
+            self.speech_started.emit()
+            return
+        if event == "end":
+            self._segment += frame
+            self._segment_ms += FRAME_MS
+            self._finish_segment()
+            return
+        if event == "drop":
+            self._recognizer.reset()
+            self._segment = b""
+            self._segment_ms = 0
+            self.speech_ended.emit()
+            return
+
+        if self._vad.in_speech:
+            self._segment += frame
+            self._segment_ms += FRAME_MS
+            if self._segment_ms >= self._max_ms:
+                # 一个人连续说三十秒：先交这一段，接着听下一段，不丢录音。
+                self._finish_segment()
+                self._vad.reset()
+
+    def _finish_segment(self) -> None:
+        pcm, self._segment = self._segment, b""
+        self._segment_ms = 0
+        if not pcm:
+            return
+        result = self._recognizer.finish()
+        self._recognizer.reset()
+        self.speech_ended.emit()
+        if not result.ok:
+            # 空心段不进对话区：通话里每一句咳嗽都冒一条"没有听清"会刷屏。
+            return
+        clip = AudioClip(pcm=pcm, sample_rate=SAMPLE_RATE)
+        self._emitted = True
+        self.utterances.emit(Transcription(text=result.text, audio=clip.as_wav()))
+        if self._one_shot:
+            self._stopping.set()

@@ -100,8 +100,8 @@ def _model_problem(model_dir: Path) -> str:
     return ""
 
 
-def _text_of(raw: object) -> str:
-    """vosk 的 ``FinalResult()`` 是一段 JSON 文本，取其中的 ``text``。
+def _field_of(raw: object, field: str) -> str:
+    """从 vosk 返回的 JSON 文本里取一个字符串字段。
 
     读不出来一律当"没听清"（空串）——识别结果这一段坏掉的原因很多（版本差异、空输入），
     而它们的收场是同一个。
@@ -112,14 +112,21 @@ def _text_of(raw: object) -> str:
         payload = json.loads(raw)
     except json.JSONDecodeError:
         return ""
-    text = payload.get("text") if isinstance(payload, dict) else None
-    return text.strip() if isinstance(text, str) else ""
+    value = payload.get(field) if isinstance(payload, dict) else None
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _text_of(raw: object) -> str:
+    """最终结果里的 ``text``。"""
+    return _field_of(raw, "text")
 
 
 class Recognizer:
     """一次识别：**喂片、取结果**（见模块文档"加载模型与说话并行"）。
 
-    它不是线程安全的，也不该跨两次录音复用：一次录音一个实例，用完丢掉。
+    它不是线程安全的。**模型可以跨段复用，会话不行**：通话里每说完一句调用
+    :meth:`reset` 开一段新会话，模型（加载一次要一两秒）不重新加载。听写那条
+    一次性路径仍然是一次录音一个实例，用完丢掉——两种用法都成立。
     """
 
     def __init__(self, *, sample_rate: int = SAMPLE_RATE, model_dir: Path | None = None) -> None:
@@ -130,26 +137,62 @@ class Recognizer:
         self._session: object | None = None
         self._pending = b""
         self._heard = False
+        #: 这一段里已经被 vosk 端点切出来的那些小句。``AcceptWaveform`` 返回真时
+        #: 要立刻用 ``Result()`` 取走，否则它会被下一次会话覆盖。
+        self._segments: list[str] = []
 
     @property
     def problem(self) -> str:
         """这一路走不走得通；空串 = 能走（那时模型还没加载）。"""
         return self._problem
 
-    def feed(self, pcm: bytes) -> None:
-        """喂一片 PCM（16 位小端、单声道）。**第一片进来时才加载模型。**"""
+    def feed(self, pcm: bytes) -> bool:
+        """喂一片 PCM（16 位小端、单声道）。**第一片进来时才加载模型。**
+
+        返回 vosk 自己的端点标志（它认为一句话说完了）。**不用它切片**——切段由
+        ``axo.vad`` 决定，这里的返回值只留给调用方做统计。返回真时立刻用
+        ``Result()`` 把那一段取走，否则下一次 ``AcceptWaveform`` 会把它覆盖。
+        """
         if self._problem or not pcm:
-            return
+            return False
         if self._session is None:
             self._load()
             if self._problem:
-                return
+                return False
         data = self._pending + pcm
         aligned = len(data) - (len(data) % _SAMPLE_WIDTH)
         self._pending = data[aligned:]
-        if aligned:
-            self._session.AcceptWaveform(data[:aligned])  # type: ignore[attr-defined]
-            self._heard = True
+        if not aligned:
+            return False
+        finalized = bool(self._session.AcceptWaveform(data[:aligned]))  # type: ignore[attr-defined]
+        self._heard = True
+        if finalized:
+            segment = _text_of(self._session.Result())  # type: ignore[attr-defined]
+            if segment:
+                self._segments.append(segment)
+        return finalized
+
+    def reset(self) -> None:
+        """开一段新的识别会话。**模型不重载**——通话里每句话都重载一次，首字延迟
+        会从一两百毫秒变成一两秒。"""
+        if self._problem or self._model is None:
+            return
+        import vosk
+
+        try:
+            self._session = vosk.KaldiRecognizer(self._model, self._sample_rate)
+        except Exception as exc:  # noqa: BLE001 — 与 _load 同一个收场
+            self._problem = f"语音模型加载不了：{exc}"
+            return
+        self._pending = b""
+        self._heard = False
+        self._segments.clear()
+
+    def partial(self) -> str:
+        """当前这一句的临时结果。**只给界面看，永远不提交。**"""
+        if self._problem or self._session is None:
+            return ""
+        return _field_of(self._session.PartialResult(), "partial")  # type: ignore[attr-defined]
 
     def finish(self) -> Transcription:
         """收尾：把半片的尾巴丢掉，取最终结果。"""
@@ -158,7 +201,11 @@ class Recognizer:
         if self._session is None or not self._heard:
             return Transcription(reason="没有听到声音（麦克风没进来数据，或者你还没开口）")
         raw = self._session.FinalResult()  # type: ignore[attr-defined]
-        text = _text_of(raw)
+        tail = _text_of(raw)
+        parts = [*self._segments]
+        if tail:
+            parts.append(tail)
+        text = "".join(parts)
         if not text:
             return Transcription(reason="没有听清（离麦克风近一点，或者再说一遍）")
         return Transcription(text=text)

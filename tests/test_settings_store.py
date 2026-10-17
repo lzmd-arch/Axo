@@ -405,6 +405,20 @@ def test_speech_autostart_defaults_off_and_roundtrips() -> None:
     ), "注册表里读回来的 'false' 是真值，这里必须走 _as_bool"
 
 
+def test_segmented_speech_is_off_by_default_and_roundtrips() -> None:
+    """分段语音默认关：端点检测在安静房间里好用，在嘈杂环境里还要用户按停。"""
+    from axo.ui.settings_store import SpeechSettings
+
+    assert SettingsStore(FakeBackend()).load_voice().segmented is False
+
+    store = SettingsStore(FakeBackend())
+    original = SpeechSettings(segmented=True)
+    store.save_voice(original)
+
+    assert store.load_voice().segmented is True
+    assert SettingsStore(FakeBackend({"speech/segmented": "false"})).load_voice().segmented is False
+
+
 def test_audio_in_is_off_by_default() -> None:
     """「当前模型听得见原声」默认关——勾上是一次**用户声明**（云端/兼容端点问不到
     能力），不是我们的猜测。默认开的话，转写文字那条兜底路会被悄悄换掉。"""
