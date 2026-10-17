@@ -419,6 +419,34 @@ def test_segmented_speech_is_off_by_default_and_roundtrips() -> None:
     assert SettingsStore(FakeBackend({"speech/segmented": "false"})).load_voice().segmented is False
 
 
+def test_call_idle_hangup_defaults_to_90s_and_is_clamped() -> None:
+    """通话空闲挂断：设置可以被手改，读的一侧夹回 10–3600 秒。"""
+    from axo.ui.settings_store import SpeechSettings
+
+    assert SettingsStore(FakeBackend()).load_voice().call_idle_hangup_s == 90
+
+    store = SettingsStore(FakeBackend())
+    store.save_voice(SpeechSettings(call_idle_hangup_s=120))
+    assert store.load_voice().call_idle_hangup_s == 120
+
+    assert (
+        SettingsStore(FakeBackend({"speech/call_idle_hangup_s": 2})).load_voice().call_idle_hangup_s
+        == 10
+    )
+    assert (
+        SettingsStore(FakeBackend({"speech/call_idle_hangup_s": 99999}))
+        .load_voice()
+        .call_idle_hangup_s
+        == 3600
+    )
+    assert (
+        SettingsStore(FakeBackend({"speech/call_idle_hangup_s": "响"}))
+        .load_voice()
+        .call_idle_hangup_s
+        == 90
+    )
+
+
 def test_audio_in_is_off_by_default() -> None:
     """「当前模型听得见原声」默认关——勾上是一次**用户声明**（云端/兼容端点问不到
     能力），不是我们的猜测。默认开的话，转写文字那条兜底路会被悄悄换掉。"""

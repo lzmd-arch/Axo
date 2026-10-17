@@ -21,6 +21,14 @@
   var input = document.getElementById("input");
   var sendButton = document.getElementById("send");
   var micButton = document.getElementById("mic");
+  var callButton = document.getElementById("call");
+  var callBar = document.getElementById("call-bar");
+  var callStateLabel = document.getElementById("call-state");
+  var callPartial = document.getElementById("call-partial");
+  var callLevel = document.getElementById("call-level");
+  var callInterrupt = document.getElementById("call-interrupt");
+  var callMute = document.getElementById("call-mute");
+  var callHangup = document.getElementById("call-hangup");
   var statusLabel = document.getElementById("status");
   var emptyState = document.getElementById("empty");
   var welcome = document.getElementById("welcome");
@@ -34,6 +42,10 @@
   //: 录音那一路的状态："" / "listening" / "recognizing"。**它由终端推过来**
   //: （`setVoiceState`），因为录音与识别都在 Python 侧——网页只知道"按了哪一下"。
   var voiceState = "";
+  //: 通话状态："" = 没在通话；其余由终端推（setCallState）。**麦克风的开关不归
+  //: 网页判断**——半双工由 Python 的状态机决定，这里只显示。
+  var callState = "";
+  var callMuted = false;
   var active = null; // 正在流式写入的消息体
   var pending = null; // 待渲染的增量文本缓冲
 
@@ -112,13 +124,18 @@
       input.disabled = true;
       sendButton.disabled = true;
       micButton.disabled = true;
+      callButton.disabled = true;
       return;
     }
+    var inCall = callState !== "" && callState !== "off";
     sendButton.disabled = busy || personaPending;
     input.disabled = personaPending;
     // 麦克风跟着发送键一起禁：生成中她说不了话，而"识别完一句却发不出去"（`_on_submit`
     // 那一支直接 return）在界面上是一句人间蒸发的话。**不静默丢一次点击。**
-    micButton.disabled = busy || personaPending;
+    micButton.disabled = busy || personaPending || inCall;
+    callButton.disabled = personaPending;
+    callButton.textContent = inCall ? "挂断" : "通话";
+    callButton.title = inCall ? "结束通话" : "开始通话";
     input.placeholder = personaPending
       ? "先回答上面的问题，或者选「这一次先不写」。"
       : voiceState === "listening"
@@ -135,6 +152,9 @@
           ? "正在识别…"
           : "说一句（按一下开始，再按一下结束）";
     micButton.textContent = voiceState === "recognizing" ? "识别中…" : "说话";
+    callBar.hidden = !inCall;
+    document.body.classList.toggle("call-active", inCall);
+    callMute.textContent = callMuted ? "取消静音" : "静音";
   }
 
   /* 空状态显隐。#empty 自己住在 #stream 里，所以判据就是"stream 里有没有 .msg"
@@ -352,6 +372,31 @@
       updateComposer();
     },
 
+    setCallState: function (state, meta) {
+      callState = state || "";
+      callMuted = !!(meta && meta.muted);
+      var labels = {
+        listening: "正在听…",
+        capturing: "在听你说…",
+        thinking: "她正在想…",
+        speaking: "她正在说…（点「插话」打断）",
+        error: "通话出错了",
+        off: "通话已结束",
+      };
+      callStateLabel.textContent = labels[callState] || "";
+      if (meta && meta.detail) callStateLabel.textContent += "  " + meta.detail;
+      updateComposer();
+    },
+
+    setCallLevel: function (level) {
+      var value = Math.max(0, Math.min(100, Number(level) || 0));
+      callLevel.style.setProperty("--call-level", String(value));
+    },
+
+    setCallPartial: function (text) {
+      callPartial.textContent = text || "";
+    },
+
     clear: function () {
       resetStream();
     },
@@ -470,8 +515,34 @@
   // 麦克风：**只发一次"切换"**，说什么由终端那边的识别决定（见 `app.py` 那张契约表）。
   // 守卫与 `submit` 同形：通道死了、正忙、正等人设时都不该开始录。
   micButton.addEventListener("click", function () {
-    if (busy || personaPending || channelDead || !bridge) return;
+    if (busy || personaPending || channelDead || !bridge || callState) return;
     bridge.voice_toggle();
+  });
+
+  // 通话：开始/挂断、插话、静音。**挂断永远可用**（正忙也要能挂）。
+  callButton.addEventListener("click", function () {
+    if (personaPending || channelDead || !bridge) return;
+    bridge.call_toggle();
+  });
+  callHangup.addEventListener("click", function () {
+    if (!bridge) return;
+    bridge.call_toggle();
+  });
+  callInterrupt.addEventListener("click", function () {
+    if (!bridge) return;
+    bridge.call_interrupt();
+  });
+  callMute.addEventListener("click", function () {
+    if (!bridge) return;
+    bridge.call_mute(!callMuted);
+  });
+  // 空格插话：输入框里有焦点时不抢（那是打字用的）。
+  document.addEventListener("keydown", function (event) {
+    if (event.key !== " " || callState !== "speaking") return;
+    var tag = (document.activeElement && document.activeElement.tagName) || "";
+    if (tag === "INPUT" || tag === "TEXTAREA") return;
+    event.preventDefault();
+    if (bridge) bridge.call_interrupt();
   });
 
   // ── 人设卡片 ──────────────────────────────────────────────────────────────

@@ -69,9 +69,19 @@
     </section>
   </main>
 
+  <section id="call-bar" hidden aria-live="polite">
+    <span id="call-state">正在听…</span>
+    <span id="call-partial"></span>
+    <span id="call-level" title="输入电平"><i></i></span>
+    <button id="call-interrupt" type="button" title="停播并开口">插话</button>
+    <button id="call-mute" type="button" title="静音">静音</button>
+    <button id="call-hangup" type="button" title="挂断">挂断</button>
+  </section>
+
   <footer id="composer">
     <textarea id="input" rows="1" placeholder="说点什么…（Enter 发送，Shift+Enter 换行）"
               autocomplete="off" spellcheck="false"></textarea>
+    <button id="call" type="button" title="开始通话">通话</button>
     <button id="mic" type="button" title="说一句（按一下开始，再按一下结束）">说话</button>
     <button id="send" type="button" title="发送">发送</button>
   </footer>

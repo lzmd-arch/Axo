@@ -150,6 +150,7 @@ from ..stickers import stickers_in
 from ..tts import SpeechReceipt
 from .agent_worker import AgentWorker
 from .app import make_settings
+from .call import CallController
 from .chat_view import ChatView
 from .chat_worker import ChatWorker, ModelListWorker
 from .consolidation_scheduler import MIN_DELAY_MS, ConsolidationScheduler
@@ -1229,6 +1230,18 @@ class MainWindow(QMainWindow):
         self.chat_view.message_submitted.connect(self._on_submit)
         self.chat_view.persona_answered.connect(self._on_persona_answered)
         self.chat_view.voice_toggled.connect(self._on_voice_toggled)
+        # 通话：状态机在 axo.call，接线在 ui.call。**这里只连接与转发。**
+        self._call = CallController(
+            idle_hangup_s=float(self._voice_settings.call_idle_hangup_s), parent=self
+        )
+        self._call.state_changed.connect(self._on_call_state)
+        self._call.level_changed.connect(self._on_call_level)
+        self._call.utterance.connect(self._on_call_utterance)
+        self._call.problem.connect(self._on_call_problem)
+        self._call.interrupt_requested.connect(self._on_call_interrupt_requested)
+        self.chat_view.call_toggled.connect(self._on_call_toggled)
+        self.chat_view.call_interrupted.connect(self._on_call_interrupt)
+        self.chat_view.call_muted.connect(self._call.set_muted)
         # 拖进来的文件走**与打字同一条路**的下游（`_on_attach_files`），只是入口在网页那边。
         self.chat_view.files_dropped.connect(self._on_files_dropped)
         self.chat_view.tool_confirm_decided.connect(self._on_tool_confirm)
@@ -1681,6 +1694,9 @@ class MainWindow(QMainWindow):
         # 突然作为一条"新消息"发出去——而那时用户已经在说别的了。丢弃要连结果一起丢
         # （`discard=True`），只丢结果的话那段文字会从别的路冒出来。
         self._discard_voice()
+        if self._call.live:
+            # 打字/语音提交时，通话的麦克风必须先关：不然她一边回答、一边还在录。
+            self._call.on_user_turn_started()
         if self._streaming:
             # 生成中还能提交，说明界面状态与后端脱节了；直接忽略比排队更安全
             return
@@ -2204,6 +2220,9 @@ class MainWindow(QMainWindow):
     @Slot()
     def _on_voice_toggled(self) -> None:
         """麦克风按钮被按了一下：在听就停，没在听就开始。"""
+        if self._call.live:
+            self.chat_view.set_status("通话中——用通话条挂断或插话")
+            return
         if self._voice.listening:
             self._end_voice(discard=False)
             return
@@ -2237,6 +2256,8 @@ class MainWindow(QMainWindow):
             # 按钮那边已经禁了（`updateComposer`），这一句是兜底：宁可说一句，
             # 也不要让这次点击静默消失。
             self.chat_view.set_status("等她说完再说话")
+            return
+        if self._call.live:
             return
         # **两种听法共用采集层，worker 分开**（见 ui/voice.py 的类文档）：
         # 分段模式的收场是"每次停顿交一段"，听写模式是"按停交整段"。
@@ -2345,6 +2366,68 @@ class MainWindow(QMainWindow):
             self._voice_thread.quit()
         self.chat_view.append_message("system", f"**语音输入用不了**\n\n{problem}")
 
+    # ── 通话 ────────────────────────────────────────────────────────────────
+
+    @Slot()
+    def _on_call_toggled(self) -> None:
+        """通话按钮：开始或挂断。"""
+        if self._call.live:
+            self._end_call()
+        else:
+            self._start_call()
+
+    def _start_call(self) -> None:
+        """进入通话。
+
+        **她正在说（提醒/主动那一路）时用户手势优先**：先让她让路，再开麦——
+        否则通话第一秒录到的是她自己的声音。
+        """
+        if self._streaming:
+            self.chat_view.set_status("等她说完再开始通话")
+            return
+        if self._speak_live or self._tts_live:
+            self._stop_speech(tell=True)
+        note = self._call.start()
+        if note:
+            self.chat_view.append_message("system", f"**通话没能开始**\n\n{note}")
+            return
+        self.chat_view.append_message(
+            "system",
+            "**通话中。** 直接说话，停顿一下我就接；点「插话」可以打断我。",
+        )
+
+    def _end_call(self) -> None:
+        self._call.stop()
+        self._stop_speech(tell=True)
+        self.chat_view.append_message("system", "**通话已结束。**")
+
+    @Slot(str, dict)
+    def _on_call_state(self, state: str, meta: dict[str, Any]) -> None:
+        self.chat_view.set_call_state(state, meta)
+
+    @Slot(int)
+    def _on_call_level(self, level: int) -> None:
+        self.chat_view.set_call_level(level)
+
+    @Slot(object)
+    def _on_call_utterance(self, result: Transcription) -> None:
+        """通话识别出一句：走与打字同一条提交路。"""
+        if not result.ok:
+            return
+        self._on_submit(result.text, spoken=True, audio=result.audio)
+
+    @Slot(str)
+    def _on_call_problem(self, problem: str) -> None:
+        self.chat_view.append_message("system", f"**通话中断**\n\n{problem}")
+        self.chat_view.set_call_state("off", {})
+
+    def _on_call_interrupt_requested(self) -> None:
+        """她要插话：停播，但**不补说**（没有一条待念的提醒正文）。"""
+        self._stop_speech(tell=False)
+
+    def _on_call_interrupt(self) -> None:
+        self._call.interrupt()
+
     def _discard_voice(self) -> None:
         """用户开口说话了 → **这一遍不要了**（在 :meth:`_on_submit` 开头调）。"""
         if self._voice.listening or self._voice_state:
@@ -2385,12 +2468,18 @@ class MainWindow(QMainWindow):
             )
         self._remember(text, interrupted=interrupted, tool_trace=statistics.get("tool_trace", ()))
         self._reset_generation_state()
+        will_speak = False
         if self._spoken_reply:
             self._spoken_reply = False
             # 说出来的那一轮：**她开口回**。打断的半句与空回复都不念——念一句空的是
             # 无声，念半句是念一个被打断的念头。
             if not interrupted and text.strip():
-                self._speak_reply(text)
+                will_speak = bool(self._voice_settings.enabled)
+                if will_speak:
+                    self._speak_reply(text)
+        if self._call.live:
+            # 她把话说完了：进入 SPEAKING 等播放结束，或者直接回到聆听。
+            self._call.on_reply_finished(will_speak=will_speak)
         if interrupted:
             self.chat_view.set_status("已停止")
         else:
@@ -2557,6 +2646,7 @@ class MainWindow(QMainWindow):
             or self._backend is None
             or self._streaming
             or self._speak_live
+            or self._call.live
             or not self._reminder_settings.speak_on_alert
         ):
             self._tell_reminder(alert)
@@ -2692,6 +2782,9 @@ class MainWindow(QMainWindow):
             return
         now = datetime.now()
         self._roll_over_if_new_day(now)
+        if self._call.live:
+            # 通话中不主动搭话：她已经在这个对话里了，再来一句是打扰。
+            return
         if self._backend is None or self._streaming or self._speak_live:
             return
         reason = should_speak(
@@ -2922,6 +3015,9 @@ class MainWindow(QMainWindow):
         各有自己的收条（:meth:`_stop_speech` / :meth:`_on_tts_done`）。
         """
         self._speech_receipt = SpeechReceipt(at=time.time(), text=self._speaking_text, ok=True)
+        if self._call.live:
+            # 她说完了：回到聆听（半双工的另一半）。
+            self._call.on_playback_finished()
 
     def _speak_reply(self, text: str) -> None:
         """把她说的这段交给组件合成、然后播出来。**出声的唯一入口。**
@@ -2968,6 +3064,8 @@ class MainWindow(QMainWindow):
             self._speech_receipt = SpeechReceipt(
                 at=time.time(), text=self._speaking_text, ok=False, reason=result.reason
             )
+            if self._call.live:
+                self._call.on_playback_finished()
             return
         problem = self._speech_player.speak(result.wav)
         if problem:
@@ -2975,6 +3073,8 @@ class MainWindow(QMainWindow):
             self._speech_receipt = SpeechReceipt(
                 at=time.time(), text=self._speaking_text, ok=False, reason=problem
             )
+            if self._call.live:
+                self._call.on_playback_finished()
 
     def _stop_speech(self, *, tell: bool) -> None:
         """让她让路（:meth:`_on_submit` 的第一件事）。
@@ -4368,6 +4468,8 @@ class MainWindow(QMainWindow):
         self._consolidation_scheduler.stop()
         # **只收自己拉起来的那个语音组件进程树。** 用户自己开着的那个我们不知道
         # 从哪儿来的，也不该动（见 ``ui/speech_process.py`` 的模块文档）。
+        # **通话先收**：先关麦、再等识别线程；不等的话就是下一次 0xC0000409。
+        self._call.shutdown()
         if self._speech_launcher is not None:
             self._speech_launcher.stop()
             self._speech_launcher = None

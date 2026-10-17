@@ -231,6 +231,43 @@ class FakeSession:
         self.messages = list(messages or [])
 
 
+class FakeCall:
+    """通话控制器的替身。**默认不在通话中**——这些测试量的是提醒/主动那两条路。"""
+
+    def __init__(self) -> None:
+        self.live = False
+        self.muted = False
+        self.started = 0
+        self.stopped = 0
+
+    def start(self) -> str:
+        self.live = True
+        self.started += 1
+        return ""
+
+    def stop(self, *, discard: bool = True) -> None:
+        self.live = False
+        self.stopped += 1
+
+    def shutdown(self) -> None:
+        self.stop()
+
+    def set_muted(self, muted: bool) -> None:
+        self.muted = bool(muted)
+
+    def interrupt(self) -> None:
+        return
+
+    def on_user_turn_started(self) -> None:
+        return
+
+    def on_reply_finished(self, *, will_speak: bool) -> None:
+        return
+
+    def on_playback_finished(self) -> None:
+        return
+
+
 class Stub(QObject):
     """那些槽，以及它们碰得到的东西。
 
@@ -277,6 +314,10 @@ class Stub(QObject):
     _pick_material = MainWindow._pick_material
     _start_proactive_speech = MainWindow._start_proactive_speech
     _show_sticker = MainWindow._show_sticker
+    # ── 通话 ──
+    _on_call_toggled = MainWindow._on_call_toggled
+    _start_call = MainWindow._start_call
+    _end_call = MainWindow._end_call
     # ── 拖进来的文件 ──
     _on_files_dropped = MainWindow._on_files_dropped
     _on_attach_files = MainWindow._on_attach_files
@@ -295,6 +336,7 @@ class Stub(QObject):
     ) -> None:
         super().__init__()
         self.chat_view = Recorder()
+        self._call = FakeCall()
         self._streaming = streaming
         self._agent_worker = worker
         self._scheduler = FakeScheduler()
@@ -2179,3 +2221,29 @@ def test_the_tool_table_asks_the_plugin_loader(qapp: Any, monkeypatch: Any) -> N
     assert "get_time" in taken, "内置工具的名字要先占上——撞名的插件工具会被挡掉"
     assert "weather" in [spec.name for spec in registry.specs()]
     assert stub.chat_view.calls == [], "装上了就不该报问题"
+
+
+# ── 通话开关 ────────────────────────────────────────────────────────────────
+
+
+def test_the_call_button_starts_and_hangs_up(qapp: Any) -> None:
+    """一个按钮两件事；第二次按就是挂断。"""
+    stub = Stub(streaming=False)
+
+    stub._on_call_toggled()
+    assert stub._call.live is True
+    assert stub._call.started == 1
+
+    stub._on_call_toggled()
+    assert stub._call.live is False
+    assert stub._call.stopped == 1
+
+
+def test_a_generating_turn_refuses_to_start_a_call(qapp: Any) -> None:
+    """正在生成时开通话会把两轮搅在一起——先说完再开始。"""
+    stub = Stub(streaming=True)
+
+    stub._on_call_toggled()
+
+    assert stub._call.live is False
+    assert stub._call.started == 0

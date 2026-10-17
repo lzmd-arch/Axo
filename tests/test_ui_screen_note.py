@@ -50,9 +50,41 @@ class _Combo:
         return self._name
 
 
+class _NullCall:
+    """通话控制器的空替身：默认不在通话中，所有动作都是空操作。"""
+
+    live = False
+    muted = False
+
+    def start(self) -> str:
+        return ""
+
+    def stop(self, *, discard: bool = True) -> None:
+        return
+
+    def shutdown(self) -> None:
+        return
+
+    def set_muted(self, muted: bool) -> None:
+        return
+
+    def interrupt(self) -> None:
+        return
+
+    def on_user_turn_started(self) -> None:
+        return
+
+    def on_reply_finished(self, *, will_speak: bool) -> None:
+        return
+
+    def on_playback_finished(self) -> None:
+        return
+
+
 def _window(*, can_see: bool, cloud: bool, text: str, model: str | None = "qwen3-4b") -> Any:
     """那个人造 ``self``：**只有这个方法碰得到的那五样**。"""
     window = SimpleNamespace(
+        _call=_NullCall(),
         _pending_text=text,
         _backend_settings=SimpleNamespace(is_cloud=cloud),
         model_combo=_Combo(model),
@@ -132,6 +164,7 @@ def test_an_ordinary_turn_is_left_alone() -> None:
 def _seer(*, cloud: bool, declared: bool, caps: tuple[str, ...] = (), model: str = "m") -> Any:
     """``_model_can_see`` 碰得到的那四样。"""
     return SimpleNamespace(
+        _call=_NullCall(),
         _backend_settings=SimpleNamespace(is_cloud=cloud),
         _cloud_vision=declared,
         _model_caps={model: caps},
@@ -191,6 +224,7 @@ def test_a_normal_reply_gets_no_note() -> None:
 def test_the_slot_actually_pushes_that_sentence(qapp: Any) -> None:
     """接线：那个槽真的把它推出去了（纯函数对了不等于接上了）。"""
     window = SimpleNamespace(
+        _call=_NullCall(),
         chat_view=_Recorder(),
         _append=lambda _message: None,
         _remember=lambda *_args, **_kwargs: None,

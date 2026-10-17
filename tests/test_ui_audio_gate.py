@@ -35,8 +35,40 @@ class _Recorder:
         self.calls.append(("setStatus", text))
 
 
+class _NullCall:
+    """通话控制器的空替身：默认不在通话中，所有动作都是空操作。"""
+
+    live = False
+    muted = False
+
+    def start(self) -> str:
+        return ""
+
+    def stop(self, *, discard: bool = True) -> None:
+        return
+
+    def shutdown(self) -> None:
+        return
+
+    def set_muted(self, muted: bool) -> None:
+        return
+
+    def interrupt(self) -> None:
+        return
+
+    def on_user_turn_started(self) -> None:
+        return
+
+    def on_reply_finished(self, *, will_speak: bool) -> None:
+        return
+
+    def on_playback_finished(self) -> None:
+        return
+
+
 def _window(*, cloud: bool, hears: bool, audio: bytes = b"", ride: str | None = "user") -> Any:
     window = SimpleNamespace(
+        _call=_NullCall(),
         _backend_settings=SimpleNamespace(is_cloud=cloud),
         _tool_settings=SimpleNamespace(audio_in=hears),
         _audio_in=hears,
@@ -131,6 +163,7 @@ def test_a_degraded_endpoint_is_announced_and_the_flag_flipped_off(qapp: Any) ->
     再退化一次。想再试就重新勾——这是可逆的，不是替他做主。"""
     settings = SimpleNamespace(saved=[], save_tools=lambda s: settings.saved.append(s))
     window = SimpleNamespace(
+        _call=_NullCall(),
         _backend=SimpleNamespace(degraded_audio=True),
         _audio_in=True,
         _tool_settings=SimpleNamespace(audio_in=True),

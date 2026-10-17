@@ -15,6 +15,9 @@ JS 与 Python 的契约（两边都是**只增不改**，否则旧前端会静�
                     window.bridge.tool_confirm(call_id, granted)     确认卡片上的一次点击
                     window.bridge.voice_toggle()                     麦克风按钮：开始/结束听
                     window.bridge.attach_files(uris)                 拖进来的文件：file:// URL 的列表
+                    window.bridge.call_toggle()                      开始/结束通话
+                    window.bridge.call_interrupt()                   通话中插话：停播并开麦
+                    window.bridge.call_mute(muted)                   通话静音开/关
     Python → JS     window.ChatHost.appendMessage(role, text, meta)   role: user|assistant|system|tool|proactive
                                                                       meta: {title?, footer?, image?}
                     window.ChatHost.pushToken(text)                  流式增量
@@ -28,6 +31,9 @@ JS 与 Python 的契约（两边都是**只增不改**，否则旧前端会静�
                     window.ChatHost.setWallpaperOpacity(percent)     0–100
                     window.ChatHost.setPersonaState({asking, builtin}) 首启人设卡片的显隐
                     window.ChatHost.setVoiceState(state)             "" | listening | recognizing
+                    window.ChatHost.setCallState(state, meta)        off|listening|capturing|thinking|speaking|error
+                    window.ChatHost.setCallLevel(level)              0–100
+                    window.ChatHost.setCallPartial(text)             只显示，永不提交
                     window.ChatHost.appendToolConfirm(call_id, name, summary, meta)
                     window.ChatHost.resolveToolConfirm(call_id, granted, accepted)
 
@@ -109,6 +115,8 @@ from .theme import Resolved
 
 __all__ = ["ChatView", "WebBridge"]
 
+_CALL_STATES = frozenset({"off", "listening", "capturing", "thinking", "speaking", "error"})
+
 _WEB_ROOT = Path(__file__).resolve().parent / "web"
 _INDEX = _WEB_ROOT / "index.html"
 
@@ -159,6 +167,19 @@ class WebBridge(QObject):
     时，``dataTransfer`` 里是 http(s) 地址，而那条路是一条我们不该去取的网络请求）。
     """
 
+    call_toggled = Signal()
+    """通话按钮被按了一下：开始或挂断。**不带参数**，与 ``voice_toggled`` 同类。"""
+
+    call_interrupted = Signal()
+    """通话中点了插话：调用方停播并开麦。"""
+
+    call_muted = Signal(bool)
+    """通话静音开关。"""
+
+    call_toggled = Signal()
+    call_interrupted = Signal()
+    call_muted = Signal(bool)
+
     voice_toggled = Signal()
     """麦克风按钮被按了一下。:class:`ChatView` 把它原样转发出去。
 
@@ -181,6 +202,18 @@ class WebBridge(QObject):
         # **不在这里判空**（与 send 相反）：空串在这条路径上是有含义的答案。
         # 去空白照做——全是空格的答案与没写是一回事，而 can_encode 也这么看。
         self.persona_answered.emit((text or "").strip())
+
+    @Slot()
+    def call_toggle(self) -> None:
+        self.call_toggled.emit()
+
+    @Slot()
+    def call_interrupt(self) -> None:
+        self.call_interrupted.emit()
+
+    @Slot(bool)
+    def call_mute(self, muted: bool) -> None:
+        self.call_muted.emit(bool(muted))
 
     @Slot()
     def voice_toggle(self) -> None:
@@ -248,6 +281,9 @@ class ChatView(QWidget):
         self._bridge.persona_answered.connect(self.persona_answered)
         self._bridge.tool_confirm_decided.connect(self.tool_confirm_decided)
         self._bridge.voice_toggled.connect(self.voice_toggled)
+        self._bridge.call_toggled.connect(self.call_toggled)
+        self._bridge.call_interrupted.connect(self.call_interrupted)
+        self._bridge.call_muted.connect(self.call_muted)
         self._bridge.files_dropped.connect(self.files_dropped)
 
         #: 外观三件套的**当前值**。存下来是为了在 ``loadFinished`` 之后重推：
@@ -267,6 +303,13 @@ class ChatView(QWidget):
         #: **同样缓存 + 重推**。它比外观那三项还要紧一点：页面一刷新，按钮会显示成
         #: 空闲，而麦克风**还开着**——用户看着一个说"没在听"的按钮，它却在听。
         self._voice_state: str = ""
+
+        #: 通话状态三件，**同样缓存 + 重推**。页面刷新之后按钮显示挂断而麦克风还
+        #: 开着，是这套缓存要防的那一类事故。
+        self._call_state: str = ""
+        self._call_meta: dict[str, Any] = {}
+        self._call_level: int = -1
+        self._call_partial: str = ""
 
         self._view = QWebEngineView(self)
         self._page = _SafePage(self._view)
@@ -317,6 +360,12 @@ class ChatView(QWidget):
         # 语音状态与外观同一条理由：页面是后加载的，只推一次会落在空页面上。
         if self._voice_state:
             self._call("setVoiceState", self._voice_state)
+        if self._call_state:
+            self._call("setCallState", self._call_state, self._call_meta)
+        if self._call_level >= 0:
+            self._call("setCallLevel", self._call_level)
+        if self._call_partial:
+            self._call("setCallPartial", self._call_partial)
 
     # ── 向网页推送 ──────────────────────────────────────────────────────────
 
@@ -331,6 +380,29 @@ class ChatView(QWidget):
         """
         payload = ", ".join(json.dumps(arg, ensure_ascii=True) for arg in args)
         self._page.runJavaScript(f"window.ChatHost && window.ChatHost.{function}({payload});")
+
+    def set_call_state(self, state: str, meta: dict[str, Any] | None = None) -> None:
+        """通话状态。认不出的值当 ``off``（理由同 :meth:`set_voice_state`）。"""
+        state = state if state in _CALL_STATES else "off"
+        self._call_state = state
+        self._call_meta = dict(meta or {})
+        self._call("setCallState", state, self._call_meta)
+
+    def set_call_level(self, level: int) -> None:
+        """输入电平 0–100。**相同值不重复下推**——每次都是一次 ``runJavaScript``。"""
+        level = max(0, min(100, int(level)))
+        if level == self._call_level:
+            return
+        self._call_level = level
+        self._call("setCallLevel", level)
+
+    def set_call_partial(self, text: str) -> None:
+        """实时转写**只显示**。空串清空。"""
+        text = text or ""
+        if text == self._call_partial:
+            return
+        self._call_partial = text
+        self._call("setCallPartial", text)
 
     def append_message(self, role: str, text: str, meta: dict[str, Any] | None = None) -> None:
         """追加一条完整消息。"""

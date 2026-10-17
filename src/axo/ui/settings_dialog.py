@@ -1869,6 +1869,24 @@ class SpeechPage(QWidget):
             )
         )
 
+        idle_row = QHBoxLayout()
+        idle_row.addWidget(QLabel("通话空闲自动挂断", self))
+        self.call_idle_box = QSpinBox(self)
+        self.call_idle_box.setObjectName("speechCallIdle")
+        self.call_idle_box.setRange(10, 3600)
+        self.call_idle_box.setSuffix(" 秒")
+        self.call_idle_box.setValue(self._snapshot.call_idle_hangup_s)
+        self.call_idle_box.valueChanged.connect(self._on_toggled)
+        idle_row.addWidget(self.call_idle_box)
+        idle_row.addStretch(1)
+        outer.addLayout(idle_row)
+        outer.addWidget(
+            _hint(
+                "通话里这么久没有任何动静就自动挂断。麦克风只在聆听时开，所以这不是隐私"
+                "边界，只是别让忘了挂的通话一直占着麦克风与识别线程。"
+            )
+        )
+
         outer.addWidget(_section("启动"))
         self.autostart_box = QCheckBox("启动时自动拉起组件", self)
         self.autostart_box.setObjectName("speechAutostartBox")
@@ -1922,6 +1940,7 @@ class SpeechPage(QWidget):
         self.autostart_box.setChecked(settings.autostart)
         self.command_edit.setText(settings.launch_command)
         self.segmented_box.setChecked(settings.segmented)
+        self.call_idle_box.setValue(settings.call_idle_hangup_s)
         self._syncing = False
         self.set_note("")
 
@@ -1934,6 +1953,7 @@ class SpeechPage(QWidget):
             autostart=self.autostart_box.isChecked(),
             launch_command=self.command_edit.text().strip(),
             segmented=self.segmented_box.isChecked(),
+            call_idle_hangup_s=self.call_idle_box.value(),
         )
 
     def _on_pick_command(self) -> None:

@@ -86,6 +86,7 @@ _K_SPEECH_BASE_URL = "speech/base_url"
 _K_SPEECH_AUTOSTART = "speech/autostart"
 _K_SPEECH_COMMAND = "speech/launch_command"
 _K_SPEECH_SEGMENTED = "speech/segmented"
+_K_SPEECH_CALL_IDLE = "speech/call_idle_hangup_s"
 
 _K_TASK_MEMORY = "memory/task_memory"
 _K_GRAPH_CHANNEL = "memory/graph_channel"
@@ -258,6 +259,9 @@ class SpeechSettings:
         segmented: **分段语音（实验）**：说话停顿一下自动结束并提交，不必再按一次
             麦克风。默认关——端点检测在安静房间里好用，在嘈杂环境里还需要用户
             自己按停；等实测过一批再考虑默认开。
+        call_idle_hangup_s: 通话中多久没有任何动静就自动挂断（秒）。默认 90。
+            它不是隐私边界（麦克风只在聆听时开），只是别让忘了挂的通话永远占着
+            麦克风与识别线程。
     """
 
     enabled: bool = True
@@ -267,6 +271,7 @@ class SpeechSettings:
     autostart: bool = False
     launch_command: str = ""
     segmented: bool = False
+    call_idle_hangup_s: int = 90
 
 
 @dataclass(frozen=True)
@@ -518,6 +523,9 @@ class SettingsStore:
             autostart=_as_bool(self._backend.value(_K_SPEECH_AUTOSTART, False), False),
             launch_command=self._text(_K_SPEECH_COMMAND),
             segmented=_as_bool(self._backend.value(_K_SPEECH_SEGMENTED, False), False),
+            call_idle_hangup_s=max(
+                10, min(3600, _as_int(self._backend.value(_K_SPEECH_CALL_IDLE, 90), 90))
+            ),
         )
 
     def save_voice(self, settings: SpeechSettings) -> None:
@@ -529,6 +537,7 @@ class SettingsStore:
         self._backend.setValue(_K_SPEECH_AUTOSTART, bool(settings.autostart))
         self._backend.setValue(_K_SPEECH_COMMAND, settings.launch_command)
         self._backend.setValue(_K_SPEECH_SEGMENTED, bool(settings.segmented))
+        self._backend.setValue(_K_SPEECH_CALL_IDLE, int(settings.call_idle_hangup_s))
 
     # ── 记忆 ────────────────────────────────────────────────────────────────
 
