@@ -32,7 +32,7 @@ wheels = [
 
 [[package]]
 name = "axo"
-version = "0.7.3"
+version = "0.7.4"
 source = { editable = "." }
 dependencies = [
     { name = "biosnn-bus" },
