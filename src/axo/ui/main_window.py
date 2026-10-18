@@ -152,6 +152,7 @@ from ..session.indicator import ContextState, context_state, format_context
 from ..session.store import Message, Session, SessionStore, new_session_id
 from ..stickers import stickers_in
 from ..tts import SpeechReceipt
+from ..weather import OpenMeteoWeather
 from .agent_worker import AgentWorker
 from .app import make_settings
 from .call import CallController
@@ -560,6 +561,7 @@ class MainWindow(QMainWindow):
         self._web_enabled: bool = self._tool_settings.web_enabled
         self._web_require_approval: bool = self._tool_settings.web_require_approval
         self._allow_commands: bool = self._tool_settings.allow_commands
+        self._weather_enabled: bool = self._tool_settings.weather_enabled
         #: 用不用**任务记忆**（:class:`~axo.memory.policy.TaskPolicy`）。
         #: 默认关，存在 ``QSettings`` 的 ``memory/*`` 里，由设置窗口的「记忆」页改。
         self._task_memory: bool = self._settings_store.load_memory().task_memory
@@ -1971,6 +1973,7 @@ class MainWindow(QMainWindow):
             read_root=self._read_roots,
             vision=self._model_can_see(),
             web=(self._web_backend() if callable(getattr(self, "_web_backend", None)) else None),
+            weather=OpenMeteoWeather() if getattr(self, "_weather_enabled", True) else None,
             # **每轮现扫**：用户往 ``stickers/`` 里丢一张图，下一轮她就用得上。
             # 目录是空的就返回空元组，工具随之不登记。
             stickers=stickers_in(stickers_dir()),
@@ -2294,6 +2297,7 @@ class MainWindow(QMainWindow):
             allow_commands=self._allow_commands,
             cancel=self._agent_cancel,
             net=self._web_backend(),
+            weather=OpenMeteoWeather() if getattr(self, "_weather_enabled", True) else None,
             open_external=lambda target, kind: self._ui_call(self._open_external, target, kind),
             clipboard_read=lambda: self._ui_call(lambda: QApplication.clipboard().text()),
             clipboard_write=lambda text: self._ui_call(self._write_clipboard, text),
@@ -3781,6 +3785,7 @@ class MainWindow(QMainWindow):
                 dialog.vision_changed.connect(self._on_cloud_vision_changed)
                 dialog.audio_changed.connect(self._on_cloud_audio_changed)
                 dialog.web_changed.connect(self._on_web_changed)
+                dialog.weather_changed.connect(self._on_weather_changed)
                 dialog.web_approval_changed.connect(self._on_web_approval_changed)
                 dialog.commands_changed.connect(self._on_commands_changed)
                 dialog.voice_changed.connect(self._on_voice_settings_changed)
@@ -3932,6 +3937,7 @@ class MainWindow(QMainWindow):
             read_roots=self._read_roots,
             write_roots=self._read_roots,
             allow_commands=bool(getattr(self, "_allow_commands", False)),
+            weather_enabled=bool(getattr(self, "_weather_enabled", True)),
             web_enabled=bool(getattr(self, "_web_enabled", False)),
             web_require_approval=bool(getattr(self, "_web_require_approval", False)),
             cloud_vision=self._cloud_vision,
@@ -3950,6 +3956,11 @@ class MainWindow(QMainWindow):
         中途改变。
         """
         self._cloud_vision = bool(flag)
+        self._settings_store.save_tools(self._current_tool_settings())
+
+    @Slot(bool)
+    def _on_weather_changed(self, flag: bool) -> None:
+        self._weather_enabled = bool(flag)
         self._settings_store.save_tools(self._current_tool_settings())
 
     @Slot(bool)

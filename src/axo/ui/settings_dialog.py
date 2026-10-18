@@ -883,6 +883,7 @@ class ToolPage(QWidget):
     audio_changed = Signal(bool)
     web_changed = Signal(bool)
     web_approval_changed = Signal(bool)
+    weather_changed = Signal(bool)
     commands_changed = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -899,6 +900,7 @@ class ToolPage(QWidget):
         self._audio_snapshot = False
         self._web_snapshot = False
         self._web_approval_snapshot = False
+        self._weather_snapshot = True
         self._commands_snapshot = False
 
         outer.addWidget(_section("可读目录"))
@@ -1001,6 +1003,19 @@ class ToolPage(QWidget):
         outer.addWidget(self.web_approval_box)
 
         outer.addSpacing(6)
+        outer.addWidget(_section("小功能"))
+        self.weather_box = QCheckBox("允许查天气（内置，不需要 key）", self)
+        self.weather_box.setObjectName("weatherEnabledBox")
+        self.weather_box.toggled.connect(self._on_weather_toggled)
+        outer.addWidget(self.weather_box)
+        outer.addWidget(
+            _hint(
+                "查天气会把**城市名**发给 open-meteo.com（免费、不需要 key），取回当前天气"
+                "与未来几天的预报。它不会把对话内容发出去。"
+            )
+        )
+
+        outer.addSpacing(6)
         outer.addWidget(_section("执行"))
         self.commands_box = QCheckBox("允许在本机执行命令（每次执行都会先确认）", self)
         self.commands_box.setObjectName("allowCommandsBox")
@@ -1044,6 +1059,7 @@ class ToolPage(QWidget):
         for box, value, name in (
             (self.web_box, settings.web_enabled, "_web_snapshot"),
             (self.web_approval_box, settings.web_require_approval, "_web_approval_snapshot"),
+            (self.weather_box, settings.weather_enabled, "_weather_snapshot"),
             (self.commands_box, settings.allow_commands, "_commands_snapshot"),
         ):
             setattr(self, name, bool(value))
@@ -1069,6 +1085,9 @@ class ToolPage(QWidget):
     def web_require_approval(self) -> bool:
         return self.web_approval_box.isChecked()
 
+    def weather_enabled(self) -> bool:
+        return self.weather_box.isChecked()
+
     def allow_commands(self) -> bool:
         return self.commands_box.isChecked()
 
@@ -1077,6 +1096,9 @@ class ToolPage(QWidget):
 
     def _on_web_approval_toggled(self, checked: bool) -> None:
         self.web_approval_changed.emit(bool(checked))
+
+    def _on_weather_toggled(self, checked: bool) -> None:
+        self.weather_changed.emit(bool(checked))
 
     def _on_commands_toggled(self, checked: bool) -> None:
         self.commands_changed.emit(bool(checked))
@@ -2120,6 +2142,7 @@ class SettingsDialog(QDialog):
     tools_changed = Signal(object)
     web_changed = Signal(bool)
     web_approval_changed = Signal(bool)
+    weather_changed = Signal(bool)
     commands_changed = Signal(bool)
     vision_changed = Signal(bool)
     voice_changed = Signal(object)
@@ -2245,6 +2268,7 @@ class SettingsDialog(QDialog):
         self.tools.roots_changed.connect(self.tools_changed)
         self.tools.web_changed.connect(self.web_changed)
         self.tools.web_approval_changed.connect(self.web_approval_changed)
+        self.tools.weather_changed.connect(self.weather_changed)
         self.tools.commands_changed.connect(self.commands_changed)
         self.tools.vision_changed.connect(self.vision_changed)
         self.tools.audio_changed.connect(self.audio_changed)

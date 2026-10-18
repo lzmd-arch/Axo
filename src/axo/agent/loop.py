@@ -60,6 +60,7 @@ import json
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from typing import Any
 
 from ..llm.base import ChatBackend, ChatMessage, ChatRequest, ToolCall
@@ -380,6 +381,29 @@ def _parallel_safe(registry: ToolRegistry, call: ToolCall) -> bool:
     return bool(getattr(tool, "parallel_safe", False))
 
 
+def _fresh_time(messages: Sequence[ChatMessage], moment: datetime) -> list[ChatMessage]:
+    """把 L1 里那行「当前时间」换成**这一刻**的。**没有那一行就不动。**
+
+    工具循环可能跑几分钟，而 L1 是这一轮开始时装配的。一个跨过零点、或者用户
+    隔了一会儿才看回答的任务里，模型需要知道"现在"已经不是开头那个时间了。
+    只替换已存在的那一行（不改前缀结构），所以正常路径上它对上下文长度没有影响。
+    """
+    line = f"当前时间：{moment:%Y-%m-%d} 星期{'一二三四五六日'[moment.weekday()]} {moment:%H:%M}。"
+    refreshed: list[ChatMessage] = []
+    replaced = False
+    for message in messages:
+        if not replaced and message.role == "system" and "当前时间：" in message.content:
+            head, _, tail = message.content.partition("当前时间：")
+            rest = tail.split("\n", 1)
+            remainder = rest[1] if len(rest) > 1 else ""
+            content = head + line + ("\n" + remainder if remainder else "")
+            refreshed.append(replace(message, content=content))
+            replaced = True
+        else:
+            refreshed.append(message)
+    return refreshed
+
+
 def _context_full(messages: Sequence[ChatMessage], budget: TokenBudget, meter: TokenMeter) -> bool:
     """这一轮还没发，余量已经不够一次收尾。**用同一个 meter 计价。**"""
     used = meter.messages(messages)
@@ -404,6 +428,7 @@ def run_agent_loop(
     meter: TokenMeter,
     tools_ceiling: int | None = None,
     limits: LoopLimits = DEFAULT_LIMITS,
+    clock: Callable[[], datetime] = datetime.now,
 ) -> Iterator[Event]:
     """跑一轮任务语域：可能要调几次工具，然后给出回答。
 
@@ -461,7 +486,7 @@ def run_agent_loop(
         # **重排一遍而不是维护一个 working 列表**：驱逐会把 tail 里的整段删掉，
         # 而下标是驱逐算法唯一的抓手。每次从头拼，``turn`` 与 ``tail`` 就不可能
         # 不一致——那种不一致的表现是模型收到两份对不上的历史。
-        turn: list[ChatMessage] = [*messages, *tail]
+        turn: list[ChatMessage] = _fresh_time([*messages, *tail], clock())
         if wrap:
             turn.append(_WRAP_UP_NOTE)
 

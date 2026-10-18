@@ -34,6 +34,7 @@ from axo.agent.catalog import (
     FetchUrlTool,
     ForgetMemoryTool,
     GetTimeTool,
+    GetWeatherTool,
     ListFilesTool,
     LookAtScreenTool,
     OpenExternalTool,
@@ -1406,3 +1407,55 @@ def test_desktop_tools_fail_cleanly_without_a_channel() -> None:
     assert ClipboardReadTool().run({}, context).ok is False
     assert ClipboardWriteTool().run({"text": "x"}, context).ok is False
     assert ShowNotificationTool().run({"title": "t", "body": "b"}, context).ok is False
+
+
+# ── 内置天气（2026-10-18） ──────────────────────────────────────────────────
+
+
+class FakeWeather:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, int]] = []
+
+    def lookup(self, location: str, *, days: int = 1) -> Any:
+        from axo.weather import WeatherReport
+
+        self.calls.append((location, days))
+        return WeatherReport(
+            place=location,
+            country="中国",
+            admin="",
+            latitude=0.0,
+            longitude=0.0,
+            current_temp=20.0,
+            feels_like=None,
+            humidity=None,
+            wind=None,
+            condition="晴",
+        )
+
+
+def test_get_weather_uses_the_injected_client() -> None:
+    weather = FakeWeather()
+    context = ToolContext(store=MemoryStore(":memory:"), weather=weather)
+
+    outcome = GetWeatherTool().run({"location": "杭州", "days": 2}, context)
+
+    assert outcome.ok and "杭州" in outcome.content
+    assert outcome.replayable is False, "天气是某一刻的快照"
+    assert weather.calls == [("杭州", 2)]
+
+
+def test_get_weather_fails_cleanly_without_a_channel() -> None:
+    context = ToolContext(store=MemoryStore(":memory:"))
+
+    assert GetWeatherTool().run({"location": "杭州"}, context).ok is False
+
+
+def test_weather_tool_is_registered_only_when_a_client_is_given(tmp_path: Path) -> None:
+    without = [tool.spec.name for tool in default_tools(read_root=(tmp_path,))]
+    with_weather = [
+        tool.spec.name for tool in default_tools(read_root=(tmp_path,), weather=FakeWeather())
+    ]
+
+    assert "get_weather" not in without
+    assert "get_weather" in with_weather

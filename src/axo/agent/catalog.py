@@ -59,6 +59,7 @@ from ..memory.forget import can_soft_forget, soft_forgotten
 from ..memory.policy import MemoryDraft
 from ..net import DEFAULT_COUNT, WebError
 from ..stickers import Sticker, catalog_line, find_in
+from ..weather import DEFAULT_DAYS, MAX_DAYS, WeatherError, format_report
 from .fs import (
     MAX_LIST_ENTRIES,
     MAX_SEARCH_RESULTS,
@@ -96,6 +97,7 @@ __all__ = [
     "ClipboardReadTool",
     "ClipboardWriteTool",
     "FetchUrlTool",
+    "GetWeatherTool",
     "ForgetMemoryTool",
     "ListFilesTool",
     "ListRemindersTool",
@@ -252,8 +254,10 @@ class GetTimeTool:
         # ``replayable=False``：这个结果是**那一刻**的快照，而这个工具的全部语义就是
         # "当前值"。回放它比不回放更坏——模型会拿着十分钟前（或昨天）的时间戳回答
         # "现在几点"，而且看不出有什么不对。
+        offset = moment.astimezone().strftime("%z")
+        zone = f"UTC{offset[:3]}:{offset[3:]}" if len(offset) == 5 else "本地时间"
         return ToolOutcome.success(
-            f"{moment:%Y-%m-%d} 星期{_weekday_cn(moment)} {moment:%H:%M}（本地时间）",
+            f"{moment:%Y-%m-%d} 星期{_weekday_cn(moment)} {moment:%H:%M:%S}（{zone}）",
             replayable=False,
         )
 
@@ -1088,6 +1092,44 @@ class SearchFilesTool:
         return ToolOutcome.success(body, replayable=False)
 
 
+class GetWeatherTool:
+    """查天气。**只读，但会让城市名离开本机。**"""
+
+    spec: ClassVar[ToolSpec] = ToolSpec(
+        name="get_weather",
+        description=(
+            "查某个城市现在与未来几天的天气。用户问「今天冷不冷」「明天会下雨吗」"
+            "「北京天气怎么样」时用它。只要城市名就够；要未来几天就把 days 设大一点。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "location": {"type": "string", "description": "城市名，例如「北京」「杭州」。"},
+                "days": {
+                    "type": "integer",
+                    "description": f"要几天的预报（默认 {DEFAULT_DAYS}，最多 {MAX_DAYS}）。",
+                },
+            },
+            "required": ["location"],
+        },
+    )
+    requires_approval: ClassVar[bool] = False
+    parallel_safe: ClassVar[bool] = True
+
+    def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+        location = argument_str(arguments, "location")
+        days = argument_int(arguments, "days", default=DEFAULT_DAYS, minimum=1, maximum=MAX_DAYS)
+        assert days is not None
+        if ctx.weather is None:
+            return ToolOutcome.failure("这一轮没有天气通道。")
+        try:
+            report = ctx.weather.lookup(location, days=days)
+        except WeatherError as exc:
+            return ToolOutcome.failure(str(exc))
+        # 天气是**某一刻的快照**：回放给下一轮的模型没有意义（同 get_time）。
+        return ToolOutcome.success(format_report(report), replayable=False)
+
+
 class SystemInfoTool:
     """这台机器的基本情况。**只读，不过闸门。**"""
 
@@ -1559,6 +1601,7 @@ def default_tools(
     stickers: Sequence[Sticker] = (),
     plugins: Sequence[Tool] = (),
     web: Any | None = None,
+    weather: Any | None = None,
     write_root: Sequence[Path] = (),
     allow_commands: bool = False,
 ) -> tuple[Tool, ...]:
@@ -1600,6 +1643,9 @@ def default_tools(
         # 登记它们只会让模型去试一次然后被拒。
         *((ListFilesTool(), SearchFilesTool()) if read_root else ()),
         SystemInfoTool(),
+        # 天气是内置小功能：不需要 key，但**只在调用方给了客户端时登记**（与联网读
+        # 同一姿态——做不到的事不出现在工具表里）。
+        *((GetWeatherTool(),) if weather is not None else ()),
         UpdatePlanTool(),
         # 联网读**默认不登记**（出网行为）；调用方只在用户打开开关且配了 key 时传
         # ``web``。两个工具与其它只读工具一样不过闸门——是否联网由总开关决定。

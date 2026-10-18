@@ -83,6 +83,7 @@ _K_WRITE_ROOTS = "tools/write_roots"
 _K_WEB_ENABLED = "tools/web_enabled"
 _K_WEB_REQUIRE_APPROVAL = "tools/web_require_approval"
 _K_ALLOW_COMMANDS = "tools/allow_commands"
+_K_WEATHER_ENABLED = "tools/weather_enabled"
 _K_SPEECH_ENABLED = "speech/enabled"
 _K_SPEECH_VOLUME = "speech/volume"
 _K_SPEECH_VOICE = "speech/voice"
@@ -228,6 +229,10 @@ class ToolSettings:
     """允许**写**的目录。**默认空 = 写入工具不登记。** 与 :attr:`read_roots` 分开：
     读是看，写是改，一次授权不该自动扩成另一次。数据根（记忆库/设置/日志）永远
     被拒绝，即使它在某个写根底下。"""
+    weather_enabled: bool = True
+    """允许查天气（内置，用 Open-Meteo，不需要 key）。
+
+    **默认开**：用户点名要的小功能，只把城市名发出去；关掉之后天气工具不登记。"""
     allow_commands: bool = False
     """允许模型在本机执行命令。**默认关**——这是权限面最大的一格，用户要显式打开。
     打开后每次执行仍然逐次确认。"""
@@ -518,6 +523,7 @@ class SettingsStore:
             read_roots=_as_path_list(self._backend.value(_K_READ_ROOTS, [])),
             write_roots=_as_path_list(self._backend.value(_K_WRITE_ROOTS, [])),
             allow_commands=_as_bool(self._backend.value(_K_ALLOW_COMMANDS, False)),
+            weather_enabled=_as_bool(self._backend.value(_K_WEATHER_ENABLED, True), True),
             web_enabled=_as_bool(self._backend.value(_K_WEB_ENABLED, False)),
             web_require_approval=_as_bool(self._backend.value(_K_WEB_REQUIRE_APPROVAL, False)),
             cloud_vision=_as_bool(self._backend.value(_K_CLOUD_VISION, False)),
@@ -530,6 +536,7 @@ class SettingsStore:
         self._backend.setValue(_K_READ_ROOTS, [str(root) for root in settings.read_roots])
         self._backend.setValue(_K_WRITE_ROOTS, [str(root) for root in settings.write_roots])
         self._backend.setValue(_K_ALLOW_COMMANDS, settings.allow_commands)
+        self._backend.setValue(_K_WEATHER_ENABLED, settings.weather_enabled)
         self._backend.setValue(_K_WEB_ENABLED, settings.web_enabled)
         self._backend.setValue(_K_WEB_REQUIRE_APPROVAL, settings.web_require_approval)
         self._backend.setValue(_K_CLOUD_VISION, settings.cloud_vision)

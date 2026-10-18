@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -118,6 +119,7 @@ def drive(
     limits: LoopLimits = DEFAULT_LIMITS,
     answer: ApprovalDecision | None = ApprovalDecision.GRANT,
     messages: list[ChatMessage] | None = None,
+    clock: Any = None,
 ) -> tuple[list[Any], LoopDone]:
     """跑一遍循环，返回 ``(所有事件, 最后一个事件)``。"""
     events = list(
@@ -131,6 +133,7 @@ def drive(
             meter=TokenMeter(),
             tools_ceiling=ceiling,
             limits=limits,
+            **({"clock": clock} if clock is not None else {}),
         )
     )
     assert isinstance(events[-1], LoopDone), "最后一个事件必须是 LoopDone"
@@ -1032,3 +1035,32 @@ def test_read_only_calls_in_one_round_run_in_parallel(store: MemoryStore) -> Non
     assert [one.content for one in finished] == ["读到 1", "读到 2"], "顺序必须保持"
     assert done.tool_calls == 2
     assert elapsed < 0.35, f"两个 0.2 秒的读串行要 0.4 秒以上，实际 {elapsed:.3f}"
+
+
+def test_the_loop_refreshes_the_time_line_each_round(store: MemoryStore) -> None:
+    """工具循环可能跑过零点：L1 里那行「当前时间」每轮换成这一刻。"""
+    moments = iter([datetime(2026, 1, 1, 23, 59), datetime(2026, 1, 2, 0, 1)])
+    backend = ScriptedBackend(
+        script=[
+            [tool_chunk(call("spy"))],
+            [text_chunk("好了", done=True)],
+        ]
+    )
+    messages = [
+        ChatMessage(role="system", content="当前时间：2026-01-01 星期四 23:59。\n别的"),
+        ChatMessage(role="user", content="跑个任务"),
+    ]
+
+    _events, _done = drive(
+        backend,
+        ToolRegistry([SpyTool()]),
+        store,
+        messages=messages,
+        clock=lambda: next(moments),
+    )
+
+    first = backend.requests[0].messages[0].content
+    second = backend.requests[1].messages[0].content
+    assert "2026-01-01 星期四 23:59" in first
+    assert "2026-01-02 星期五 00:01" in second
+    assert "别的" in second, "换时间不能把同一段 system 的其余内容吃掉"

@@ -1066,6 +1066,17 @@ def test_the_proactive_settings_survive_a_round_trip(settings: ProactiveSettings
     assert store.load_proactive() == settings
 
 
+def test_weather_is_on_by_default_and_roundtrips() -> None:
+    """查天气是用户点名要的内置小功能，默认开；关掉就存下来。"""
+    from axo.ui.settings_store import ToolSettings
+
+    assert SettingsStore(FakeBackend()).load_tools().weather_enabled is True
+
+    store = SettingsStore(FakeBackend())
+    store.save_tools(ToolSettings(weather_enabled=False))
+    assert store.load_tools().weather_enabled is False
+
+
 def test_web_and_command_switches_default_off_and_roundtrip() -> None:
     """联网与执行都是**出网/改机**的行为，默认关；写根跟着读根走。"""
     from axo.ui.settings_store import ToolSettings

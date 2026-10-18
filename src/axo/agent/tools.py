@@ -145,7 +145,9 @@ class ToolContext:
     cancel: Any = None
     """取消信号（``threading.Event``）。**只给会阻塞的工具**（命令执行）用。"""
     net: Any = None
-    """:mod:`axo.agent.net` 的实例（联网搜索/抓取）。``None`` = 不登记那两个工具。"""
+    """:mod:`axo.net` 的实例（联网搜索/抓取）。``None`` = 不登记那两个工具。"""
+    weather: Any = None
+    """天气客户端（:class:`axo.weather.OpenMeteoWeather`）。``None`` = 不登记天气工具。"""
     open_external: Callable[[str, str], str] | None = None
     """打开外部程序/网址：``(目标, "path"|"url") -> 空串或一句失败原因``。"""
     clipboard_read: Callable[[], str] | None = None

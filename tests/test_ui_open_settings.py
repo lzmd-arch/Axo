@@ -72,6 +72,7 @@ def _window() -> SimpleNamespace:
         _audio_in=False,
         _web_enabled=False,
         _web_require_approval=False,
+        _weather_enabled=True,
         _allow_commands=False,
         _voice_settings=SpeechSettings(),
         # 记忆页那一份：**任务记忆关着**，与一个刚装好的终端一模一样。
@@ -99,6 +100,7 @@ def _window() -> SimpleNamespace:
         _on_cloud_audio_changed=lambda *_args: None,
         _on_web_changed=lambda *_args: None,
         _on_web_approval_changed=lambda *_args: None,
+        _on_weather_changed=lambda *_args: None,
         _on_commands_changed=lambda *_args: None,
         _on_voice_settings_changed=lambda *_args: None,
         _on_memory_changed=lambda *_args: None,
@@ -149,6 +151,7 @@ def _consolidate_signals() -> SimpleNamespace:
         "audio_changed",
         "web_changed",
         "web_approval_changed",
+        "weather_changed",
         "commands_changed",
         "voice_changed",
         "graph_rebuild_requested",
