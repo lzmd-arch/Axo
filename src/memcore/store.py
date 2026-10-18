@@ -134,6 +134,8 @@ class MemoryStore:
         self._revision = 0
         self._lex_index: LexicalIndex | None = None
         self._lex_index_revision = -1
+        self._embedding_revision = 0
+        self._normalized_cache: dict[str, tuple[int, tuple[str, ...], np.ndarray]] = {}
 
     # ── 打开与关闭 ──────────────────────────────────────────────────────────
 
@@ -372,6 +374,15 @@ class MemoryStore:
         """任何会改变词法码的写入都会 +1；倒排索引用它判断缓存是否过期。"""
         return self._revision
 
+    def unencoded_count(self) -> int:
+        """没有任何词法码的条目数。候选路径看到它们时会退回全量扫描。"""
+        with self._lock:
+            return int(
+                self._connection.execute(
+                    "SELECT COUNT(*) FROM memories WHERE lex_idx IS NULL"
+                ).fetchone()[0]
+            )
+
     def lexical_index(self) -> LexicalIndex:
         """词法倒排索引的缓存。按 ``revision`` 失效；只读 ``lex_*`` 列。"""
         with self._lock:
@@ -515,6 +526,27 @@ class MemoryStore:
                 (memory_id, space.space_id, space.dim, flat.tobytes(), now_ts()),
             )
             self._connection.commit()
+            self._embedding_revision += 1
+
+    def normalized_embedding_matrix(self, space_id: str) -> tuple[list[str], np.ndarray]:
+        """某空间的已归一化向量矩阵，按 embedding revision 缓存。
+
+        ``recall`` 每轮都要在这个矩阵上做余弦；50k×768 的每次复制 + 归一化是
+        纯浪费。缓存只在 ``set_embedding`` 之后失效。
+        """
+        with self._lock:
+            cached = self._normalized_cache.get(space_id)
+            if cached is not None and cached[0] == self._embedding_revision:
+                return list(cached[1]), cached[2]
+            ids, matrix = self.embedding_matrix(space_id)
+            norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+            normalized = matrix / np.maximum(norms, 1e-12)
+            self._normalized_cache[space_id] = (
+                self._embedding_revision,
+                tuple(ids),
+                normalized,
+            )
+            return ids, normalized
 
     def get_embedding(self, memory_id: str, space_id: str) -> np.ndarray | None:
         with self._lock:

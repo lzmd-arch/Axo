@@ -209,6 +209,9 @@ class RecallConfig:
 #: 全量一致的前提下取的值（见 sweep_results/axo_recall_rare_bit）。
 _PREFILTER_LIMIT = 5000
 
+#: 各通道候选并集的上限；超过它就退回全量扫描（时间窗很大时）。
+_CANDIDATE_UNION_LIMIT = 20000
+
 
 @dataclass
 class _Candidate:
@@ -309,18 +312,13 @@ def recall(
         + (("graph",) if graph_scores is not None else ())
     )
 
-    candidate_ids = None
-    if (
-        query_lex is not None
-        and query_vector is None
-        and settings.graph_weight <= 0.0
-        and window_ids is None
-    ):
-        index = store.lexical_index()
-        # 有「没有任何词法码」的条目时退回全量扫描：候选路径看不到它们，
-        # 而它们必须以 NO_ENCODING 出现在账本里（数据问题要可见）。
-        if len(index.ids) == store.count():
-            candidate_ids = set(index.candidates(query_lex, limit=_PREFILTER_LIMIT))
+    candidate_ids = _prefilter_ids(
+        store,
+        query_lex=query_lex,
+        scores_by_id=scores_by_id,
+        graph_scores=graph_scores,
+        window_ids=window_ids,
+    )
     candidates, rejected, scanned, live = _scan(
         store,
         query_lex=query_lex,
@@ -406,15 +404,13 @@ def _semantic_channel(
             f"**不能靠截断或补齐蒙混过去**，那样算出来的相似度没有意义。"
         )
 
-    ids, matrix = store.embedding_matrix(space_id)
+    ids, matrix = store.normalized_embedding_matrix(space_id)
     if not ids:
         notes.append(f"空间 {space_id!r} 里还没有任何向量，本轮只有词法通道")
         return None
 
-    # 两侧都重新归一化：契约上向量已经是单位长度，但库里的向量可能来自别的
-    # 写入路径。"契约上应该"与"事实上是"之间的差额，在这里就是一次静默的
-    # 相似度偏移。
-    sims = _normalized(matrix) @ _normalized(query[None, :])[0]
+    # 矩阵已按 embedding revision 缓存并归一化；查询侧仍需归一化。
+    sims = matrix @ _normalized(query[None, :])[0]
     # 负余弦是"意思相反"，不是"负相关"。融合得分要当权重用，放任负值进来会
     # 让一条词法强命中的记忆被语义项拖到阈值以下。
     sims = np.clip(sims, 0.0, 1.0)
@@ -514,6 +510,39 @@ def _graph_channel(
         for row, node_id in enumerate(graph.node_ids)
         if spread[row] > 0.0
     }
+
+
+def _prefilter_ids(
+    store: MemoryStore,
+    *,
+    query_lex: SDR | None,
+    scores_by_id: dict[str, float] | None,
+    graph_scores: dict[str, float] | None,
+    window_ids: set[str] | None,
+) -> set[str] | None:
+    """纯词法/多通道的候选并集。返回 ``None`` = 退回全量扫描。"""
+    if query_lex is None and scores_by_id is None and graph_scores is None and window_ids is None:
+        return None
+    # 有「没有任何词法码」的条目时，候选路径看不到它们，而它们必须以
+    # NO_ENCODING 出现在账本里（数据问题要可见）。
+    if store.unencoded_count() > 0:
+        return None
+
+    ids: set[str] = set()
+    if query_lex is not None:
+        ids.update(store.lexical_index().candidates(query_lex, limit=_PREFILTER_LIMIT))
+    if scores_by_id is not None:
+        semantic = sorted(scores_by_id.items(), key=lambda pair: pair[1][1], reverse=True)[
+            :_PREFILTER_LIMIT
+        ]
+        ids.update(memory_id for memory_id, _scores in semantic)
+    if window_ids is not None:
+        ids.update(window_ids)
+    if graph_scores is not None:
+        ids.update(memory_id for memory_id, score in graph_scores.items() if score > 0.0)
+    if len(ids) > _CANDIDATE_UNION_LIMIT:
+        return None
+    return ids
 
 
 def _scan(
