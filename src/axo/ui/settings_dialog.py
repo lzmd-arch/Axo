@@ -1668,6 +1668,32 @@ class ProactivePage(QWidget):
         )
 
         outer.addSpacing(6)
+        outer.addWidget(_section("说什么"))
+        source_row = QHBoxLayout()
+        source_row.addWidget(QLabel("话头来自", self))
+        self.source_combo = QComboBox(self)
+        self.source_combo.setObjectName("proactiveSourceCombo")
+        self.source_combo.addItem("最近几天的一条记忆", "memory")
+        self.source_combo.addItem("网上的热点新闻", "news")
+        self.source_combo.currentIndexChanged.connect(self._on_source_changed)
+        source_row.addWidget(self.source_combo)
+        source_row.addStretch(1)
+        outer.addLayout(source_row)
+        self.news_query_edit = QLineEdit(self)
+        self.news_query_edit.setObjectName("proactiveNewsQuery")
+        self.news_query_edit.setPlaceholderText("搜什么（例如：今天的科技新闻）")
+        self.news_query_edit.setText(self._snapshot.news_query)
+        self.news_query_edit.editingFinished.connect(self._on_changed)
+        self.news_query_edit.setEnabled(self._snapshot.source == "news")
+        outer.addWidget(self.news_query_edit)
+        outer.addWidget(
+            _hint(
+                "「热点新闻」需要先在「工具」页打开联网、并在后端页填好 DeepSeek 的 key；"
+                "搜到的标题与摘要会作为话头，不会写进记忆。"
+            )
+        )
+
+        outer.addSpacing(6)
         outer.addWidget(_section("打扰的边界"))
         gap_row = QHBoxLayout()
         gap_row.addWidget(QLabel("安静够", self))
@@ -1740,6 +1766,10 @@ class ProactivePage(QWidget):
             self.per_day_spin.setEnabled(settings.max_per_day is not None)
             self.quiet_from_spin.setValue(settings.quiet_from)
             self.quiet_to_spin.setValue(settings.quiet_to)
+            index = self.source_combo.findData(settings.source)
+            self.source_combo.setCurrentIndex(index if index >= 0 else 0)
+            self.news_query_edit.setText(settings.news_query)
+            self.news_query_edit.setEnabled(settings.source == "news")
         finally:
             self._syncing = False
 
@@ -1751,6 +1781,8 @@ class ProactivePage(QWidget):
             max_per_day=self.per_day_spin.value() if self.limit_box.isChecked() else None,
             quiet_from=self.quiet_from_spin.value(),
             quiet_to=self.quiet_to_spin.value(),
+            source=str(self.source_combo.currentData() or "memory"),
+            news_query=self.news_query_edit.text().strip() or "今天的热点新闻",
         )
 
     def revert(self) -> None:
@@ -1759,6 +1791,10 @@ class ProactivePage(QWidget):
             return
         self.set_state(self._snapshot)
         self.changed.emit(self.current())
+
+    def _on_source_changed(self, _index: int = -1) -> None:
+        self.news_query_edit.setEnabled(self.source_combo.currentData() == "news")
+        self._on_changed()
 
     def _on_limit_toggled(self, checked: bool) -> None:
         self.per_day_spin.setEnabled(checked)

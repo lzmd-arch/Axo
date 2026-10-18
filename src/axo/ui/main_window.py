@@ -170,6 +170,7 @@ from .memory_worker import (
     MemorySyncWorker,
     render_recall_detail,
 )
+from .news_worker import NewsWorker
 from .onboarding import OnboardingWizard
 from .proactive_scheduler import ProactiveScheduler
 from .relaunch import restart_application
@@ -732,6 +733,9 @@ class MainWindow(QMainWindow):
         #: 她这一轮拿的是**哪个话头**（主动搭话那条路）。与 ``_speak_alert`` 互斥，
         #: 两种"她先开口"共用同一条收尾——靠这两个字段判断该不该补一句话。
         self._speak_material: Material | None = None
+        #: 热点新闻那一次搜索是否在飞（同一时刻只搜一次）。
+        self._news_live = False
+        self._news_note_shown = False
         #: 她上一次开口是什么时候。**提醒与主动都算**：她刚说完一句，二十秒后再来一句
         #: 是骚扰，二十分钟后再来一句同样不是"他静下来了"（见 :meth:`_last_activity`）。
         self._last_speech_at: datetime | None = None
@@ -3011,9 +3015,67 @@ class MainWindow(QMainWindow):
         )
         if reason is not None:
             return
+        if settings.source == "news":
+            self._start_proactive_news(now)
+            return
         material = self._pick_material(now)
         if material is None:
             return
+        self._start_proactive_speech(material)
+
+    def _start_proactive_news(self, now: datetime) -> None:
+        """话头选的是热点：**先搜，再决定说不说**。
+
+        搜索失败、没有结果、或者联网通道没开时**退回记忆**——"她本可以说话"不该
+        因为一次搜索失败就变成沉默。退回时状态栏说一句，只说一次。
+        """
+        if self._news_live:
+            return
+        web = self._web_backend()
+        if web is None:
+            self._news_fallback(now, "没有联网通道（设置 → 工具 → 允许联网，并填好 key）")
+            return
+        thread = QThread(self)
+        worker = NewsWorker(web, self._proactive_settings.news_query, now=now)
+        self._news_live = True
+        worker.done.connect(self._on_news_ready)
+        worker.failed.connect(self._on_news_failed)
+        worker.done.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        self._track(thread, worker, what="热点话头线程", slot="news")
+        thread.start()
+
+    @Slot(object)
+    def _on_news_ready(self, material: Any) -> None:
+        self._news_live = False
+        now = datetime.now()
+        # 搜索可能跑了几秒：这几道闸要重看一遍（同 ``_on_proactive_tick``）。
+        if (
+            material is not None
+            and material.memory_id not in self._used_materials
+            and self._proactive_settings.enabled
+            and not self._call.live
+            and self._backend is not None
+            and not self._streaming
+            and not self._speak_live
+        ):
+            self._start_proactive_speech(material)
+            return
+        self._news_fallback(now, "这次没有搜到合适的新闻")
+
+    @Slot(str)
+    def _on_news_failed(self, _reason: str) -> None:
+        self._news_live = False
+        self._news_fallback(datetime.now(), "热点搜索没有成功")
+
+    def _news_fallback(self, now: datetime, note: str) -> None:
+        """热点走不通时用记忆顶上。**没有记忆可挑就沉默**（同主动搭话的退化）。"""
+        material = self._pick_material(now)
+        if material is None:
+            return
+        if not self._news_note_shown:
+            self._news_note_shown = True
+            self.chat_view.set_status(f"{note}，这次用最近的一条记忆当话头。")
         self._start_proactive_speech(material)
 
     def _roll_over_if_new_day(self, now: datetime) -> None:

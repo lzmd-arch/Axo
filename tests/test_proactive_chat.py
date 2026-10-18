@@ -301,3 +301,61 @@ def test_she_is_told_to_speak_but_not_how() -> None:
 
     assert "主动对他说一句" in note
     assert "语气" not in note and "温柔" not in note
+
+
+# ── 热点新闻当话头（2026-10-18） ────────────────────────────────────────────
+
+
+def test_a_news_hit_becomes_a_material_with_its_own_wording() -> None:
+    from types import SimpleNamespace
+
+    from axo.agent.proactive_chat import news_material
+
+    hits = [
+        SimpleNamespace(title="", url="", summary=""),
+        SimpleNamespace(title="今天的头条", url="https://example.com/a", summary="事情是这样"),
+    ]
+
+    material = news_material(hits, now=NOW)
+
+    assert material is not None
+    assert material.kind == "news"
+    assert material.memory_id.startswith("news:")
+    assert "今天的头条" in material.line()
+    assert "你刚看到的一条新闻" in material.line()
+    assert "你记得" not in material.line()
+
+
+def test_no_usable_news_is_none_not_an_empty_material() -> None:
+    from types import SimpleNamespace
+
+    from axo.agent.proactive_chat import news_material
+
+    assert news_material([SimpleNamespace(title="", url="", summary="")], now=NOW) is None
+    assert news_material([], now=NOW) is None
+
+
+def test_the_news_note_does_not_call_it_a_memory() -> None:
+    from types import SimpleNamespace
+
+    from axo.agent.proactive_chat import news_material
+
+    material = news_material(
+        [SimpleNamespace(title="头条", url="https://example.com", summary="摘要")],
+        now=NOW,
+    )
+    assert material is not None
+
+    messages = build_proactive_messages(persona=["人设"], material=material, now=NOW)
+
+    system = messages[0].content
+    assert "新闻" in system
+    assert "你记得的一件事" not in system
+    assert "新闻" in messages[1].content
+
+
+def test_memory_materials_still_say_they_are_remembered() -> None:
+    material = Material(memory_id="m1", content="感冒那位回来了。", created_at=NOW.timestamp())
+
+    assert material.kind == "memory"
+    assert "你记得" in material.line()

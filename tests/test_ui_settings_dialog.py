@@ -1936,3 +1936,24 @@ def test_opening_the_page_twice_does_not_rewrite_the_settings(qapp, data_root) -
     dialog.proactive.set_state(ProactiveSettings(min_gap_minutes=33))
 
     assert seen == []
+
+
+def test_the_proactive_source_can_be_news(qapp, data_root) -> None:
+    """话头选「热点新闻」时，查询框才可编辑；改动立刻发出去。"""
+    dialog = _dialog()
+    seen: list[ProactiveSettings] = []
+    dialog.proactive_changed.connect(seen.append)
+
+    index = dialog.proactive.source_combo.findData("news")
+    dialog.proactive.source_combo.setCurrentIndex(index)
+
+    assert dialog.proactive.news_query_edit.isEnabled()
+    assert seen[-1].source == "news"
+
+    dialog.proactive.news_query_edit.setText("科技新闻")
+    dialog.proactive.news_query_edit.editingFinished.emit()
+
+    assert seen[-1].news_query == "科技新闻"
+
+    dialog.proactive.set_state(ProactiveSettings(source="memory"))
+    assert not dialog.proactive.news_query_edit.isEnabled()

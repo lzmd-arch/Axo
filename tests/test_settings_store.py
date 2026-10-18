@@ -1086,3 +1086,24 @@ def test_web_and_command_switches_default_off_and_roundtrip() -> None:
     )
     store.save_tools(original)
     assert store.load_tools() == original
+
+
+def test_proactive_source_defaults_to_memory_and_roundtrips() -> None:
+    """话头默认来自记忆；选热点要能存住查询词。"""
+    from axo.ui.settings_store import ProactiveSettings
+
+    defaults = SettingsStore(FakeBackend()).load_proactive()
+    assert defaults.source == "memory"
+    assert defaults.news_query
+
+    store = SettingsStore(FakeBackend())
+    original = ProactiveSettings(source="news", news_query="科技新闻")
+    store.save_proactive(original)
+    loaded = store.load_proactive()
+    assert loaded.source == "news"
+    assert loaded.news_query == "科技新闻"
+
+    # 读坏的值回落记忆，不是"某个别的来源"。
+    assert (
+        SettingsStore(FakeBackend({"proactive/source": "微博"})).load_proactive().source == "memory"
+    )

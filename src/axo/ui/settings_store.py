@@ -89,6 +89,8 @@ _K_SPEECH_VOICE = "speech/voice"
 _K_SPEECH_BASE_URL = "speech/base_url"
 _K_SPEECH_AUTOSTART = "speech/autostart"
 _K_SPEECH_COMMAND = "speech/launch_command"
+_K_PROACTIVE_SOURCE = "proactive/source"
+_K_PROACTIVE_NEWS_QUERY = "proactive/news_query"
 _K_SPEECH_SEGMENTED = "speech/segmented"
 _K_SPEECH_CALL_IDLE = "speech/call_idle_hangup_s"
 
@@ -356,6 +358,10 @@ class ProactiveSettings:
         max_per_day: 一天最多主动开口几次。``None`` = 不限，``0`` = 一次都不来。
         quiet_from / quiet_to: 免打扰时段的起止（本地小时数）。默认 23 → 8。
             **两者相等表示这一闸关掉**，不是"全天静默"。
+        source: 话头从哪来：``"memory"``（最近记忆，默认）或 ``"news"``（联网搜到的
+            热点，需要联网开关与 DeepSeek key）。**默认记忆**：不改变已有行为，也
+            不需要网络。
+        news_query: ``source="news"`` 时搜什么。默认「今天的热点新闻」。
     """
 
     enabled: bool = True
@@ -363,6 +369,8 @@ class ProactiveSettings:
     max_per_day: int | None = 3
     quiet_from: int = 23
     quiet_to: int = 8
+    source: str = "memory"
+    news_query: str = "今天的热点新闻"
 
 
 @dataclass(frozen=True)
@@ -622,6 +630,13 @@ class SettingsStore:
             max_per_day=_as_optional_int(self._backend.value(_K_PROACTIVE_MAX_PER_DAY, 3), 3),
             quiet_from=_as_int(self._backend.value(_K_PROACTIVE_QUIET_FROM, 23), 23),
             quiet_to=_as_int(self._backend.value(_K_PROACTIVE_QUIET_TO, 8), 8),
+            source=(
+                "news"
+                if str(self._backend.value(_K_PROACTIVE_SOURCE, "memory")).strip() == "news"
+                else "memory"
+            ),
+            news_query=str(self._backend.value(_K_PROACTIVE_NEWS_QUERY, "今天的热点新闻")).strip()
+            or "今天的热点新闻",
         )
 
     def save_proactive(self, settings: ProactiveSettings) -> None:
@@ -634,6 +649,8 @@ class SettingsStore:
         )
         self._backend.setValue(_K_PROACTIVE_QUIET_FROM, int(settings.quiet_from))
         self._backend.setValue(_K_PROACTIVE_QUIET_TO, int(settings.quiet_to))
+        self._backend.setValue(_K_PROACTIVE_SOURCE, settings.source)
+        self._backend.setValue(_K_PROACTIVE_NEWS_QUERY, settings.news_query)
 
     def save_reminders(self, settings: ReminderSettings) -> None:
         """写回。存真 bool，读取侧仍然按 :func:`_as_bool` 收一遍（同记忆那一节）。"""
