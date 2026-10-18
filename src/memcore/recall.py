@@ -695,6 +695,30 @@ def _reject(
 # ── 选择 ────────────────────────────────────────────────────────────────────
 
 
+def _jaccard_matrix(pool: list[_Candidate]) -> np.ndarray:
+    """候选两两的 Jaccard 矩阵，一次性算完。
+
+    MMR 每一步都要问"这个候选与已选里最像的那条有多像"；逐对调
+    :meth:`SDR.jaccard` 会让 ``candidate_limit=200`` 退化成约 4 万次
+    ``np.intersect1d``（50k 库上实测 4–8 秒，见 2026-10-18 的 profiling）。
+    这里把候选的活跃位铺成 ``(n, width)`` 的 0/1 矩阵，一次矩阵乘得到交集计数；
+    ``SDR.jaccard`` **刻意忽略权重**，所以 0/1 矩阵与它同义。
+
+    宽度不一致的候选（正常不会发生）按 0 相似度处理，与
+    :func:`_max_jaccard` 原来的跳过行为一致。
+    """
+    width = max((candidate.sdr.width for candidate in pool if candidate.sdr is not None), default=0)
+    matrix = np.zeros((len(pool), width), dtype=np.float32)
+    for row, candidate in enumerate(pool):
+        if candidate.sdr is not None and candidate.sdr.width == width:
+            matrix[row, candidate.sdr.idx] = 1.0
+    cardinality = matrix.sum(axis=1)
+    intersection = matrix @ matrix.T
+    union = cardinality[:, None] + cardinality[None, :] - intersection
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(union > 0, intersection / union, 0.0)
+
+
 def _select(
     pool: list[_Candidate],
     *,
@@ -710,20 +734,34 @@ def _select(
     预算被装不下时**不退出循环**而是继续看下一条——剩下的候选里有更短的，
     它可能装得下。"按得分从高到低，装不下就停"会让一条 800 token 的记忆把
     后面所有 60 token 的候选一起挡在门外。
+
+    **相似度用预计算的矩阵，不逐对算。** ``max_sim`` 维护"每个候选与已选的最大
+    Jaccard"；选中一条后用矩阵的一行做一次 ``maximum`` 更新。语义与原逐对版本
+    相同，只是把 O(k²) 次 Python/numpy 调用换成一次矩阵乘。
     """
     pool.sort(key=lambda candidate: -candidate.scores.fused)
     pool = pool[: settings.candidate_limit]
+    if not pool:
+        return [], [], 0
+
+    jaccard = _jaccard_matrix(pool)
+    scores = np.asarray([candidate.scores.fused for candidate in pool], dtype=np.float64)
+    max_sim = np.zeros(len(pool), dtype=np.float64)
+    alive = np.ones(len(pool), dtype=bool)
 
     selected: list[_Candidate] = []
     rejected: list[RejectedCandidate] = []
     used = 0
 
     # ``max_items`` 为 None 时只受额度约束——见它自己的注释。
-    while pool and (settings.max_items is None or len(selected) < settings.max_items):
-        index = _best_mmr(pool, selected, settings.mmr_lambda)
-        candidate = pool.pop(index)
+    while alive.any() and (settings.max_items is None or len(selected) < settings.max_items):
+        values = settings.mmr_lambda * scores - (1.0 - settings.mmr_lambda) * max_sim
+        values = np.where(alive, values, -np.inf)
+        index = int(np.argmax(values))
+        candidate = pool[index]
+        redundancy = float(max_sim[index])
+        alive[index] = False
 
-        redundancy = _max_jaccard(candidate, selected)
         if redundancy > settings.redundancy_threshold:
             rejected.append(
                 _reject(
@@ -748,14 +786,11 @@ def _select(
 
         selected.append(candidate)
         used += candidate.tokens
+        max_sim = np.maximum(max_sim, jaccard[index])
 
-    if pool:
-        # 只有**条数上限**才会剩下没被看过的一堆；不限条数时每条都被看过、都被
-        # 记过一次拒绝原因（重复 / 装不下 / 分数不够），不该再挂一个 MAX_ITEMS。
-        rejected.extend(
-            _reject(candidate.item, RejectReason.MAX_ITEMS, candidate.scores.fused)
-            for candidate in pool
-        )
+    for index, candidate in enumerate(pool):
+        if alive[index]:
+            rejected.append(_reject(candidate.item, RejectReason.MAX_ITEMS, candidate.scores.fused))
 
     injected = [
         RecalledMemory(
@@ -803,32 +838,6 @@ def _derived_of(item: MemoryItem) -> tuple[str, ...]:
     if not isinstance(raw, (list, tuple)):
         return ()
     return tuple(str(each) for each in raw)
-
-
-def _best_mmr(pool: list[_Candidate], selected: list[_Candidate], mmr_lambda: float) -> int:
-    """返回 ``pool`` 里 MMR 值最大的下标。"""
-    best_index = 0
-    best_value = float("-inf")
-    for index, candidate in enumerate(pool):
-        value = mmr_lambda * candidate.scores.fused
-        if selected:
-            value -= (1.0 - mmr_lambda) * _max_jaccard(candidate, selected)
-        if value > best_value:
-            best_value = value
-            best_index = index
-    return best_index
-
-
-def _max_jaccard(candidate: _Candidate, selected: list[_Candidate]) -> float:
-    """候选与已选条目里最像的那一条有多像。"""
-    if candidate.sdr is None:
-        return 0.0
-    worst = 0.0
-    for chosen in selected:
-        if chosen.sdr is None or chosen.sdr.width != candidate.sdr.width:
-            continue
-        worst = max(worst, candidate.sdr.jaccard(chosen.sdr))
-    return worst
 
 
 # ── 写回 ────────────────────────────────────────────────────────────────────
