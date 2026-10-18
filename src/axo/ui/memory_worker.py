@@ -52,6 +52,8 @@ __all__ = [
     "ConsolidationWorker",
     "EmbeddingSetup",
     "GraphWorker",
+    "LEXINDEX_WARM_MIN",
+    "LexicalIndexWorker",
     "MemoryProbeWorker",
     "MemorySyncWorker",
     "render_recall_detail",
@@ -76,6 +78,14 @@ _PER_TURN_BACKFILL = 8
 #: 低了，代价是"该自动建的没自动建"，用户点一下「重建联想」就好；定高了，代价是
 #: 每次开记忆窗口都可能白等几十秒——而那是**每次**都要付的。
 AUTO_GRAPH_MAX = 2000
+
+#: 库里超过这么多条，就在启动后台预建词法倒排。
+#:
+#: 50k 真实文本放大语料上，索引构建实测 **22.3 s**，而首轮纯词法召回在它建好
+#: 之前必须等这一下。小库构建是毫秒级，不值得为它多起一个线程；2,000 是同一份
+#: 语料上「一建就好」的档位（与 :data:`AUTO_GRAPH_MAX` 同一个理由：超过它，
+#: 一次全量构建不再是人眼可忽略的量级）。
+LEXINDEX_WARM_MIN = 2000
 
 #: 走大库那条路时说的话。**必须说出来**：那条路上图没有跟库比对过（比对是一次全量
 #: 重编码，5 万条约 63 秒），所以它可能已经过期，而自动路径不会去发现这件事。
@@ -451,6 +461,40 @@ class GraphWorker(QObject):
         except OSError as exc:
             note += f" 但没能写盘（{type(exc).__name__}），本次会话里能用，重启后会再建。"
         self.ready.emit(graph, False, note)
+
+
+class LexicalIndexWorker(QObject):
+    """启动时在后台预建词法倒排。
+
+    **为什么单独一个 worker。** 50k 真实文本放大语料上，``lexical_index()`` 实测
+    22.3 s（见 ``sweep_results/axo_recall_50k_results.md``）。它原本发生在第一轮
+    纯词法召回的调用栈里：界面不冻（召回在装配线程），但用户说完第一句话要等
+    二十多秒才看到回复，而这段时间里没有任何提示。放到启动后台，这段时间与用户
+    读界面、选模型重叠掉。
+
+    **失败不发``failed``到界面。** 索引是缓存，不是真相：建失败时第一轮召回会
+    再试一次，而那时错误会走它自己的账本/降级路径。这里只把结果报给线程用于
+    收尾；没有接收者也完全正常（启动时没人绑 ``ready``）。
+    """
+
+    ready = Signal(int)
+    """参数是索引里的条目数。"""
+
+    failed = Signal(str)
+    """只在建索引本身抛异常时发；发给线程收尾，不弹窗口。"""
+
+    def __init__(self, *, store: MemoryStore) -> None:
+        super().__init__()
+        self._store = store
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            index = self._store.lexical_index()
+        except Exception as exc:  # noqa: BLE001 — 转成一句话，见类文档
+            self.failed.emit(f"预建词法索引失败：{type(exc).__name__}：{exc}")
+            return
+        self.ready.emit(len(index.ids))
 
 
 class ConsolidationWorker(QObject):

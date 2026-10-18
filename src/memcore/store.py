@@ -134,6 +134,10 @@ class MemoryStore:
         self._revision = 0
         self._lex_index: LexicalIndex | None = None
         self._lex_index_revision = -1
+        #: 只串行化"建索引"这件事，**不保护库**。建 50k 索引要 22 s，如果整段
+        #: 持有 ``_lock``，界面线程的一次记忆写入会被冻住 22 s；而索引构建在
+        #: ``fetchall`` 之后只碰 Python 对象，不需要库锁。
+        self._lex_build_lock = threading.Lock()
         self._embedding_revision = 0
         self._normalized_cache: dict[str, tuple[int, tuple[str, ...], np.ndarray]] = {}
 
@@ -384,19 +388,34 @@ class MemoryStore:
             )
 
     def lexical_index(self) -> LexicalIndex:
-        """词法倒排索引的缓存。按 ``revision`` 失效；只读 ``lex_*`` 列。"""
-        with self._lock:
-            if self._lex_index is not None and self._lex_index_revision == self._revision:
-                return self._lex_index
-            rows = self._connection.execute(
-                "SELECT memory_id, lex_idx, lex_width FROM memories ORDER BY memory_id"
-            ).fetchall()
-            index = LexicalIndex.build(
-                (row["memory_id"], row["lex_idx"], row["lex_width"]) for row in rows
-            )
-            self._lex_index = index
-            self._lex_index_revision = self._revision
-            return index
+        """词法倒排索引的缓存。按 ``revision`` 失效；只读 ``lex_*`` 列。
+
+        **构建期间不持有库锁。** 50k 条上 ``LexicalIndex.build`` 实测 22.3 s；
+        如果它整段持锁，界面线程的一次 ``add`` / ``delete`` 会被冻住同样久，
+        表现是"发一条消息后界面卡死"，而原因看起来在召回、其实在索引构建。
+         ``fetchall`` 在锁内（游标不是线程安全的），之后只碰 Python 对象。
+         ``_lex_build_lock`` 让同一时刻只有一个构建者，避免预热线程与首轮召回
+        各建一份。
+        """
+        with self._lex_build_lock:
+            while True:
+                with self._lock:
+                    if self._lex_index is not None and self._lex_index_revision == self._revision:
+                        return self._lex_index
+                    revision = self._revision
+                    rows = self._connection.execute(
+                        "SELECT memory_id, lex_idx, lex_width FROM memories ORDER BY memory_id"
+                    ).fetchall()
+                index = LexicalIndex.build(
+                    (row["memory_id"], row["lex_idx"], row["lex_width"]) for row in rows
+                )
+                with self._lock:
+                    # 构建期间有写入：这一份已经缺条目，不能缓存，也不能拿它当
+                    # "当前"。重来一次；写入通常是一次一条，重来最多多一轮。
+                    if self._revision == revision:
+                        self._lex_index = index
+                        self._lex_index_revision = revision
+                        return index
 
     def count(self) -> int:
         """条目总数。"""

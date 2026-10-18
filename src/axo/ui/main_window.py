@@ -166,10 +166,12 @@ from .data_root import MoveReport, discard_source, stage_move
 from .layout import plan_pane_sizes
 from .memory_window import MemoryWindow
 from .memory_worker import (
+    LEXINDEX_WARM_MIN,
     AssemblyWorker,
     ConsolidationWorker,
     EmbeddingSetup,
     GraphWorker,
+    LexicalIndexWorker,
     MemorySyncWorker,
     render_recall_detail,
 )
@@ -669,6 +671,10 @@ class MainWindow(QMainWindow):
         self._agent_worker: AgentWorker | None = None
         self._prepare_thread: QThread | None = None
         self._prepare_worker: AssemblyWorker | None = None
+        #: 启动时的词法倒排预热。50k 库上那一次构建是 22.3 s（见 worker 文档）；
+        #: 放在这里是为了让首轮召回不必在调用栈里等它。
+        self._lexindex_thread: QThread | None = None
+        self._lexindex_worker: LexicalIndexWorker | None = None
         self._model_thread: QThread | None = None
         self._model_worker: ModelListWorker | None = None
         self._setup_thread: QThread | None = None
@@ -939,6 +945,12 @@ class MainWindow(QMainWindow):
         # **她开口的那一侧也要有人按一下启动。** 组件是独立进程（torch 不进本仓），
         # 这一句只是「替用户按一下」：先探端口、没在跑才拉，退出时只收自己拉的那个。
         self._autostart_speech()
+
+        # **启动后台预热词法倒排。** 小库建索引是毫秒级，不值得为它起线程；大库
+        # 的第一轮纯词法召回要等 20 秒以上，而那是用户已经说完话、正在等回复的
+        # 时候。阈值见 :data:`~.memory_worker.LEXINDEX_WARM_MIN`。
+        if self._memory.count() >= LEXINDEX_WARM_MIN:
+            self._start_lexical_index_warmup()
 
     # ── 外观 ────────────────────────────────────────────────────────────────
 
@@ -4163,6 +4175,22 @@ class MainWindow(QMainWindow):
         """设置页「重建联想」按下了。**force**：用户按它就是不信任现在这份。"""
         if not self._start_graph_build(force=True):
             self._settings_dialog.set_graph_note("上一次建图还在跑，等它结束再说。")
+
+    def _start_lexical_index_warmup(self) -> None:
+        """起一趟后台词法索引构建。**已经在跑就不起第二趟。**
+
+        与 :meth:`_start_graph_build` 同一个形状：worker 不 ``moveToThread``，
+        ``started`` 直连 ``run``，收尾走 :meth:`_track`。两条 ``ready`` / ``failed``
+        都接到 ``thread.quit``——漏掉的话线程跑完会进入自己的事件循环并永远空转。
+        """
+        if self._lexindex_thread is not None and self._lexindex_thread.isRunning():
+            return
+        thread = QThread(self)
+        worker = LexicalIndexWorker(store=self._memory)
+        worker.ready.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        self._track(thread, worker, what="词法索引预热线程", slot="lexindex")
+        thread.start()
 
     def _start_graph_build(self, *, force: bool) -> bool:
         """起一趟建图。**已经在跑就不起第二趟**，返回有没有起。
