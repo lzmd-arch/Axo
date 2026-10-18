@@ -614,7 +614,12 @@
     var transfer = event.dataTransfer;
     if (!transfer || !transfer.types) { return false; }
     for (var i = 0; i < transfer.types.length; i++) {
-      if (transfer.types[i] === "Files") { return true; }
+      // **`"Files"` 之外还要认 `text/uri-list`**：从资源管理器拖文件时，
+      // QtWebEngine 并不总是给出前者；只认它会让整个拖放静默失效（或者让浏览器
+      // 导航到那个文件）。非文件的 uri-list（拖一个链接）在 drop 里再区分。
+      if (transfer.types[i] === "Files" || transfer.types[i] === "text/uri-list") {
+        return true;
+      }
     }
     return false;
   }
@@ -641,7 +646,19 @@
         if (one.slice(0, 5).toLowerCase() !== "file:") { continue; }
         uris.push(one);
       }
-      if (uris.length) { window.bridge.attach_files(uris); }
+      if (uris.length) {
+        window.bridge.attach_files(uris);
+        return;
+      }
+      // 拖进来的是网页链接（不是本地文件）：按普通文本插进输入框，别让这次拖放
+      // 因为我们拦过默认行为而消失。
+      var text = event.dataTransfer.getData("text/plain");
+      if (text && input) {
+        var at = input.selectionStart === null ? input.value.length : input.selectionStart;
+        input.value = input.value.slice(0, at) + text + input.value.slice(at);
+        input.selectionStart = input.selectionEnd = at + text.length;
+        autosize();
+      }
     });
   }
   document.addEventListener("DOMContentLoaded", function () {

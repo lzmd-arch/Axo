@@ -251,6 +251,54 @@ class _SafePage(QWebEnginePage):
         return None  # 不弹新窗口；外链走上面的 acceptNavigationRequest
 
 
+def _local_file_uris(mime: Any) -> list[str]:
+    """拖放数据里的本地文件 URI。**非本地的一律不取。**
+
+    拖一段网页上的图片进来时 ``urls()`` 里是 http(s) 地址，而那条路是一条我们不该
+    去取的网络请求（正文已经在网页里，落地成文件是另一回事）。
+    """
+    uris: list[str] = []
+    for url in mime.urls():
+        if url.isLocalFile():
+            uris.append(url.toString())
+    return uris
+
+
+class _SafeView(QWebEngineView):
+    """网页视图，外加**整块区域接收本地文件拖放**。
+
+    网页里那份 ``dragstart``/``drop`` 监听只认得 ``dataTransfer.types`` 里有
+    ``"Files"`` 的情形；而从资源管理器拖文件时，QtWebEngine 给的列表并不总是包含
+    它（常常只有 ``text/uri-list``）。表现是"拖进去没反应"，或者更糟——浏览器
+    自己导航到那个文件，对话区变成一张图。
+
+    所以入口放在 Qt 这一层：视图收到带本地 URL 的拖放就直接接住，不让网页那边再
+    猜一遍类型。**非文件的拖放原样交给基类**（拖一段文字进输入框照旧）。
+    """
+
+    files_dropped = Signal(list)
+
+    def dragEnterEvent(self, event: Any) -> None:  # noqa: N802 — Qt 命名
+        if _local_file_uris(event.mimeData()):
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event: Any) -> None:  # noqa: N802
+        if _local_file_uris(event.mimeData()):
+            event.acceptProposedAction()
+            return
+        super().dragMoveEvent(event)
+
+    def dropEvent(self, event: Any) -> None:  # noqa: N802
+        uris = _local_file_uris(event.mimeData())
+        if uris:
+            event.acceptProposedAction()
+            self.files_dropped.emit(uris)
+            return
+        super().dropEvent(event)
+
+
 class ChatView(QWidget):
     """对话区控件。"""
 
@@ -316,7 +364,7 @@ class ChatView(QWidget):
         self._call_level: int = -1
         self._call_partial: str = ""
 
-        self._view = QWebEngineView(self)
+        self._view = _SafeView(self)
         self._page = _SafePage(self._view)
         self._view.setPage(self._page)
 
@@ -341,6 +389,7 @@ class ChatView(QWidget):
         # 网页侧要用它把相对路径（壁纸、将来的 Live2D 模型）拼成 file:// 绝对
         # 路径。必须等页面加载完再注入——`loadFinished` 每次都触发，所以刷新之后
         # 它也还在。
+        self._view.files_dropped.connect(self.files_dropped)
         self._view.loadFinished.connect(self._on_load_finished)
         self._view.load(QUrl.fromLocalFile(str(_INDEX)))
 
