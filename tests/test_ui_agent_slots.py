@@ -316,6 +316,10 @@ class Stub(QObject):
     _last_activity = MainWindow._last_activity
     _pick_material = MainWindow._pick_material
     _start_proactive_speech = MainWindow._start_proactive_speech
+    _start_material_source = MainWindow._start_material_source
+    _start_proactive_weather = MainWindow._start_proactive_weather
+    _on_weather_watch = MainWindow._on_weather_watch
+    _on_weather_watch_failed = MainWindow._on_weather_watch_failed
     _show_sticker = MainWindow._show_sticker
     # ── 通话 ──
     _on_call_toggled = MainWindow._on_call_toggled
@@ -2282,7 +2286,7 @@ def test_a_proactive_turn_can_check_tools_and_stay_silent(qapp: Any) -> None:
         ],
     )
     stub._proactive_settings = ProactiveSettings(
-        quiet_from=0, quiet_to=0, allow_tools=True, weather_city="杭州"
+        quiet_from=0, quiet_to=0, allow_tools=True, weather_city=""
     )
     stub._tools = lambda: ToolRegistry([GetTimeTool()])
     stub._writer = None
@@ -2296,7 +2300,63 @@ def test_a_proactive_turn_can_check_tools_and_stay_silent(qapp: Any) -> None:
 
     assert _wait_until(qapp, lambda: not stub._live_threads), "那一轮没跑完"
     assert backend.calls == 2, "先走了一轮工具，再走收尾"
-    assert "杭州" in backend.requests[0].messages[0].content
     assert "[SILENCE]" in backend.requests[0].messages[0].content
     assert stub.stored == [], "沉默不该进逐字稿"
     assert (stub._spoken_today, stub._used_materials) == (0, []), "沉默不该消耗次数"
+
+
+def test_a_weather_change_is_announced_and_the_baseline_advances(
+    qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """填了城市之后：先查天气、比基线；有变化就用它当话头，说出口后基线推进。"""
+    from axo.ui import main_window as main_window_module
+    from axo.weather import WeatherReport
+    from axo.weather_watch import WeatherBaseline, WeatherSnapshot
+
+    class FakeWeather:
+        def lookup(self, city: str, *, days: int = 1) -> WeatherReport:
+            return WeatherReport(
+                place=city,
+                country="中国",
+                admin="",
+                latitude=0.0,
+                longitude=0.0,
+                current_temp=12.0,
+                feels_like=None,
+                humidity=None,
+                wind=None,
+                condition="小雨",
+                days=({"condition": "小雨", "high": 15.0, "low": 8.0, "rain": 80.0},),
+            )
+
+    monkeypatch.setattr(main_window_module, "OpenMeteoWeather", lambda: FakeWeather())
+    baseline = WeatherBaseline(tmp_path / "weather_baseline.json")
+    baseline.put(
+        WeatherSnapshot(
+            city="杭州",
+            observed_at=1.0,
+            condition="晴",
+            temp=22.0,
+            high=25.0,
+            low=15.0,
+            rain=10.0,
+        )
+    )
+    stub, backend = _proactive_stub(
+        qapp, script=[[text_chunk("杭州降温了，还下小雨，出门加件外套。", done=True)]]
+    )
+    stub._proactive_settings = ProactiveSettings(
+        quiet_from=0, quiet_to=0, allow_tools=False, weather_city="杭州"
+    )
+    stub._weather_baseline = baseline
+    stub._weather_watch_live = False
+    stub._pending_weather_snapshot = None
+    stub._weather_enabled = True
+
+    stub._on_proactive_tick()
+
+    assert _wait_until(qapp, lambda: not stub._live_threads), "那一轮没跑完"
+    assert backend.calls == 1
+    assert stub.stored and "降温" in stub.stored[0].content
+    advanced = baseline.get("杭州")
+    assert advanced is not None and advanced.temp == 12.0

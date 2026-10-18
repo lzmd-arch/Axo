@@ -155,6 +155,7 @@ from ..session.store import Message, Session, SessionStore, new_session_id
 from ..stickers import stickers_in
 from ..tts import SpeechReceipt
 from ..weather import OpenMeteoWeather
+from ..weather_watch import WeatherBaseline, material_text
 from .agent_worker import AgentWorker
 from .app import make_settings
 from .call import CallController
@@ -201,6 +202,7 @@ from .theme_qt import QSettingsBackend, apply_theme, os_color_scheme
 from .thread_tracking import track, wait_for_all
 from .tray import TrayController, build_icon
 from .voice import DecodeWorker, SegmentWorker, VoiceRecorder
+from .weather_watch_worker import WeatherWatchWorker
 from .widgets import SESSION_TIME_ROLE, SESSION_TITLE_ROLE, ElidedLabel, SessionItemDelegate
 from .window_place import place_window
 
@@ -749,6 +751,10 @@ class MainWindow(QMainWindow):
         #: 热点新闻那一次搜索是否在飞（同一时刻只搜一次）。
         self._news_live = False
         self._news_note_shown = False
+        #: 天气基线与"正在查"的状态。**基线不进记忆库**，只是数据根下的一份小 JSON。
+        self._weather_baseline = WeatherBaseline(data_dir() / "weather_baseline.json")
+        self._weather_watch_live = False
+        self._pending_weather_snapshot: Any = None
         #: 她上一次开口是什么时候。**提醒与主动都算**：她刚说完一句，二十秒后再来一句
         #: 是骚扰，二十分钟后再来一句同样不是"他静下来了"（见 :meth:`_last_activity`）。
         self._last_speech_at: datetime | None = None
@@ -3036,13 +3042,74 @@ class MainWindow(QMainWindow):
         )
         if reason is not None:
             return
-        if settings.source == "news":
+        if settings.weather_city.strip() and getattr(self, "_weather_enabled", True):
+            self._start_proactive_weather(now)
+            return
+        self._start_material_source(now)
+
+    def _start_material_source(self, now: datetime) -> None:
+        """按设置选话头：热点新闻，或者最近记忆。"""
+        if self._proactive_settings.source == "news":
             self._start_proactive_news(now)
             return
         material = self._pick_material(now)
         if material is None:
             return
         self._start_proactive_speech(material)
+
+    def _start_proactive_weather(self, now: datetime) -> None:
+        """先查一次天气、跟基线比。**有变化才说，没变化回到原来的话头来源。**"""
+        if self._weather_watch_live:
+            return
+        weather = OpenMeteoWeather() if getattr(self, "_weather_enabled", True) else None
+        if weather is None:
+            self._start_material_source(now)
+            return
+        thread = QThread(self)
+        worker = WeatherWatchWorker(
+            weather, self._proactive_settings.weather_city.strip(), self._weather_baseline
+        )
+        self._weather_watch_live = True
+        worker.done.connect(self._on_weather_watch)
+        worker.failed.connect(self._on_weather_watch_failed)
+        worker.done.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        self._track(thread, worker, what="天气检查线程", slot="weather_watch")
+        thread.start()
+
+    @Slot(object)
+    def _on_weather_watch(self, result: Any) -> None:
+        self._weather_watch_live = False
+        now = datetime.now()
+        if result.noteworthy:
+            city = result.snapshot.city
+            material = Material(
+                memory_id=f"weather:{city.casefold()}:{int(result.snapshot.observed_at)}",
+                content=material_text(result),
+                created_at=result.snapshot.observed_at,
+                kind="weather",
+            )
+            if (
+                material.memory_id not in self._used_materials
+                and self._proactive_settings.enabled
+                and not self._call.live
+                and self._backend is not None
+                and not self._streaming
+                and not self._speak_live
+            ):
+                # **基线等她说出口之后才推进**：她选择沉默时不能把这次变化悄悄吞掉。
+                self._pending_weather_snapshot = result.snapshot
+                self._start_proactive_speech(material)
+                return
+        else:
+            # 没变化就推进基线，避免下次还把同一件旧事当变化。
+            self._weather_baseline.put(result.snapshot)
+        self._start_material_source(now)
+
+    @Slot(str)
+    def _on_weather_watch_failed(self, _reason: str) -> None:
+        self._weather_watch_live = False
+        self._start_material_source(datetime.now())
 
     def _start_proactive_news(self, now: datetime) -> None:
         """话头选的是热点：**先搜，再决定说不说**。
@@ -3278,6 +3345,8 @@ class MainWindow(QMainWindow):
             return
         payload = self._retire_speech()
         if is_silence(text):
+            # 沉默不推进天气基线：同一个变化下一次还会被看见。
+            self._pending_weather_snapshot = None
             # **"查完没什么值得说的"不是空回复。** 主动回合允许她伸手之后，沉默成了
             # 一个正常结果：模型看了天气/时间/记忆，决定不打扰。空回复与 ``[SILENCE]``
             # 在这里同一种收场；提醒那条仍然要由程序补说。
@@ -3289,6 +3358,10 @@ class MainWindow(QMainWindow):
             # 真开口了才算今天的一次、才把话头标记成用过（见 :meth:`_start_proactive_speech`）。
             self._spoken_today += 1
             self._used_materials.append(payload.memory_id)
+            if payload.kind == "weather" and self._pending_weather_snapshot is not None:
+                # 说出口了，基线才推进到这一次。
+                self._weather_baseline.put(self._pending_weather_snapshot)
+                self._pending_weather_snapshot = None
         self._append(
             Message(
                 role="assistant",
