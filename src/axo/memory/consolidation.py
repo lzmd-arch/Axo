@@ -45,6 +45,7 @@ from memcore.consolidation import (
     MERGE,
     PROMOTE,
     REINFORCE,
+    W_MODE,
     RunReport,
     append_events,
     cluster_event_rows,
@@ -173,6 +174,7 @@ def run_consolidation(
     max_cluster: int = MAX_CLUSTER,
     limit: int | None = None,
     snapshot: bool = True,
+    code_mode: str = W_MODE,
 ) -> ConsolidationRun:
     """跑一轮并**改库**。``--dry-run`` 走的是 :func:`~memcore.consolidation.consolidate`
     本身，不经过这里。
@@ -184,6 +186,9 @@ def run_consolidation(
         at: 这一轮的时间。``run_id`` / ``run_seed`` 与快照文件名都由它派生。
         snapshot: 拍不拍快照，默认拍。``False`` 是给测试用的——生产路径上没有理由
             关掉它。
+        code_mode: 局部 W 的码档，默认 :data:`~memcore.consolidation.W_MODE`
+            （``"idf"``）。``"weight"`` 是历史档，给 A/B 与旧事件回放用；见
+            :func:`~memcore.consolidation.replay_cluster`。
 
     Returns:
         :class:`ConsolidationRun`。
@@ -201,6 +206,7 @@ def run_consolidation(
         drop=drop,
         max_cluster=max_cluster,
         limit=limit,
+        code_mode=code_mode,
     )
 
     # 先看事件文件在不在，**在拍快照之前**：这一轮的 run_id 已经在盘上就说明它跑过，

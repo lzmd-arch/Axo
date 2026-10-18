@@ -18,7 +18,8 @@ import numpy as np
 import pytest
 
 from memcore.errors import SDRCapacityError
-from memcore.sdr import ASSOC_K, LEXICAL_K, encode_assoc, encode_lexical
+from memcore.sdr import ASSOC_K, LEXICAL_K, encode_assoc, encode_assoc_idf, encode_lexical
+from memcore.types import SDR
 
 #: 关联码的指纹：``blake2b(idx 字节 ‖ weights 字节)``。
 #:
@@ -207,3 +208,73 @@ def test_unknown_mode_raises() -> None:
 def test_narrow_lexical_code_narrows_the_assoc_k() -> None:
     lex = encode_lexical("记忆终端的存储用 SQLite。", k=20)
     assert encode_assoc(lex).k == 20
+
+
+# ── idf 档：稳态 ALIF 适应 ──────────────────────────────────────────────────
+
+
+def test_idf_gamma_zero_is_exactly_weight_mode() -> None:
+    """``gamma=0`` 时 ``idf`` 档必须退化成 ``weight`` 档——这条恒等式钉住两件事：
+
+    * 分数公式没有偷偷加别的项；
+    * 并列打破与下标排序与 :func:`~memcore.sdr.encode_assoc` 完全同一套。
+    """
+    for text in ("记忆独立于模型", "路由器放在书房书架顶层。", "上海"):
+        lex = encode_lexical(text)
+        df = np.ones(lex.width, dtype=np.int64)
+        assert encode_assoc_idf(lex, df=df, n=10, k=ASSOC_K, gamma=0.0) == encode_assoc(
+            lex, k=ASSOC_K, mode="weight"
+        )
+
+
+def test_idf_suppresses_a_high_document_frequency_bit() -> None:
+    """公共位（df 高）被压下去，罕见位留下来。
+
+    用一份手搓的 SDR 而不是真实文本：这里要验证的是**选位公式**，不是哈希编码；
+    手搓的位上 df 与权重都看得见，断言才能指向具体是哪一位。
+    """
+    lex = SDR(
+        idx=np.array([10, 20, 30, 40], dtype=np.int32),
+        weights=np.array([1.0, 0.9, 0.8, 0.7], dtype=np.float32),
+        width=100,
+    )
+    df = np.zeros(100, dtype=np.int64)
+    df[10] = 100  # 在每条记忆里都出现
+    df[20] = 1
+    df[30] = 1
+    df[40] = 1
+    assoc = encode_assoc_idf(lex, df=df, n=100, k=2, gamma=2.0)
+    assert 10 not in assoc.idx.tolist(), "df=100 的公共位不该入选"
+    assert set(assoc.idx.tolist()) == {20, 30}, "按权重顺序取剩下的两个"
+
+
+def test_idf_is_deterministic_and_keeps_original_weights() -> None:
+    lex = encode_lexical("记忆独立于模型，路由器放在书房书架顶层。")
+    df = np.zeros(lex.width, dtype=np.int64)
+    df[lex.idx[:20]] = 3
+    first = encode_assoc_idf(lex, df=df, n=10, k=32)
+    second = encode_assoc_idf(lex, df=df, n=10, k=32)
+    assert first == second
+    assert np.all(np.diff(first.idx) > 0)
+    positions = np.searchsorted(lex.idx, first.idx)
+    assert np.array_equal(first.weights, lex.weights[positions])
+
+
+@pytest.mark.parametrize("gamma", [-0.1, -1.0])
+def test_idf_rejects_negative_gamma(gamma: float) -> None:
+    lex = encode_lexical("记忆")
+    with pytest.raises(SDRCapacityError, match="gamma"):
+        encode_assoc_idf(lex, df=np.zeros(lex.width), n=1, gamma=gamma)
+
+
+@pytest.mark.parametrize("n", [0, -1])
+def test_idf_rejects_non_positive_n(n: int) -> None:
+    lex = encode_lexical("记忆")
+    with pytest.raises(SDRCapacityError, match="n 必须"):
+        encode_assoc_idf(lex, df=np.zeros(lex.width), n=n)
+
+
+def test_idf_rejects_short_df() -> None:
+    lex = encode_lexical("记忆")
+    with pytest.raises(SDRCapacityError, match="df 必须"):
+        encode_assoc_idf(lex, df=np.zeros(lex.width - 1), n=1)

@@ -16,20 +16,23 @@
 于是"W 的容量"这个约束的作用域从全库缩到簇内，而簇的大小由 :data:`MAX_CLUSTER`
 管住。**容量随簇规模扩展，不随全库扩展**，这就是分簇的全部意义。
 
-## 两档关联码：图用 ``hash``，W 用 ``weight``
+## 两档关联码：图用 ``hash``，W 用 ``idf``（``weight`` 保留为对照）
 
-同一份词法码现算两份关联码，互不干扰（:func:`~memcore.sdr.encode_assoc` 是纯函数）：
+同一份词法码现算两份关联码，互不干扰：
 
 * **图 A 用 ``hash`` 档**（``GraphConfig`` 的默认）——它的 ``neighbor_auc`` 是
-  0.7083，而是 ``weight`` 档只有 0.5287。
-* **局部 W 用 ``weight`` 档**——``hash`` 档的 W 在**每一档规模上都是死的**，
-  连 ``--drop 0``（探针不残缺）也只有 0.0200；``weight`` 档在 n=200 上是 0.8700。
+  0.7083，而 ``weight`` 档只有 0.5287。
+* **局部 W 默认用 ``idf`` 档**——按**这一簇成员**的文档频率压掉跨条目公共位
+  （:func:`~memcore.sdr.encode_assoc_idf`），是 ALIF 稳态适应的选位等价形式。
+  2026-10-18 在 166 条真实记忆上量到回放辨认率 0.6988 → 0.8976。``hash`` 档的 W
+  在**每一档规模上都是死的**（连 ``--drop 0`` 也只有 0.0200）；``weight`` 档在
+  n=200 上是 0.8700，保留为 A/B 与历史事件回放档。
 
 一个静默陷阱要堵住：:meth:`~memcore.substrate.Substrate.build` 会**优先吃**
 ``item.assoc_sdr``，只有它是 ``None`` 时才按 ``config`` 现算。所以本模块**显式**
-调 :func:`~memcore.sdr.encode_assoc` 现算 ``weight`` 档的码，不把
+现算关联码（``idf`` 或 ``weight``），不把
 :class:`~memcore.types.MemoryItem` 直接递给 ``build``——否则哪天有人预先算了一份
-``hash`` 档的 ``assoc_sdr`` 塞进条目，``mode="weight"`` 会被**无声忽略**，
+``hash`` 档的 ``assoc_sdr`` 塞进条目，``code_mode`` 会被**无声忽略**，
 而结果看起来仍然像个合理的辨认率。
 """
 
@@ -38,13 +41,15 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from .errors import MemCoreError
 from .graph import GraphIndex
-from .sdr import ASSOC_K, drop_bits, encode_assoc
+from .sdr import ASSOC_K, drop_bits, encode_assoc, encode_assoc_idf
 from .substrate import Substrate, SubstrateConfig
 from .types import SDR, ConsolidationEvent, MemoryItem, Tier
 
@@ -60,6 +65,7 @@ __all__ = [
     "SLEEP_CONFUSION",
     "SLEEP_REPLAY_MISS",
     "W_MODE",
+    "W_MODES",
     "ReplayOutcome",
     "RunReport",
     "append_events",
@@ -104,17 +110,28 @@ BASE_SEED = 0
 "每个安装不同"的话，得把一个随机 ``base_seed`` 持久化下来——本版不做。
 """
 
-W_MODE = "weight"
-"""局部 W 用的关联码档位。
+W_MODE = "idf"
+"""局部 W 用的关联码档位。**默认是簇内文档频率的 ``idf`` 档。**
 
-**不是 ``GraphConfig.mode`` 那个 ``hash``——同一份词法码现算两份码，各用各的。**
-依据是 P4a 量出来的两个数：``hash`` 档建出来的 W **在每一档规模上都是死的**
-（n=200 的 ``completion_top1`` 是 0.0250，连 ``--drop 0``、探针不残缺时也只有
-0.0200），而 ``weight`` 档在 n=200 上是 0.8700。拿 ``hash`` 档建局部 W 等于
-建一个恒死的算子，而它的输出（一堆低分）看起来完全正常。
+三档的关系：
 
-详见 :func:`~memcore.sdr.encode_assoc` 里那张两档对照表。
+* ``hash``：图 A 用的档。建 W **在每一档规模上都是死的**（n=200 的
+  ``completion_top1`` 是 0.0250，连 ``--drop 0``、探针不残缺时也只有 0.0200）。
+* ``weight``：P4c 原来用的档，n=200 上是 0.8700。它比 ``hash`` 好，但取的是
+  各自词频最高的位，跨条目公共位没有被压掉。
+* ``idf``：按**簇内**文档频率压公共位（:func:`~memcore.sdr.encode_assoc_idf`），
+  是 ALIF 稳态适应的选位等价形式。2026-10-18 在 166 条真实记忆上量到回放辨认率
+  **0.6988 → 0.8976**；在合成语料的分簇回放里 n=200 0.9000 → 0.9950、n=500
+  0.4400 → 0.5840、n=1000 0.1370 → 0.3130、n=2000 0.1020 → 0.1960。
+
+**它不是单条记忆的纯函数**：``df`` 是一簇成员的全量统计，所以只在
+:func:`replay_cluster` 这种"整簇现算"的路径上使用；逐条写入路径不能算它。
+``weight`` 保留为 A/B 与历史事件的回放档（见 :func:`replay_cluster` 的
+``code_mode``）。
 """
+
+W_MODES = ("idf", "weight")
+"""``replay_cluster`` 认得的码档。``hash`` 不在里面——它是图 A 的档，不是 W 的。"""
 
 DEFAULT_DROP = 0.5
 """回放探针默认丢掉多少比例的活跃位。
@@ -132,8 +149,8 @@ class _Coded:
     只要 ``memory_id`` 与**已经算好的**关联码。``assoc_sdr`` 显式给值而
     ``lex_sdr`` 留 ``None``，是为了堵住 ``build`` 的"优先吃 ``assoc_sdr``"那条
     路径（见模块文档开头那段）：调用方若已经算过一份 ``hash`` 档的码塞进条目，
-    ``SubstrateConfig.mode="weight"`` 会被**无声忽略**，而结果看起来仍然像个
-    合理的辨认率。这里把码算在外面、显式传进来，就没有那个空间。
+    ``code_mode`` 会被**无声忽略**，而结果看起来仍然像个合理的辨认率。这里把码
+    算在外面、显式传进来，就没有那个空间。
     """
 
     memory_id: str
@@ -461,37 +478,45 @@ def replay_cluster(
     members: Sequence[MemoryItem],
     *,
     drop: float = DEFAULT_DROP,
+    code_mode: str = W_MODE,
 ) -> tuple[ReplayOutcome, ...]:
     """在**这一簇自己的**基质上回放它的每一条，返回与 ``members`` 同序的结果。
 
     这就是 P4a 那个负数指向的补救：全库一个 W 在目标规模上补不出来，而一簇
     200 条以内是可以的。所以这里的 W 只装这一簇的码——簇的边界就是 W 的容量边界。
 
-    **码在这里现算，且固定用 ``weight`` 档**（:data:`W_MODE`）。不读
-    ``item.assoc_sdr``：那是图 A 的 ``hash`` 档，拿它建 W 是一个恒死的算子，
-    而它的输出看起来完全正常。
+    **码在这里现算。** 不读 ``item.assoc_sdr``：那是图 A 的 ``hash`` 档，拿它建 W
+    是一个恒死的算子，而它的输出看起来完全正常。
 
     Args:
         members: 簇里的条目，**按 :func:`partition` 给出的顺序**。返回值的顺序
             与它一致，而那个顺序决定了事件序列的顺序——``--replay`` 靠它逐条比对。
         drop: 探针丢掉多少比例的活跃位。见 :data:`DEFAULT_DROP`。
+        code_mode: ``"idf"``（默认）或 ``"weight"``。``idf`` 用**这一簇成员**的
+            文档频率现算（:func:`~memcore.sdr.encode_assoc_idf`），``weight`` 是
+            P4c 原来的档，保留给 A/B 与历史事件的回放。
 
     Returns:
         与 ``members`` 等长、同序的 :class:`ReplayOutcome` 元组。
 
     Raises:
-        ValueError: ``drop <= 0``。**空转的探针会制造一个假的满分**：探针就是
-            目标本身时补全恒为命中，辨认率 100%。量具里留着 ``--drop 0`` 是为了
-            看"完美探针的天花板"（那是诊断），生产路径上没有这个需要。
+        ValueError: ``drop <= 0``，或 ``code_mode`` 不在 :data:`W_MODES` 里。
+            **空转的探针会制造一个假的满分**：探针就是目标本身时补全恒为命中，
+            辨认率 100%。量具里留着 ``--drop 0`` 是为了看"完美探针的天花板"
+            （那是诊断），生产路径上没有这个需要。
     """
     if drop <= 0.0:
         raise ValueError(
             f"drop 必须 > 0，收到 {drop!r}——drop=0 时探针就是目标本身，"
             f"补全恒为命中，会量出一个假的 100%。"
         )
+    if code_mode not in W_MODES:
+        raise ValueError(f"code_mode 只认得 {W_MODES}，收到 {code_mode!r}。")
 
     codes: dict[str, SDR] = {}
     reasons: dict[str, str] = {}
+    included: list[MemoryItem] = []
+    lex_codes: list[SDR] = []
     for item in members:
         reason = _skip_reason(item)
         if reason is not None:
@@ -499,7 +524,19 @@ def replay_cluster(
             continue
         # _skip_reason 已经保证了 lex_sdr 不是 None。
         assert item.lex_sdr is not None
-        codes[item.memory_id] = encode_assoc(item.lex_sdr, k=ASSOC_K, mode=W_MODE)
+        included.append(item)
+        lex_codes.append(item.lex_sdr)
+
+    if code_mode == "idf" and lex_codes:
+        width = max(code.width for code in lex_codes)
+        density = np.zeros(width, dtype=np.int64)
+        for code in lex_codes:
+            density[code.idx] += 1
+        for item, lex in zip(included, lex_codes, strict=True):
+            codes[item.memory_id] = encode_assoc_idf(lex, df=density, n=len(included), k=ASSOC_K)
+    else:
+        for item, lex in zip(included, lex_codes, strict=True):
+            codes[item.memory_id] = encode_assoc(lex, k=ASSOC_K, mode="weight")
 
     substrate = Substrate.build(
         [
@@ -507,18 +544,27 @@ def replay_cluster(
             for item in members
             if item.memory_id in codes
         ],
-        config=SubstrateConfig(k=ASSOC_K, mode=W_MODE),
+        # 码已经显式算好，`SubstrateConfig` 的 mode 只在缺码时才会被用到；
+        # 用 weight 是为了不给 `encode_assoc` 传一个它不认识的 `"idf"`。
+        config=SubstrateConfig(k=ASSOC_K, mode="weight"),
     )
 
     outcomes: list[ReplayOutcome] = []
     for item in members:
         reason = reasons.get(item.memory_id)
         if reason is not None:
-            outcomes.append(ReplayOutcome(item.memory_id, SKIP, detail={"reason": reason}))
+            outcomes.append(
+                ReplayOutcome(
+                    item.memory_id,
+                    SKIP,
+                    detail={"reason": reason, "code_mode": code_mode},
+                )
+            )
             continue
         code = codes[item.memory_id]
         probe = drop_bits(code, drop)
-        outcomes.append(_classify(item, substrate.complete(probe, top=1), codes, probe))
+        outcome = _classify(item, substrate.complete(probe, top=1), codes, probe)
+        outcomes.append(replace(outcome, detail={**outcome.detail, "code_mode": code_mode}))
     return tuple(outcomes)
 
 
@@ -672,6 +718,7 @@ def consolidate(
     drop: float = DEFAULT_DROP,
     max_cluster: int = MAX_CLUSTER,
     limit: int | None = None,
+    code_mode: str = W_MODE,
 ) -> RunReport:
     """跑一轮：分簇 → 每簇建局部 W → 回放 → 汇总。
 
@@ -691,6 +738,8 @@ def consolidate(
         drop: 探针丢位比例，见 :data:`DEFAULT_DROP`。
         max_cluster: 簇上限，见 :data:`MAX_CLUSTER`。
         limit: 本轮最多看多少条记忆。``None`` 表示全看。见 :func:`_round_order`。
+        code_mode: 局部 W 的码档，见 :data:`W_MODE`。默认 ``"idf"``；``"weight"``
+            留给 A/B 与历史事件回放。
 
     Returns:
         :class:`RunReport`。
@@ -723,7 +772,7 @@ def consolidate(
         missing += len(members) - len(present)
         if not present:
             continue
-        clusters.append(replay_cluster(present, drop=drop))
+        clusters.append(replay_cluster(present, drop=drop, code_mode=code_mode))
 
     return RunReport(
         run_id=run_id_for(base_seed, at),

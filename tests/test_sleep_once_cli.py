@@ -199,6 +199,76 @@ def test_replaying_the_same_round_matches(data_dir: Path) -> None:
     assert f"与 {run_id} 逐条一致（3 条）" in result.stdout
 
 
+def test_new_events_record_idf_and_replay_with_it(data_dir: Path) -> None:
+    """新事件把默认码档写进 ``detail.code_mode``，回放按它重跑。"""
+    assert _cli(data_dir).returncode == 0
+    path = _event_files(data_dir)[0]
+    first = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    assert first["detail"]["code_mode"] == "idf"
+
+    result = _cli(data_dir, "--replay", path.stem)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_old_events_without_code_mode_replay_as_weight(data_dir: Path) -> None:
+    """旧事件没有 ``code_mode`` 这个字段时按 ``weight`` 重跑。
+
+    ``W_MODE`` 从 ``weight`` 换成 ``idf`` 之后，历史轮的逐条比对不能因为默认值变了
+    而全部报假的不一致。这条把"旧事件仍可复现"钉在 CLI 层。
+    """
+    assert _cli(data_dir, "--code-mode", "weight").returncode == 0
+    path = _event_files(data_dir)[0]
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    for row in rows:
+        row["detail"].pop("code_mode", None)
+    path.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    result = _cli(data_dir, "--replay", path.stem)
+
+    assert result.returncode == 0, result.stderr
+    assert f"与 {path.stem} 逐条一致（3 条）" in result.stdout
+
+
+def test_replay_rejects_a_code_mode_different_from_the_record(data_dir: Path) -> None:
+    """``--replay`` 必须用原轮记录的码档；命令行换档退 2，不拿不可比的结果当复现。"""
+    assert _cli(data_dir, "--code-mode", "weight").returncode == 0
+    path = _event_files(data_dir)[0]
+
+    result = _cli(data_dir, "--replay", path.stem, "--code-mode", "idf")
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "码档" in result.stderr
+
+
+def test_replay_ignores_merge_and_tier_rows(data_dir: Path) -> None:
+    """事件文件里追加的 ``merge`` / ``promote`` / ``demote`` 行不参与回放比对。
+
+    它们由真跑那一路在回放之后追加，``consolidate`` 不产生；拿它们比对会让任何
+    一轮有归并或升降层的巩固都报"记录里有、重跑没跑出来"——2026-10-18 在 166 条
+    真库上第一次跑真轮时就是这样撞出一串假警报的。
+    """
+    assert _cli(data_dir).returncode == 0
+    path = _event_files(data_dir)[0]
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    extra = dict(rows[0])
+    extra.update({"decision": "merge", "memory_id": "m-derived", "seq": len(rows), "detail": {}})
+    path.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in [*rows, extra]) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    result = _cli(data_dir, "--replay", path.stem)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"与 {path.stem} 逐条一致（3 条）" in result.stdout
+
+
 def test_a_replay_that_disagrees_exits_three(data_dir: Path) -> None:
     """记录被人动过之后重跑对不上，**退 3**（结构不变量被违反 = bug）。
 

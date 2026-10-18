@@ -13,11 +13,14 @@ P4c 的形状就是对它的回应：把全库切成一簇一簇，每簇建**�
 多少**。
 
 它读**同一份**语料（``benchmarks/substrate/memories.jsonl``，不新造语料、不新冻
-freeze），用**同一个**丢位算子（:func:`memcore.sdr.drop_bits`），把三列摆在一起：
+freeze），用**同一个**丢位算子（:func:`memcore.sdr.drop_bits`），把四列摆在一起：
 
-=================  ==============  ================  ====================
-规模               全局 W(hash)    全局 W(weight)    分簇局部 W(weight)
-=================  ==============  ================  ====================
+=================  ==============  ================  ====================  ==================
+规模               全局 W(hash)    全局 W(weight)    分簇局部 W(weight)    分簇局部 W(idf)
+=================  ==============  ================  ====================  ==================
+
+后两列的 ``idf`` 是 2026-10-18 换上的默认档（簇内文档频率，稳态 ALIF 适应）；``weight``
+保留为 A/B 与历史事件回放档。
 
 并排报而不是分开报，理由与 ``graph_summary`` 并排报两条通道一字不差：分开报的话
 "分簇到底有没有用"会被含糊过去——两边的数看起来都像个合理的百分比。
@@ -137,9 +140,9 @@ def _items_of(memories: tuple[SubstrateMemory, ...]) -> tuple[MemoryItem, ...]:
     """把语料行变成 :class:`~memcore.types.MemoryItem`——``consolidate`` 吃的形状。
 
     **只填 ``lex_sdr``，``assoc_sdr`` 留 ``None``。** 这不是省事：
-    :func:`~memcore.consolidation.replay_cluster` 会**显式**现算 ``weight`` 档的
-    关联码，而 :meth:`~memcore.substrate.Substrate.build` 优先吃
-    ``item.assoc_sdr``——预先塞一份 ``hash`` 档的码进去，``mode="weight"`` 会被
+    :func:`~memcore.consolidation.replay_cluster` 会**显式**现算 ``idf`` / ``weight``
+    档的关联码，而 :meth:`~memcore.substrate.Substrate.build` 优先吃
+    ``item.assoc_sdr``——预先塞一份 ``hash`` 档的码进去，``code_mode`` 会被
     **无声忽略**，而结果看起来仍然像个合理的辨认率。留 ``None`` 是让那条路径根本
     没有入口。
 
@@ -185,7 +188,7 @@ def _measure(
     memories = scaled_memories(corpus.memories, scale)
     items = _items_of(memories)
     # 同一份 hash 档的码喂给图与第一列（`coded_memories` 的 docstring 就是为这件事
-    # 写的）。weight 档的那一份另算——它是 W 的档，与图无关。
+    # 同一份 hash 码喂图与第一列；weight / idf 的码各算一份——后者是新默认档。
     coded_hash = coded_memories(memories, k=ASSOC_K, mode="hash")
     graph = build_graph(coded_hash, k=ASSOC_K, mode="hash")
 
@@ -200,7 +203,13 @@ def _measure(
         )
     )["completion_top1"]
 
-    report = consolidate(graph, items, at=_BENCH_AT, drop=drop, max_cluster=max_cluster)
+    report_weight = consolidate(
+        graph, items, at=_BENCH_AT, drop=drop, max_cluster=max_cluster, code_mode="weight"
+    )
+    report_idf = consolidate(
+        graph, items, at=_BENCH_AT, drop=drop, max_cluster=max_cluster, code_mode="idf"
+    )
+    report = report_idf
     sizes = sorted((len(cluster) for cluster in report.clusters), reverse=True)
     confusions = [
         outcome.jaccard
@@ -215,7 +224,10 @@ def _measure(
         "probes": len(probe_ids),
         "global_hash": global_hash,
         "global_weight": global_weight,
-        "recognition_rate": report.recognition_rate,
+        "recognition_rate_weight": report_weight.recognition_rate,
+        "recognition_rate_idf": report_idf.recognition_rate,
+        # 旧键保留为 idf（新默认）的数；老消费者读它不会静默读到 weight。
+        "recognition_rate": report_idf.recognition_rate,
         "replayed": report.replayed,
         "reinforced": len(report.reinforced),
         "clusters": len(report.clusters),
@@ -275,13 +287,14 @@ def _report(corpus: SubstrateCorpus, rows: list[dict[str, Any]], *, drop: float)
         f"的默认档同一档）；探针丢位 {drop:.2f}；簇上限 {MAX_CLUSTER}"
     )
 
-    print("\n── 并排：全局一个 W vs 分簇局部 W ──")
-    widths = (6, 13, 15, 15, 6, 8, 8, 11, 11)
+    print("\n── 并排：全局一个 W vs 分簇局部 W（weight / idf） ──")
+    widths = (6, 13, 15, 15, 13, 6, 8, 8, 11, 11)
     head = (
         "规模",
         "全局W(hash)",
         "全局W(weight)",
         "分簇W(weight)",
+        "分簇W(idf)",
         "簇数",
         "最大簇",
         "回放",
@@ -294,7 +307,8 @@ def _report(corpus: SubstrateCorpus, rows: list[dict[str, Any]], *, drop: float)
             str(row["scale"]),
             _fmt(row["global_hash"]),
             _fmt(row["global_weight"]),
-            _fmt(row["recognition_rate"]),
+            _fmt(row["recognition_rate_weight"]),
+            _fmt(row["recognition_rate_idf"]),
             str(row["clusters"]),
             str(row["largest_cluster"]),
             str(row["replayed"]),
@@ -315,8 +329,10 @@ def _report(corpus: SubstrateCorpus, rows: list[dict[str, Any]], *, drop: float)
             f"中位 {row['median_cluster']:g}）"
         )
         print(
-            f"        辨认率 {_fmt(row['recognition_rate'])} = "
-            f"{row['reinforced']}/{row['replayed']}；认错 {row['confusions']} 条"
+            f"        辨认率 weight {_fmt(row['recognition_rate_weight'])} / "
+            f"idf {_fmt(row['recognition_rate_idf'])} = "
+            f"{row['reinforced']}/{row['replayed']}（idf 的明细）；"
+            f"认错 {row['confusions']} 条"
             f"（J 中位 {_fmt(row['confusion_jaccard_median'])}，"
             f"≥{_NEAR_DUPLICATE_J:g} 的占 {near_text}）"
             f"；skip {skips or '无'}；图里有、库里没有 {row['missing_from_store']} 条"
@@ -324,10 +340,11 @@ def _report(corpus: SubstrateCorpus, rows: list[dict[str, Any]], *, drop: float)
 
     print(
         "\n── 怎么读这张表 ──\n"
-        "  三列问的是同一句话：丢位探针经**一步补全**之后，top-1 是不是它自己。\n"
-        "  前两列是同一个**全局** W 换两条关联码（hash 是图 A 的那一档，weight 是 W\n"
-        "  的那一档）；第三列把 W 换成「只装它自己那一簇的成员」，其余不变。\n"
-        "  前两列的分母是等距抽的探针条数（跨规模可比）；第三列覆盖该档的**全部**\n"
+        "  四列问的是同一句话：丢位探针经**一步补全**之后，top-1 是不是它自己。\n"
+        "  前两列是同一个**全局** W 换两条关联码（hash 是图 A 的那一档，weight 是\n"
+        "  P4c 原来的档）；后两列把 W 换成「只装它自己那一簇的成员」，再分别用\n"
+        "  weight 与簇内文档频率的 idf 档。\n"
+        "  前两列的分母是等距抽的探针条数（跨规模可比）；后两列覆盖该档的**全部**\n"
         "  记忆，所以它的分母随规模涨。两种分母都在表上印着。\n"
         "  「认错 J」是认错时 top-1 与被回放那条之间的关联码 Jaccard——**认错得有多\n"
         "  远**。接近 1 表示那两条本来就几乎一样：这时辨认率量的是语料的重复度，不是\n"

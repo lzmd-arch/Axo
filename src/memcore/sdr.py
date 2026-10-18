@@ -43,7 +43,14 @@ from .errors import SDRCapacityError
 from .text import tokenize
 from .types import DEFAULT_SDR_WIDTH, SDR
 
-__all__ = ["ASSOC_K", "LEXICAL_K", "drop_bits", "encode_assoc", "encode_lexical"]
+__all__ = [
+    "ASSOC_K",
+    "LEXICAL_K",
+    "drop_bits",
+    "encode_assoc",
+    "encode_assoc_idf",
+    "encode_lexical",
+]
 
 LEXICAL_K = 573
 """词法 SDR 的默认活跃位数。
@@ -270,6 +277,70 @@ def encode_assoc(lex: SDR, *, k: int = ASSOC_K, mode: str = "hash") -> SDR:
 
     # 选出来之后按位下标重排：SDR 要求 idx 严格升序。两个 key 都唯一，所以这一步
     # 与排序算法无关——但显式写 stable，免得将来有人换 key 时踩到并列。
+    positions = positions[np.argsort(lex.idx[positions], kind="stable")]
+    return SDR(
+        idx=lex.idx[positions].astype(np.int32),
+        weights=lex.weights[positions],
+        width=lex.width,
+    )
+
+
+def encode_assoc_idf(
+    lex: SDR,
+    *,
+    df: np.ndarray,
+    n: int,
+    k: int = ASSOC_K,
+    gamma: float = 2.0,
+) -> SDR:
+    """按**文档频率**选关联码的位——稳态 ALIF 适应的选位等价形式。
+
+    这是 :func:`encode_assoc` 之外的第三条选位规则，专门给**全量重算**的路径用
+    （分簇回放、图重建），不用于逐条写入：
+
+        score_i = w_i · (log((n + 1) / (df_i + 1)) + 1) ^ γ
+
+    其中 ``df_i`` 是位 i 在语料/簇里出现在多少条记忆的 ``lex_sdr`` 中，``n`` 是
+    参与统计的条数。跨条目反复活跃的公共位 ``df_i`` 大、分数被压低；同簇共享但
+    跨簇不共享的位留下来。把 ``df_i`` 读成 ALIF 的稳态适应变量 ``a_i``，上式就是
+    ``θ_i = θ0 + β·a_i`` 在选位这一步的等价形式。
+
+    **它不是单条文本的纯函数。** ``df`` 依赖语料（或一簇）的全量统计，所以同一
+    条记忆在不同语料里可能得到不同的码。调用点必须本来就是"全量重算"的路径；
+    逐条写入路径上算它会让"加一条记忆"悄悄改掉别的记忆的码。
+
+    Args:
+        lex: 词法 SDR。
+        df: 每个位在语料里出现的条数，长度至少 ``lex.width``。
+        n: 参与统计的条数（通常是 ``len(members)``，不是库的总条数）。
+        k: 目标活跃位数。可能取不满，规则同 :func:`encode_assoc`。
+        gamma: 频率压制的强度。``gamma=0`` 时退化为 ``weight`` 档（分数就是
+            ``lex.weights``），这条恒等式由测试钉住。
+
+    Returns:
+        宽度与 ``lex`` 相同的 SDR；``idx`` 是 ``lex.idx`` 的子集，权重逐位照搬。
+
+    Raises:
+        SDRCapacityError: ``df`` 形状不对、``n < 1``、``gamma < 0``，或 ``k`` 越界。
+    """
+    if n < 1:
+        raise SDRCapacityError(f"文档数 n 必须 >= 1，收到 {n!r}。")
+    if gamma < 0.0:
+        raise SDRCapacityError(f"gamma 不能为负，收到 {gamma!r}。")
+    if k < 1 or k > lex.width:
+        raise SDRCapacityError(f"关联码的 k 必须落在 [1, {lex.width}]，收到 {k!r}。")
+    if lex.k < 1:
+        raise SDRCapacityError("空的词法 SDR 里没有位可以抽样，调用方应当在此之前跳过它。")
+
+    frequencies = np.asarray(df)
+    if frequencies.ndim != 1 or frequencies.size < lex.width:
+        raise SDRCapacityError(
+            f"df 必须是长度至少为 {lex.width} 的一维数组，收到形状 {frequencies.shape}。"
+        )
+    selected = frequencies[lex.idx].astype(np.float64)
+    idf = np.log((n + 1.0) / (selected + 1.0)) + 1.0
+    scores = lex.weights * (idf**gamma)
+    positions = np.lexsort((lex.idx, -scores))[: min(k, lex.k)]
     positions = positions[np.argsort(lex.idx[positions], kind="stable")]
     return SDR(
         idx=lex.idx[positions].astype(np.int32),

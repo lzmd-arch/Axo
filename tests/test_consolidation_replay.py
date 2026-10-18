@@ -134,7 +134,7 @@ def test_the_decision_follows_identity_not_the_score() -> None:
     用处。
     """
     codes: dict[str, SDR] = {
-        memory_id: encode_assoc(encode_lexical(text), k=ASSOC_K, mode=W_MODE)
+        memory_id: encode_assoc(encode_lexical(text), k=ASSOC_K, mode="weight")
         for memory_id, text in _FAR_APART.items()
     }
     item = _item("m000", _FAR_APART["m000"])
@@ -160,7 +160,7 @@ def test_classify_reports_a_miss_when_completion_returns_nothing() -> None:
     谁像"这回事。给它们填 0.0 会让"什么都没认出来"与"认出来但完全不像"在下游
     看起来一模一样。
     """
-    codes = {"m000": encode_assoc(encode_lexical(_FAR_APART["m000"]), k=ASSOC_K, mode=W_MODE)}
+    codes = {"m000": encode_assoc(encode_lexical(_FAR_APART["m000"]), k=ASSOC_K, mode="weight")}
     item = _item("m000", _FAR_APART["m000"])
     probe = drop_bits(codes["m000"], DEFAULT_DROP)
 
@@ -235,13 +235,32 @@ def test_defaults_come_from_the_module_constants() -> None:
 
     ``DEFAULT_DROP = 0.5`` 与 ``tools/bench_substrate.py`` 的 ``--drop`` 默认档
     一致——**这不是巧合，是同口径的要求**：两边的探针残缺程度不一样，两个辨认率
-    就没法互相印证。``W_MODE = "weight"`` 的依据是 P4a 量出来的那张表
-    （``hash`` 档的 W 在每一档规模上都是死的），见
+    就没法互相印证。``W_MODE = "idf"`` 是 2026-10-18 在 166 条真实记忆上量出来的：
+    分簇回放辨认率从 ``weight`` 的 0.6988 抬到 0.8976；见
     :data:`~memcore.consolidation.W_MODE` 与
-    :func:`~memcore.sdr.encode_assoc` 里的两档对照。
+    :func:`~memcore.sdr.encode_assoc_idf`。``weight`` 保留为 A/B 与历史事件回放档。
     """
     assert DEFAULT_DROP == 0.5
-    assert W_MODE == "weight"
+    assert W_MODE == "idf"
+
+
+def test_code_mode_is_recorded_in_every_outcome() -> None:
+    """每条结果都带 ``code_mode``——事件行靠它决定 ``--replay`` 用哪一档重跑。
+
+    旧事件没有这个字段，``sleep_once --replay`` 对它们默认 ``weight``；新事件
+    必须自己说出用了哪一档，否则换个默认值就会让历史轮的逐条比对全部失败。
+    """
+    members = [_item("m000", _FAR_APART["m000"]), _item("m001", _FAR_APART["m001"])]
+    assert {outcome.detail.get("code_mode") for outcome in replay_cluster(members)} == {"idf"}
+    assert {
+        outcome.detail.get("code_mode") for outcome in replay_cluster(members, code_mode="weight")
+    } == {"weight"}
+
+
+def test_unknown_code_mode_raises() -> None:
+    members = [_item("m000", _FAR_APART["m000"])]
+    with pytest.raises(ValueError, match="code_mode"):
+        replay_cluster(members, code_mode="hash")
 
 
 # ── skip：四种原因里的三种，以及"跳过了就不投票" ────────────────────────────
@@ -341,8 +360,8 @@ def _first_corpus_rows(count: int) -> list[dict[str, str]]:
     return [json.loads(line) for line in lines[:count]]
 
 
-def test_the_weight_code_tier_is_used_and_a_prefilled_assoc_sdr_is_ignored() -> None:
-    """**两件事一起验**：用的是 ``weight`` 档的码，且条目上现成的 ``assoc_sdr`` 不算数。
+def test_the_idf_code_tier_is_used_and_a_prefilled_assoc_sdr_is_ignored() -> None:
+    """**两件事一起验**：用的是 ``idf`` 档的码，且条目上现成的 ``assoc_sdr`` 不算数。
 
     这两件事是同一个陷阱的两面。:meth:`~memcore.substrate.Substrate.build` 会
     **优先吃** ``item.assoc_sdr``，只有它是 ``None`` 时才按 ``config.mode`` 现算；
@@ -350,7 +369,7 @@ def test_the_weight_code_tier_is_used_and_a_prefilled_assoc_sdr_is_ignored() -> 
 
     * 谁把 :func:`~memcore.consolidation.replay_cluster` 里的码从"自己现算"
       改成"传给 ``build`` 让它现算"，只要条目上带着预先算好的 ``hash`` 档码，
-      ``W_MODE = "weight"`` 就被**无声忽略**；
+      ``W_MODE = "idf"`` 就被**无声忽略**；
     * 谁把 :data:`~memcore.consolidation.W_MODE` 直接改成 ``"hash"``，同样无声。
 
     两种改法都产出一份**看起来完全正常的辨认率**——只是它会掉到 0.05 上下。
@@ -359,10 +378,9 @@ def test_the_weight_code_tier_is_used_and_a_prefilled_assoc_sdr_is_ignored() -> 
     "预填"那一遍塌掉。
 
     门槛取 0.9 而不是实测值：语料若按 ``freeze.json`` 的规矩整份重冻，实测值会
-    小幅浮动，而两档之间的差距是数量级的。**写这条时的实测**：干净那遍 0.95
-    （19/20），预填 ``hash`` 那遍 0.10（2/20）；把 :data:`W_MODE` 直接改成
-    ``"hash"``，干净那遍自己就掉到 0.05（1/20）。三个数都是跑**这一条用例**读出来的
-    （第三个来自验红时的那次运行），没有第二份量法。
+    小幅浮动，而两档之间的差距是数量级的。**写这条时的实测**（weight 档）：干净
+    那遍 0.95（19/20），预填 ``hash`` 那遍 0.10（2/20）；把 :data:`W_MODE` 直接改成
+    ``"hash"``，干净那遍自己就掉到 0.05（1/20）。idf 档在这 20 条上不会低于这个门槛。
     """
     rows = _first_corpus_rows(20)
     assert len(rows) == 20, "语料被截短了，这条用例的前提就没了"
@@ -392,11 +410,11 @@ def test_the_weight_code_tier_is_used_and_a_prefilled_assoc_sdr_is_ignored() -> 
 
     assert clean_rate >= 0.9, (
         f"辨认率只有 {clean_rate:.2f}。这一簇只有 20 条、还是同一话题下的改写，"
-        f"用 weight 档时它应当几乎全中；掉到 0.05 上下说明局部 W 建在了 hash 档上。"
+        f"用 idf 档时它应当几乎全中；掉到 0.05 上下说明局部 W 建在了 hash 档上。"
     )
     assert primed_rate == clean_rate, (
         "条目上预填的 assoc_sdr 被读了。生产路径上存的是图 A 的 hash 档，"
-        "读它等于让 W_MODE='weight' 无声作废。"
+        "读它等于让 W_MODE='idf' 无声作废。"
     )
 
 

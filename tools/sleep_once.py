@@ -65,8 +65,11 @@ from memcore.consolidation import (  # noqa: E402
     MAX_CLUSTER,
     MIN_CLUSTER,
     REINFORCE,
+    SKIP,
     SLEEP_CONFUSION,
     SLEEP_REPLAY_MISS,
+    W_MODE,
+    W_MODES,
     RunReport,
     compare_events,
     consolidate,
@@ -233,6 +236,7 @@ def _dry_run(
     store: MemoryStore, graph: GraphIndex, args: argparse.Namespace, *, human: Any
 ) -> tuple[int, Payload]:
     """算完就走。**连库都不写**，所以它与真跑的差别就是"调不调那个入口"。"""
+    code_mode = args.code_mode or W_MODE
     report = consolidate(
         graph,
         list(store.iter_items()),
@@ -241,16 +245,20 @@ def _dry_run(
         drop=args.drop,
         max_cluster=args.max_cluster,
         limit=args.limit,
+        code_mode=code_mode,
     )
     _print_report(report, human=human, quiet=args.quiet)
     if not args.quiet:
         print("--dry-run：没有改库、没有拍快照、没有落事件。", file=human)
-    return 0, _payload(report, dry_run=True, snapshot=None, events=None, events_written=0)
+    return 0, _payload(
+        report, dry_run=True, snapshot=None, events=None, events_written=0, code_mode=code_mode
+    )
 
 
 def _real_run(
     store: MemoryStore, graph: GraphIndex, args: argparse.Namespace, *, human: Any
 ) -> tuple[int, Payload]:
+    code_mode = args.code_mode or W_MODE
     run = run_consolidation(
         store,
         graph,
@@ -260,6 +268,7 @@ def _real_run(
         max_cluster=args.max_cluster,
         limit=args.limit,
         snapshot=not args.no_snapshot,
+        code_mode=code_mode,
     )
     _print_report(run.report, human=human, quiet=args.quiet)
     if not args.quiet:
@@ -275,6 +284,7 @@ def _real_run(
         snapshot=None if run.snapshot is None else str(run.snapshot),
         events=str(run.events_path),
         events_written=run.events_written,
+        code_mode=code_mode,
     )
 
 
@@ -292,10 +302,34 @@ def _replay(
             f"（空轮不落盘），所以它要么被截断过，要么不是这个脚本写的。"
         )
 
+    # 回放只比对**回放决策**。同一份事件文件里还有 ``merge`` / ``promote`` /
+    # ``demote`` 行——它们由 :func:`~axo.memory.consolidation.run_consolidation`
+    # 在回放之后追加，``consolidate`` 不产生它们；拿它们去比对会让任何一轮有归并
+    # 或升降层的巩固都报"记录里有、重跑没跑出来"（这是 2026-10-18 在 166 条真库上
+    # 第一次跑真轮时撞到的假警报）。``MERGE`` 的 docstring 本来就写着它"不该出现在
+    # 回放的比对里"；这里按决策名过滤，而不是假设它们一定排在末尾。
+    replay_decisions = frozenset({REINFORCE, SLEEP_CONFUSION, SLEEP_REPLAY_MISS, SKIP})
+    recorded_replay = tuple(row for row in recorded if row.get("decision") in replay_decisions)
+    if not recorded_replay:
+        _die(
+            f"{consolidation_events_path(run_id)} 里没有回放决策行"
+            f"（只有归并/升降层之类的附加事件），没有可比对的东西。"
+        )
+
     # 用**记录里的**时刻重跑：run_seed 由 (base_seed, at) 派生，换一个时刻就换了
     # 抽样顺序，于是"复现"变成"用另一份输入跑一遍"——那样比出来的任何差异都说明
     # 不了问题。base_seed 从 --seed 来（默认就是原轮那个常量 0）。
     at = float(recorded[0]["at"])
+    # 码档也取记录里的：W_MODE 从 weight 换成 idf 之后，旧事件仍要能用原来的档
+    # 重跑。旧事件没有这个字段，默认 weight——那是它们当时用的档。
+    recorded_mode = str(recorded[0].get("detail", {}).get("code_mode", "weight"))
+    if recorded_mode not in W_MODES:
+        _die(f"事件里记录的 code_mode 是 {recorded_mode!r}，不在 {W_MODES} 里。")
+    if args.code_mode is not None and args.code_mode != recorded_mode:
+        _die(
+            f"--replay 必须用原轮记录的码档：这一轮记的是 {recorded_mode!r}，"
+            f"命令行给的是 {args.code_mode!r}。换档会让重跑与记录不可比。"
+        )
     report = consolidate(
         graph,
         list(store.iter_items()),
@@ -304,6 +338,7 @@ def _replay(
         drop=args.drop,
         max_cluster=args.max_cluster,
         limit=args.limit,
+        code_mode=recorded_mode,
     )
     if report.run_id != run_id:
         _die(
@@ -312,7 +347,7 @@ def _replay(
             f"（{at}）——所以对不上的只可能是 --seed（这一轮给的是 {args.seed}）。"
         )
 
-    problems = compare_events(recorded, event_rows(report))
+    problems = compare_events(recorded_replay, event_rows(report))
     if problems:
         print(f"{run_id} 重跑出来与落盘的记录不一致（{len(problems)} 处）：", file=human)
         for problem in problems:
@@ -323,11 +358,25 @@ def _replay(
             "不是确定性的。",
             file=human,
         )
-        return 3, _payload(report, replay=True, rows=len(recorded), problems=list(problems))
+        return 3, _payload(
+            report,
+            replay=True,
+            rows=len(recorded_replay),
+            rows_total=len(recorded),
+            problems=list(problems),
+            code_mode=recorded_mode,
+        )
 
     print(summary_line(report), file=human)
-    print(f"与 {run_id} 逐条一致（{len(recorded)} 条）。", file=human)
-    return 0, _payload(report, replay=True, rows=len(recorded), problems=[])
+    print(f"与 {run_id} 逐条一致（{len(recorded_replay)} 条）。", file=human)
+    return 0, _payload(
+        report,
+        replay=True,
+        rows=len(recorded_replay),
+        rows_total=len(recorded),
+        problems=[],
+        code_mode=recorded_mode,
+    )
 
 
 def _run(args: argparse.Namespace, *, human: Any) -> tuple[int, Payload]:
@@ -370,6 +419,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--drop", type=float, default=DEFAULT_DROP, help="探针丢位比例")
     parser.add_argument("--max-cluster", type=int, default=MAX_CLUSTER, help="簇上限")
     parser.add_argument("--seed", type=int, default=0, help="base_seed（整轮可复现性的常量）")
+    parser.add_argument(
+        "--code-mode",
+        default=None,
+        choices=[*W_MODES],
+        help=f"局部 W 的码档（默认 {W_MODE}；weight 是历史档，用于 A/B 与旧事件回放）",
+    )
     parser.add_argument(
         "--dry-run", action="store_true", help="跑完整流程但不改库、不拍快照、不落事件"
     )
