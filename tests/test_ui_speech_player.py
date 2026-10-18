@@ -65,8 +65,22 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
+class FakeDevice:
+    """一个"什么格式都支持"的输出设备。**测试不该依赖这台机器的音频设备。**"""
+
+    def isNull(self) -> bool:  # noqa: N802 — 与 QAudioDevice 同形
+        return False
+
+    def isFormatSupported(self, _fmt: Any) -> bool:  # noqa: N802
+        return True
+
+
 def _player(sink: FakeSink, **kwargs: Any) -> SpeechPlayer:
-    return SpeechPlayer(sink_factory=lambda _fmt, _dev: sink, **kwargs)
+    return SpeechPlayer(
+        sink_factory=lambda _fmt, _dev: sink,
+        device_factory=FakeDevice,
+        **kwargs,
+    )
 
 
 def test_speaking_starts_the_sink_with_raw_pcm(qapp, qapp_fixture=None) -> None:

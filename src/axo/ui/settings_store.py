@@ -92,6 +92,8 @@ _K_SPEECH_AUTOSTART = "speech/autostart"
 _K_SPEECH_COMMAND = "speech/launch_command"
 _K_PROACTIVE_SOURCE = "proactive/source"
 _K_PROACTIVE_NEWS_QUERY = "proactive/news_query"
+_K_PROACTIVE_ALLOW_TOOLS = "proactive/allow_tools"
+_K_PROACTIVE_WEATHER_CITY = "proactive/weather_city"
 _K_SPEECH_SEGMENTED = "speech/segmented"
 _K_SPEECH_CALL_IDLE = "speech/call_idle_hangup_s"
 
@@ -367,6 +369,11 @@ class ProactiveSettings:
             热点，需要联网开关与 DeepSeek key）。**默认记忆**：不改变已有行为，也
             不需要网络。
         news_query: ``source="news"`` 时搜什么。默认「今天的热点新闻」。
+        allow_tools: 主动回合允不允许她**自己先查一眼**（只读工具：时间、天气、记忆）。
+            默认开——这是"她自己发现天气变了"的唯一实现方式；关掉就退回"只能凭话头
+            说话"。所有工具都是只读的，不会改任何东西。
+        weather_city: 她主动关心天气的城市。空串 = 不特别关注；填了之后主动回合会
+            把城市写进提示，让她去查。
     """
 
     enabled: bool = True
@@ -376,6 +383,8 @@ class ProactiveSettings:
     quiet_to: int = 8
     source: str = "memory"
     news_query: str = "今天的热点新闻"
+    allow_tools: bool = True
+    weather_city: str = ""
 
 
 @dataclass(frozen=True)
@@ -644,6 +653,8 @@ class SettingsStore:
             ),
             news_query=str(self._backend.value(_K_PROACTIVE_NEWS_QUERY, "今天的热点新闻")).strip()
             or "今天的热点新闻",
+            allow_tools=_as_bool(self._backend.value(_K_PROACTIVE_ALLOW_TOOLS, True), True),
+            weather_city=self._text(_K_PROACTIVE_WEATHER_CITY),
         )
 
     def save_proactive(self, settings: ProactiveSettings) -> None:
@@ -658,6 +669,8 @@ class SettingsStore:
         self._backend.setValue(_K_PROACTIVE_QUIET_TO, int(settings.quiet_to))
         self._backend.setValue(_K_PROACTIVE_SOURCE, settings.source)
         self._backend.setValue(_K_PROACTIVE_NEWS_QUERY, settings.news_query)
+        self._backend.setValue(_K_PROACTIVE_ALLOW_TOOLS, bool(settings.allow_tools))
+        self._backend.setValue(_K_PROACTIVE_WEATHER_CITY, settings.weather_city)
 
     def save_reminders(self, settings: ReminderSettings) -> None:
         """写回。存真 bool，读取侧仍然按 :func:`_as_bool` 收一遍（同记忆那一节）。"""

@@ -1714,6 +1714,26 @@ class ProactivePage(QWidget):
                 "搜到的标题与摘要会作为话头，不会写进记忆。"
             )
         )
+        self.allow_tools_box = QCheckBox("让她自己先查一眼（只读：时间、天气、记忆）", self)
+        self.allow_tools_box.setObjectName("proactiveAllowToolsBox")
+        self.allow_tools_box.setChecked(self._snapshot.allow_tools)
+        self.allow_tools_box.toggled.connect(self._on_changed)
+        outer.addWidget(self.allow_tools_box)
+        outer.addWidget(
+            _hint(
+                "打开后，主动开口那一轮她可以先用只读工具看一眼再决定说什么；查完觉得"
+                "没什么值得说的，她会保持沉默（不会硬找话）。这些工具都不会改任何东西。"
+            )
+        )
+        city_row = QHBoxLayout()
+        city_row.addWidget(QLabel("关心天气的城市", self))
+        self.weather_city_edit = QLineEdit(self)
+        self.weather_city_edit.setObjectName("proactiveWeatherCity")
+        self.weather_city_edit.setPlaceholderText("例如：杭州（留空 = 不特别关注）")
+        self.weather_city_edit.setText(self._snapshot.weather_city)
+        self.weather_city_edit.editingFinished.connect(self._on_changed)
+        city_row.addWidget(self.weather_city_edit)
+        outer.addLayout(city_row)
 
         outer.addSpacing(6)
         outer.addWidget(_section("打扰的边界"))
@@ -1792,6 +1812,8 @@ class ProactivePage(QWidget):
             self.source_combo.setCurrentIndex(index if index >= 0 else 0)
             self.news_query_edit.setText(settings.news_query)
             self.news_query_edit.setEnabled(settings.source == "news")
+            self.allow_tools_box.setChecked(settings.allow_tools)
+            self.weather_city_edit.setText(settings.weather_city)
         finally:
             self._syncing = False
 
@@ -1805,6 +1827,8 @@ class ProactivePage(QWidget):
             quiet_to=self.quiet_to_spin.value(),
             source=str(self.source_combo.currentData() or "memory"),
             news_query=self.news_query_edit.text().strip() or "今天的热点新闻",
+            allow_tools=self.allow_tools_box.isChecked(),
+            weather_city=self.weather_city_edit.text().strip(),
         )
 
     def revert(self) -> None:

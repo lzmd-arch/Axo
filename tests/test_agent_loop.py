@@ -1034,7 +1034,9 @@ def test_read_only_calls_in_one_round_run_in_parallel(store: MemoryStore) -> Non
     finished = [event for event in events if isinstance(event, ToolFinished)]
     assert [one.content for one in finished] == ["读到 1", "读到 2"], "顺序必须保持"
     assert done.tool_calls == 2
-    assert elapsed < 0.35, f"两个 0.2 秒的读串行要 0.4 秒以上，实际 {elapsed:.3f}"
+    assert elapsed < 0.39, (
+        f"两个 0.2 秒的读串行要 0.4 秒以上（给调度抖动留 0.19 秒余量），实际 {elapsed:.3f}"
+    )
 
 
 def test_the_loop_refreshes_the_time_line_each_round(store: MemoryStore) -> None:

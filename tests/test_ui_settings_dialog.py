@@ -1957,3 +1957,22 @@ def test_the_proactive_source_can_be_news(qapp, data_root) -> None:
 
     dialog.proactive.set_state(ProactiveSettings(source="memory"))
     assert not dialog.proactive.news_query_edit.isEnabled()
+
+
+def test_the_proactive_tool_switch_and_city(qapp, data_root) -> None:
+    """「让她自己查一眼」与关心城市都能改、能撤回。"""
+    dialog = _dialog()
+    seen: list[ProactiveSettings] = []
+    dialog.proactive_changed.connect(seen.append)
+
+    assert dialog.proactive.allow_tools_box.isChecked(), "默认开"
+
+    dialog.proactive.allow_tools_box.setChecked(False)
+    assert seen[-1].allow_tools is False
+
+    dialog.proactive.weather_city_edit.setText("杭州")
+    dialog.proactive.weather_city_edit.editingFinished.emit()
+    assert seen[-1].weather_city == "杭州"
+
+    dialog.proactive.revert()
+    assert dialog.proactive.current() == ProactiveSettings()

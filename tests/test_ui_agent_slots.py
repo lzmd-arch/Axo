@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fakes import ScriptedBackend, text_chunk
+from fakes import ScriptedBackend, text_chunk, tool_chunk
 from PySide6.QtCore import QCoreApplication, QEvent, QObject
 
 from axo import autostart
@@ -367,7 +367,7 @@ class Stub(QObject):
         self._session = FakeSession()
         #: 主动搭话的设置。**默认把免打扰关掉**（两个数相等）——否则这几条测试在
         #: 23:00 之后跑就会红，而红的原因与它们要验的东西毫无关系。
-        self._proactive_settings = ProactiveSettings(quiet_from=0, quiet_to=0)
+        self._proactive_settings = ProactiveSettings(quiet_from=0, quiet_to=0, allow_tools=False)
         #: 她这一轮拿的是哪个话头（与 ``_speak_alert`` 互斥，两种"她先开口"共用收尾）。
         self._speak_material: Material | None = None
         #: 她上一次开口（提醒与主动都算）。她说话也算"有动静"。
@@ -1672,7 +1672,7 @@ def test_she_speaks_proactively_when_everything_is_ready(qapp: Any) -> None:
     """条件齐了：她拿一条旧记忆起头，进逐字稿、画进对话区、**念出声**。
 
     与提醒那条的三处不同都在这条断言里：回看小标是「她主动说的」（不是「提醒」）、
-    **不叫醒窗口**、计数与去重在决定开口那一刻就落下。
+    **不叫醒窗口**、计数与去重在**真正开口时**才落下（查完保持沉默的那次不算）。
     """
     stub, backend = _proactive_stub(qapp)
 
@@ -1688,7 +1688,7 @@ def test_she_speaks_proactively_when_everything_is_ready(qapp: Any) -> None:
     assert (line.role, line.proactive) == ("assistant", True)
     assert stub.remembered == [], "她主动说的那句进了记忆库"
     assert stub._tray.messages == [], "主动搭话不该动托盘气泡（那是提醒那条通道）"
-    # 计数与去重**在决定开口那一刻**就落下：一个连不上模型的后端不该被每分钟敲一次。
+    # 计数与去重**真正开口时**落下；沉默（[SILENCE]）的那次不算。
     assert (stub._spoken_today, stub._used_materials) == (1, ["mA"])
 
 
@@ -1708,7 +1708,9 @@ def test_the_material_rides_in_the_user_line(qapp: Any) -> None:
 
 def test_she_never_starts_when_the_switch_is_off(qapp: Any) -> None:
     stub, backend = _proactive_stub(qapp)
-    stub._proactive_settings = ProactiveSettings(enabled=False, quiet_from=0, quiet_to=0)
+    stub._proactive_settings = ProactiveSettings(
+        enabled=False, quiet_from=0, quiet_to=0, allow_tools=False
+    )
 
     stub._on_proactive_tick()
 
@@ -1722,7 +1724,7 @@ def test_quiet_hours_keep_her_quiet_every_hour_of_the_day(qapp: Any) -> None:
     墙上时钟无关：纯层那张表已经逐格钉过边界，这里要证的只是"设置真的传到了判定里"。
     """
     stub, backend = _proactive_stub(qapp)
-    stub._proactive_settings = ProactiveSettings(quiet_from=0, quiet_to=24)
+    stub._proactive_settings = ProactiveSettings(quiet_from=0, quiet_to=24, allow_tools=False)
 
     stub._on_proactive_tick()
 
@@ -2213,6 +2215,7 @@ def test_the_tool_table_asks_the_plugin_loader(qapp: Any, monkeypatch: Any) -> N
 
     stub = Stub(streaming=False, backend=object(), memory=MemoryStore(":memory:"))
     stub._read_roots = ()
+    stub._web_backend = lambda: None
     stub._plugin_issues = set()
     stub._model_can_see = lambda: False  # type: ignore[method-assign]
 
@@ -2264,3 +2267,36 @@ def test_a_receipt_is_only_consumed_after_the_turn_really_ran(qapp: Any) -> None
 
     stub._commit_speech_receipt()
     assert stub._peek_speech_receipt() == ""
+
+
+def test_a_proactive_turn_can_check_tools_and_stay_silent(qapp: Any) -> None:
+    """允许她查之后：主动回合走工具循环，查完回 ``[SILENCE]`` 就什么都不发生。"""
+    from axo.agent.catalog import GetTimeTool
+    from axo.agent.tools import ToolRegistry
+
+    stub, backend = _proactive_stub(
+        qapp,
+        script=[
+            [tool_chunk(ToolCall(id="c1", name="get_time"))],
+            [text_chunk("[SILENCE]", done=True)],
+        ],
+    )
+    stub._proactive_settings = ProactiveSettings(
+        quiet_from=0, quiet_to=0, allow_tools=True, weather_city="杭州"
+    )
+    stub._tools = lambda: ToolRegistry([GetTimeTool()])
+    stub._writer = None
+    stub._reminders = None
+    stub._reminders_fired = None
+    stub._reminders_cancelled = None
+    stub._read_roots = ()
+    stub._web_backend = lambda: None
+
+    stub._on_proactive_tick()
+
+    assert _wait_until(qapp, lambda: not stub._live_threads), "那一轮没跑完"
+    assert backend.calls == 2, "先走了一轮工具，再走收尾"
+    assert "杭州" in backend.requests[0].messages[0].content
+    assert "[SILENCE]" in backend.requests[0].messages[0].content
+    assert stub.stored == [], "沉默不该进逐字稿"
+    assert (stub._spoken_today, stub._used_materials) == (0, []), "沉默不该消耗次数"

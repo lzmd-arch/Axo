@@ -73,10 +73,15 @@ class SpeechPlayer(QObject):
         self,
         *,
         sink_factory: SinkFactory | None = None,
+        device_factory: Callable[[], Any] | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._sink_factory = sink_factory
+        #: 默认输出设备。**可注入是为了测试**：设备枚举在 Qt 的多媒体后端里是懒初始化
+        #: 的，刚启动那一刻 `isFormatSupported` 可能给出假；真机等事件循环跑起来就好，
+        #: 而测试里没有事件循环。注入一个"支持一切"的假设备，格式检查就不再依赖机器。
+        self._device_factory = device_factory
         self._sink: _SinkLike | None = None
         self._buffer: Any = None
         self._volume = 80
@@ -100,7 +105,7 @@ class SpeechPlayer(QObject):
         clip = decode_wav(wav)
         if clip is None or clip.empty:
             return "这段声音播不了（认不出它的格式，或者它是空的）"
-        device = QMediaDevices.defaultAudioOutput()
+        device = (self._device_factory or QMediaDevices.defaultAudioOutput)()
         if device.isNull():
             return "没有音频输出设备。可能是这台机器没接扬声器/耳机，或者系统的输出被独占了。"
         fmt = QAudioFormat()

@@ -359,3 +359,42 @@ def test_memory_materials_still_say_they_are_remembered() -> None:
 
     assert material.kind == "memory"
     assert "你记得" in material.line()
+
+
+# ── 主动回合可以自己查（2026-10-18） ───────────────────────────────────────
+
+
+def test_silence_is_recognised_in_its_common_shapes() -> None:
+    from axo.agent.proactive_chat import is_silence
+
+    for text in ("[SILENCE]", "  [SILENCE]  ", "（[SILENCE]）", "", "   "):
+        assert is_silence(text) is True, text
+
+    assert is_silence("今天风大，出门加件外套。") is False
+    assert is_silence("我查了，没什么特别的") is False
+
+
+def test_tool_turns_are_told_they_may_stay_silent() -> None:
+    material = Material(memory_id="m1", content="感冒那位回来了。", created_at=NOW.timestamp())
+
+    messages = build_proactive_messages(
+        persona=["人设"],
+        material=material,
+        now=NOW,
+        allow_tools=True,
+        weather_city="杭州",
+    )
+
+    system = messages[0].content
+    assert "[SILENCE]" in system
+    assert "杭州" in system
+    assert "没有工具可用" not in system
+
+
+def test_without_tools_the_prompt_is_unchanged() -> None:
+    material = Material(memory_id="m1", content="感冒那位回来了。", created_at=NOW.timestamp())
+
+    messages = build_proactive_messages(persona=["人设"], material=material, now=NOW)
+
+    assert "[SILENCE]" not in messages[0].content
+    assert "没有工具可用" in messages[0].content

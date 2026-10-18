@@ -1118,3 +1118,18 @@ def test_proactive_source_defaults_to_memory_and_roundtrips() -> None:
     assert (
         SettingsStore(FakeBackend({"proactive/source": "微博"})).load_proactive().source == "memory"
     )
+
+
+def test_proactive_tool_turns_default_on_and_keep_the_city() -> None:
+    """主动回合默认允许她先查一眼（只读）；城市能存住。"""
+    from axo.ui.settings_store import ProactiveSettings
+
+    defaults = SettingsStore(FakeBackend()).load_proactive()
+    assert defaults.allow_tools is True
+    assert defaults.weather_city == ""
+
+    store = SettingsStore(FakeBackend())
+    store.save_proactive(ProactiveSettings(allow_tools=False, weather_city="杭州"))
+    loaded = store.load_proactive()
+    assert loaded.allow_tools is False
+    assert loaded.weather_city == "杭州"

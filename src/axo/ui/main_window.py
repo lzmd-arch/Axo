@@ -76,8 +76,10 @@ from ..agent.gate import APPROVAL_TIMEOUT_S
 from ..agent.proactive import build_reminder_messages
 from ..agent.proactive_chat import (
     DEFAULT_WINDOW_DAYS,
+    PROACTIVE_TOOL_NAMES,
     Material,
     build_proactive_messages,
+    is_silence,
     pick_material,
     should_speak,
 )
@@ -250,6 +252,9 @@ _GRAPH_CHANNEL_WEIGHT = 0.25
 
 
 SPEECH_TIMEOUT_MS = 20_000
+
+#: 主动回合允许她查工具时，给整轮更长的时间（本地模型 + 一两次工具往返）。
+PROACTIVE_TOOL_TIMEOUT_MS = 90_000
 """她开口那一轮最多等多久（毫秒）。**它挡的是一个具体的硬杀，不是体验优化。**
 
 后端卡住时 ``httpx`` 的读超时是 300 秒，而进程收尾只等 3 秒
@@ -3137,29 +3142,75 @@ class MainWindow(QMainWindow):
           敲一次，而"今天来过了"这件事在决定开口那一刻就已经成立。
         """
         assert self._backend is not None, "调用方已经查过后端在不在"
-        request = ChatRequest(
-            messages=build_proactive_messages(
-                material=material,
-                # 人格锚**原样带**，与其它每一轮同一个函数。
-                persona=persona_texts(self._memory),
-                model_id=self._backend.model_id,
-            ),
-            # 与其它轮同一条规则：由 reserve_for 判（云端一个字都不传）。
-            max_tokens=reserve_for(self._backend) or None,
+        settings = self._proactive_settings
+        messages = build_proactive_messages(
+            material=material,
+            # 人格锚**原样带**，与其它每一轮同一个函数。
+            persona=persona_texts(self._memory),
+            model_id=self._backend.model_id,
+            allow_tools=settings.allow_tools,
+            weather_city=settings.weather_city,
         )
         self._speak_material = material
         self._speak_live = True
-        self._spoken_today += 1
-        self._used_materials.append(material.memory_id)
+        # **计数不在这里落**：她可能查完觉得没什么好说的（``[SILENCE]``），那一次
+        # 不该消耗今天的次数、也不该把话头标记成用过。真正开口时才算（见
+        # :meth:`_on_speech_finished`）。
+
+        readonly = (
+            ToolRegistry([tool for tool in self._tools() if tool.spec.name in PROACTIVE_TOOL_NAMES])
+            if settings.allow_tools
+            else ToolRegistry(())
+        )
         thread = QThread(self)
-        worker = ChatWorker(self._backend, request)
+        if len(readonly):
+            # **主动回合也可以伸手。** 只给白名单里的只读工具；没有用户在场，所以
+            # 任何需要确认的工具都不进来（这里本来也没有）。
+            ctx = ToolContext(
+                store=self._memory,
+                writer=self._writer,
+                reminders=self._reminders,
+                fired=self._reminders_fired,
+                cancellations=self._reminders_cancelled,
+                session_id=self._session.session_id,
+                turn_seq=sum(1 for message in self._session.messages if message.role == "user"),
+                read_root=self._read_roots,
+                write_root=self._read_roots,
+                data_root=data_dir(),
+                net=self._web_backend(),
+                weather=OpenMeteoWeather() if getattr(self, "_weather_enabled", True) else None,
+                cancel=threading.Event(),
+            )
+            budget = TokenBudget(
+                window=self._backend.context_window,
+                reserve_output=reserve_for(self._backend),
+            )
+            worker = AgentWorker(
+                backend=self._backend,
+                messages=messages,
+                registry=readonly,
+                ctx=ctx,
+                budget=budget,
+                meter=TokenMeter(),
+                tools_ceiling=budget.usable,
+                run_log=RunLog(data_dir() / "logs" / "agent"),
+            )
+            timeout = PROACTIVE_TOOL_TIMEOUT_MS
+        else:
+            request = ChatRequest(
+                messages=messages,
+                # 与其它轮同一条规则：由 reserve_for 判（云端一个字都不传）。
+                max_tokens=reserve_for(self._backend) or None,
+            )
+            worker = ChatWorker(self._backend, request)
+            timeout = SPEECH_TIMEOUT_MS
         # **不接 ``chunk``**，理由同提醒那条（见 :meth:`_start_reminder_speech`）。
         worker.finished.connect(self._on_speech_finished)
         worker.failed.connect(self._on_speech_failed)
         worker.finished.connect(thread.quit)
         worker.failed.connect(thread.quit)
         self._track(thread, worker, what="主动开口线程", slot="speak")
-        self._speak_timeout.start(SPEECH_TIMEOUT_MS)
+        self._speak_timeout.start(timeout)
         thread.start()
 
     def _retire_speech(self) -> Alert | Material | None:
@@ -3214,15 +3265,18 @@ class MainWindow(QMainWindow):
             # 引用（见 :meth:`_retire_speech`），所以那一次发回来的还是同一个 worker。
             return
         payload = self._retire_speech()
-        if not text.strip():
-            # **空回复不是"她说了句空话"，是这一次开口没发生。** 模型偶尔只吐空白
-            # （整段被 think 吃掉、或者被 max_tokens 卡在第一个 token 上），那时最要紧
-            # 的仍然是"这条提醒别消失"。
+        if is_silence(text):
+            # **"查完没什么值得说的"不是空回复。** 主动回合允许她伸手之后，沉默成了
+            # 一个正常结果：模型看了天气/时间/记忆，决定不打扰。空回复与 ``[SILENCE]``
+            # 在这里同一种收场；提醒那条仍然要由程序补说。
             if isinstance(payload, Alert):
                 self._tell_reminder(payload, note="模型这次没有说出话来")
-            # 主动搭话**没有降级**：说不出就什么都不发生——由程序说一句"我想跟你说话"
-            # 是荒谬的。沉默是唯一正确的退化。
+            # 主动搭话没有降级：沉默是唯一正确的退化。
             return
+        if isinstance(payload, Material):
+            # 真开口了才算今天的一次、才把话头标记成用过（见 :meth:`_start_proactive_speech`）。
+            self._spoken_today += 1
+            self._used_materials.append(payload.memory_id)
         self._append(
             Message(
                 role="assistant",
