@@ -41,6 +41,7 @@ from typing import Any
 import numpy as np
 
 from .errors import StoreCorruptError, StoreError
+from .lexindex import LexicalIndex
 from .spaces import Space, SpaceRegistry
 from .types import SDR, MemoryItem, MemoryKind, MemorySummary, Taint, Tier, now_ts
 
@@ -130,6 +131,9 @@ class MemoryStore:
         self._registry = SpaceRegistry()
         for space in self._load_spaces():
             self._registry.register(space)
+        self._revision = 0
+        self._lex_index: LexicalIndex | None = None
+        self._lex_index_revision = -1
 
     # ── 打开与关闭 ──────────────────────────────────────────────────────────
 
@@ -263,6 +267,7 @@ class MemoryStore:
                 payload,
             )
             self._connection.commit()
+            self._revision += 1
         return item
 
     def update(self, item: MemoryItem) -> MemoryItem:
@@ -284,6 +289,8 @@ class MemoryStore:
                 "DELETE FROM memories WHERE memory_id = ?", (memory_id,)
             )
             self._connection.commit()
+            if cursor.rowcount > 0:
+                self._revision += 1
             return cursor.rowcount > 0
 
     def transform(self, memory_id: str, change: Callable[[MemoryItem], MemoryItem]) -> MemoryItem:
@@ -338,6 +345,47 @@ class MemoryStore:
                 "SELECT * FROM memories WHERE memory_id = ?", (memory_id,)
             ).fetchone()
         return None if row is None else self._row_to_item(row)
+
+    def get_many(self, memory_ids: Sequence[str]) -> list[MemoryItem]:
+        """按给定顺序批量取条目；不存在的 id 跳过。
+
+        只用于候选子集的召回扫描；一次查询用 ``IN`` 分块，避免逐条往返。
+        """
+        if not memory_ids:
+            return []
+        found: dict[str, MemoryItem] = {}
+        with self._lock:
+            ids = list(memory_ids)
+            for start in range(0, len(ids), 500):
+                chunk = ids[start : start + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                rows = self._connection.execute(
+                    f"SELECT * FROM memories WHERE memory_id IN ({placeholders})", chunk
+                ).fetchall()
+                for row in rows:
+                    item = self._row_to_item(row)
+                    found[item.memory_id] = item
+        return [found[memory_id] for memory_id in memory_ids if memory_id in found]
+
+    @property
+    def revision(self) -> int:
+        """任何会改变词法码的写入都会 +1；倒排索引用它判断缓存是否过期。"""
+        return self._revision
+
+    def lexical_index(self) -> LexicalIndex:
+        """词法倒排索引的缓存。按 ``revision`` 失效；只读 ``lex_*`` 列。"""
+        with self._lock:
+            if self._lex_index is not None and self._lex_index_revision == self._revision:
+                return self._lex_index
+            rows = self._connection.execute(
+                "SELECT memory_id, lex_idx, lex_width FROM memories ORDER BY memory_id"
+            ).fetchall()
+            index = LexicalIndex.build(
+                (row["memory_id"], row["lex_idx"], row["lex_width"]) for row in rows
+            )
+            self._lex_index = index
+            self._lex_index_revision = self._revision
+            return index
 
     def count(self) -> int:
         """条目总数。"""

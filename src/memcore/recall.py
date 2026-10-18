@@ -202,6 +202,14 @@ class RecallConfig:
     五百条"分数不够"不是解释，是噪声。"""
 
 
+#: 纯词法召回时倒排索引最多 gather 多少条候选。
+#:
+#: 只影响**扫描成本**，不改变融合/MMR 的语义；语义/时间/图通道存在时走全量扫描，
+#: 因为它们的命中可能没有词法重叠。5,000 是在 50k 真实文本放大语料上、top-1 与
+#: 全量一致的前提下取的值（见 sweep_results/axo_recall_rare_bit）。
+_PREFILTER_LIMIT = 5000
+
+
 @dataclass
 class _Candidate:
     """扫描阶段的内部候选。**不进账本**，账本里只有最终形态。"""
@@ -301,6 +309,18 @@ def recall(
         + (("graph",) if graph_scores is not None else ())
     )
 
+    candidate_ids = None
+    if (
+        query_lex is not None
+        and query_vector is None
+        and settings.graph_weight <= 0.0
+        and window_ids is None
+    ):
+        index = store.lexical_index()
+        # 有「没有任何词法码」的条目时退回全量扫描：候选路径看不到它们，
+        # 而它们必须以 NO_ENCODING 出现在账本里（数据问题要可见）。
+        if len(index.ids) == store.count():
+            candidate_ids = set(index.candidates(query_lex, limit=_PREFILTER_LIMIT))
     candidates, rejected, scanned, live = _scan(
         store,
         query_lex=query_lex,
@@ -311,6 +331,7 @@ def recall(
         at=at,
         settings=settings,
         notes=notes,
+        candidate_ids=candidate_ids,
     )
 
     injected, more_rejected, used = _select(
@@ -506,6 +527,7 @@ def _scan(
     at: float,
     settings: RecallConfig,
     notes: list[str],
+    candidate_ids: set[str] | None = None,
 ) -> tuple[list[_Candidate], list[RejectedCandidate], int, bool]:
     """走一遍全库，算出每条候选的融合得分。
 
@@ -536,7 +558,11 @@ def _scan(
     scanned = 0
     live = False
 
-    for item in store.iter_items():
+    if candidate_ids is None:
+        iterator = store.iter_items()
+    else:
+        iterator = store.get_many(sorted(candidate_ids))
+    for item in iterator:
         if item.pinned or item.memory_id in excluded:
             continue
         scanned += 1
@@ -611,6 +637,8 @@ def _scan(
 
     if not live and scanned:
         notes.append("库里的条目全部已遗忘或缺少编码")
+    elif candidate_ids is not None and not scanned:
+        notes.append("词法候选为空：没有与查询共享词法位的记忆")
     return pool, rejected, scanned, live
 
 
