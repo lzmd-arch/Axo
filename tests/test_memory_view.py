@@ -36,8 +36,7 @@ from axo.memory.browse import (
     kind_label,
     neighbor_label,
     probe_position,
-    render_heat_placeholder,
-    render_heat_summary,
+    render_heat_panel,
     render_memory_detail,
     summary_label,
     tier_label,
@@ -51,6 +50,7 @@ from memcore.audit import (
     RejectedCandidate,
     RejectReason,
 )
+from memcore.graph import graph_heat
 from memcore.ids import new_ulid
 from memcore.sdr import encode_lexical
 from memcore.spaces import Space, make_space_id
@@ -549,7 +549,7 @@ def test_probe_says_so_when_the_focus_is_missing() -> None:
     assert "别的一条" in text
 
 
-# ── SNN 热度那一块的两态 ────────────────────────────────────────────────────
+# ── SNN 热度 ────────────────────────────────────────────────────────────────
 
 
 def _digits(text: str) -> bool:
@@ -557,100 +557,106 @@ def _digits(text: str) -> bool:
     return re.search(r"\d", text) is not None
 
 
-@pytest.mark.parametrize(
-    "text",
-    [
-        # 三种"没有可写的数"，走的是两条分支：
-        # ① 占位（连一轮都没跑过）；
-        # ② 显式喂零（调用方手上有两个 0）；
-        # ③ 零条但**跑过**——它走第三条分支，而那条同样一个数字都不许有。
-        render_heat_placeholder(),
-        render_heat_summary(reinforced_memories=0, total_reinforcements=0, last_run_at=None),
-        render_heat_summary(reinforced_memories=0, total_reinforcements=0, last_run_at=NOW),
-    ],
-)
-def test_the_heat_panel_without_data_carries_no_numbers(text: str) -> None:
-    """**「绝不做假数据」这条裁决落到这个断言上：没有可写的数就一个数字都不许有。**
+def _heat_panel(**changes):
+    defaults = {
+        "heat": None,
+        "selected_id": "",
+        "graph_built_at": None,
+        "stale": False,
+        "reinforced_memories": 0,
+        "total_reinforcements": 0,
+        "last_run_at": None,
+    }
+    defaults.update(changes)
+    return render_heat_panel(**defaults)
 
-    一个 ``0`` 就足以让整段看起来像"算过了、就是这个值"——而这块面板要的那个字段
-    **没有来源**：基质一步算出来的是"哪条被激活得最强"（一个 argmax），没有"每条记忆
-    一个标量"这个形状。
 
-    别跟另一个问题混起来：基质这个数据源**本身**在目标规模上塌掉（P4a 实测
-    ``n=500`` → 0.2250、``n=2000`` → 0.0300），那是"值不值得用"，和"东西有没有建"
-    不是同一句话。文案层对这两种说法都有守卫，见下面那条断言。
+def test_the_heat_panel_without_a_graph_carries_no_numbers() -> None:
+    """没有图 → 说"还没有关联图"，**不用 0 冒充算过**。
 
-    **三个输入一起参数化，是因为它们走两条不同的分支**，而"零数字"这条纪律必须两条
-    都守。其中"零条但跑过"最容易被顺手写进一个 ``0``。
+    热度现在有真实来源（关联图 A 的逐条支撑度），所以"没有图"与"没有巩固数据"
+    是两件事：这一条只钉前者的零数字。
     """
+    text = _heat_panel()
+
+    assert "还没有关联图" in text
+    assert "速率级" in text
+    assert "脉冲活跃度" not in text
     assert not _digits(text)
 
 
-def test_the_heat_panel_says_what_is_missing_and_what_is_there() -> None:
-    """它要说清两件事：**热度图为什么还没有**，以及**现在能看的是什么**。
+def test_the_heat_panel_with_a_graph_shows_per_memory_values() -> None:
+    """有图 → 每条记忆一个热度和一个百分位，不再是 argmax。"""
+    graph = make_graph(
+        {
+            "a": [("b", 0.5), ("c", 0.2)],
+            "b": [("a", 0.5)],
+            "c": [("a", 0.2)],
+        }
+    )
+    text = _heat_panel(
+        heat=graph_heat(graph),
+        selected_id="b",
+        graph_built_at=NOW,
+        reinforced_memories=12,
+        total_reinforcements=34,
+        last_run_at=NOW,
+    )
 
-    只说前一半（"未启用"）会留下一句"那我该干嘛"；只说后一半则会让用户以为这就是
-    热度图本身。这份摘要里的数字量纲完全不是"热度"，它是**巩固**的计数——所以那两句
-    必须同时在场。
-    """
-    text = render_heat_placeholder()
-
-    assert "未启用" in text, "热度图本身还没画出来，这件事要说"
-    assert "热度" in text
-    assert "巩固还没跑过" in text, "零数据时说的是现状，不是'去哪实现'"
-    # **阶段代号不许再出现。** 这一段说的是**现状**，不是**去哪实现**：写上"依赖 P4c"
-    # 会让已经做好的东西看起来还没做。
-    assert "P4" not in text
-    # 联想链不再是这一块的一部分——留着它会让"这一块没有数字"这条断言在改动联想
-    # 面板时被顺带弄红，而两件事没有关系。
-    assert "联想链" not in text
-    # **"为什么还没有"这条理由不许说错。** 基质是建好了的，不许被说成"还没建"——
-    # 真实的理由是这块面板要的字段没有那个形状。
-    assert "还没建" not in text
-    # 同理，**"脉冲活跃度"这个说法不许出现**：那些数字来自速率级的一步完成，
-    # 不是在跑脉冲。
-    assert "脉冲活跃度" not in text
-
-
-def test_a_run_that_reinforced_nothing_does_not_claim_it_never_ran() -> None:
-    """跑过、但一条都没加固 → **不许说"还没跑过"**。
-
-    这一轮真的跑了：库里要么全是新写的（还没进关联图），要么都没通过探针。把它说成
-    "还没跑过"，用户会以为定时任务没生效，然后去反复点「立即巩固」——而每一次点都
-    真的拍一份整库快照。
-    """
-    text = render_heat_summary(reinforced_memories=0, total_reinforcements=0, last_run_at=NOW)
-
-    assert "还没跑过" not in text
-    assert "跑过" in text
-    assert not _digits(text), "说清这件事不需要任何数字"
+    assert "库内 3 条" in text
+    assert "当前选中：0.86" in text
+    assert "高于 33% 的记忆" in text, "b 只比 c 热：1/3"
+    assert "口径" in text and "top-m" in text
+    assert format_ts(NOW) in text
+    assert "12 条被回放认出" in text and "累计 34 次" in text
 
 
-def test_the_heat_panel_with_data_shows_the_real_numbers() -> None:
-    """有数据 → **真数字，包括时间**。
+def test_the_heat_panel_says_when_the_selected_memory_is_not_in_the_graph() -> None:
+    graph = make_graph({"a": [("b", 0.5)], "b": [("a", 0.5)]})
 
-    这是与上一条成对的另一半：两条各管一段输入，**不能放在同一段文本上**——一条"有
-    数据就有数字"的断言与一条"无数据就没数字"的断言合起来测，只会互相抵消。
-    """
-    text = render_heat_summary(reinforced_memories=12, total_reinforcements=34, last_run_at=NOW)
+    text = _heat_panel(heat=graph_heat(graph), selected_id="z", graph_built_at=NOW)
 
-    assert "12 条" in text
-    assert "34 次" in text
-    assert format_ts(NOW) in text, "什么时候跑的要说，否则'累计 34 次'没有时间坐标"
+    assert "还不在图里" in text
 
 
-def test_the_time_is_left_out_when_it_is_unknown() -> None:
-    """有计数、但**不知道上一轮什么时候跑的** → 只省掉时间那一截，不编一个时刻。
+def test_the_heat_panel_without_edges_says_so_instead_of_all_zeroes() -> None:
+    graph = make_graph({"a": [], "b": []})
 
-    这条路径是真的：事件文件与 ``last.json`` 是两份东西，后者丢了（手删、盘满、
-    换个数据目录）而库里那些计数还在。编一个时刻出来比省掉它坏得多——用户会拿那个
-    时间去对别的事。
-    """
-    text = render_heat_summary(reinforced_memories=12, total_reinforcements=34, last_run_at=None)
+    text = _heat_panel(heat=graph_heat(graph), selected_id="a", graph_built_at=NOW)
 
-    assert "12 条" in text and "34 次" in text
+    assert "还没有一条边" in text
+    assert "当前选中" not in text, "没有边就没有可比较的热度，不编一个 0.00"
+
+
+@pytest.mark.parametrize(
+    "stale,needle",
+    [(True, "之后库变过"), (None, "没有跟库比对过"), (False, None)],
+)
+def test_the_heat_panel_reports_the_graph_age_and_staleness(stale, needle) -> None:
+    graph = make_graph({"a": [("b", 0.5)], "b": [("a", 0.5)]})
+
+    text = _heat_panel(heat=graph_heat(graph), selected_id="a", graph_built_at=NOW, stale=stale)
+
+    assert format_ts(NOW) in text
+    if needle is not None:
+        assert needle in text
+
+
+def test_the_heat_panel_with_data_shows_the_consolidation_numbers() -> None:
+    """热度与巩固是两份数据：有图时两份都照实写。"""
+    graph = make_graph({"a": [("b", 0.5)], "b": [("a", 0.5)]})
+
+    text = _heat_panel(
+        heat=graph_heat(graph),
+        selected_id="a",
+        graph_built_at=NOW,
+        reinforced_memories=12,
+        total_reinforcements=34,
+        last_run_at=None,
+    )
+
+    assert "12 条被回放认出" in text and "累计 34 次" in text
     assert "最近一次" not in text
-    assert "1970" not in text, "拿不到时间时最容易出现的那个假值"
 
 
 # ── 关联图的邻居面板 ────────────────────────────────────────────────────────

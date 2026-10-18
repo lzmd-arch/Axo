@@ -45,7 +45,7 @@ from PySide6.QtWidgets import (
 
 from memcore.audit import RecallLedger
 from memcore.errors import StoreError
-from memcore.graph import GraphIndex
+from memcore.graph import GraphIndex, graph_heat
 from memcore.store import MemoryStore
 from memcore.types import MemoryItem, MemoryKind, MemorySummary, Tier
 
@@ -59,7 +59,7 @@ from ..memory.browse import (
     filter_summaries,
     kind_label,
     probe_position,
-    render_heat_summary,
+    render_heat_panel,
     render_memory_detail,
     summary_label,
     tier_label,
@@ -206,6 +206,7 @@ class MemoryWindow(QMainWindow):
         self._graph = graph
         self._graph_stale = stale
         self._refresh_association()
+        self._refresh_heat()
 
     # ── 构建界面 ────────────────────────────────────────────────────────────
 
@@ -355,11 +356,11 @@ class MemoryWindow(QMainWindow):
         column.addWidget(self.assoc_view, 0)
 
         # 「SNN 热度」，**常驻显示**——不随选中变化。它是库一级的摘要，不是某一条
-        # 记忆的属性。**判断句在纯层**（``render_heat_summary``）：这里只把三个数
+        # 记忆的属性。**判断句在纯层**（``render_heat_panel``）：这里只把三个数
         # 递过去，两态文案与"什么时候才敢写数字"都在那一侧，因此可以断言。
         self.pending_view = QTextBrowser(pane)
         self.pending_view.setObjectName("memoryPending")
-        self.pending_view.setMaximumHeight(120)
+        self.pending_view.setMaximumHeight(170)
         self._refresh_heat()
         column.addWidget(self.pending_view, 0)
         self._refresh_association()
@@ -517,6 +518,7 @@ class MemoryWindow(QMainWindow):
         self._say("")
         self._refresh_detail()
         self._refresh_association()
+        self._refresh_heat()
 
     # ── 详情 ────────────────────────────────────────────────────────────────
 
@@ -579,12 +581,17 @@ class MemoryWindow(QMainWindow):
 
         三个数各有各的来源，且**都允许拿不到**：条数与总数走一条聚合 SQL（空库是
         ``(0, 0)``），时间走 ``last.json``（没有、坏了都是 ``None``）。拿不到就说
-        "没有"，不补零、不编时间——见 ``render_heat_summary`` 的两态。
+        "没有"，不补零、不编时间——见 ``render_heat_panel`` 的两态。
         """
         reinforced, total = self._memory.reinforce_stats()
         last = last_run()
+        heat = None if self._graph is None or len(self._graph) == 0 else graph_heat(self._graph)
         self.pending_view.setPlainText(
-            render_heat_summary(
+            render_heat_panel(
+                heat=heat,
+                selected_id=self._selected_id(),
+                graph_built_at=None if self._graph is None else self._graph.built_at,
+                stale=self._graph_stale,
                 reinforced_memories=reinforced,
                 total_reinforcements=total,
                 last_run_at=None if last is None else last[0],

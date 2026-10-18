@@ -9,8 +9,9 @@
 1. **没数据就说没数据，有数据就给真数。** 这是**同一条**纪律的两面，而它们各自
    会坏在不同的方向上：
 
-   * :func:`render_heat_placeholder` 里的「未启用」占位不许出现任何像数字的东西
-     ——一个 0.87 会让它看起来像真的算过。
+   * 热度的来源是关联图 A 的逐条支撑度
+     （:func:`memcore.graph.graph_heat`）：它是**真的算出来的**；没有图或没有边时
+     就说没有，不用 0 冒充。
    * :func:`neighbor_label` 里的边权与记忆权重是**真的算出来的**，所以照实写，
      不许为了"看起来干净"换成「较强」这种词：那会丢掉"它到底多强"这个唯一能
      拿来判断的信息。
@@ -41,7 +42,7 @@ from enum import Enum
 
 from memcore import MemoryItem, MemoryKind, MemorySummary, Tier
 from memcore.audit import ChannelScores, RecallLedger
-from memcore.graph import GraphIndex
+from memcore.graph import GraphHeat, GraphIndex
 from memcore.recall import RecallConfig
 from memcore.spaces import Space
 
@@ -60,8 +61,7 @@ __all__ = [
     "kind_label",
     "neighbor_label",
     "probe_position",
-    "render_heat_placeholder",
-    "render_heat_summary",
+    "render_heat_panel",
     "render_memory_detail",
     "summary_label",
     "tier_label",
@@ -574,91 +574,97 @@ def association_header(
 
 # ── SNN 热度 ────────────────────────────────────────────────────────────────
 
-_HEAT_HEAD = (
-    "SNN 热度：未启用——它要画的是每条记忆一个「活跃度」，而这个数现在没有来源。\n"
-    "  基质已经建好了，但它一步算出来的是「哪条被激活得最强」——一个 argmax，"
-    "不是逐条分数；而且那是速率级的活动，不是在跑脉冲。\n"
-    "  现成的「活跃」信号是权重、被召回次数与巩固次数；前两项在详情面板里逐条列着，"
-    "巩固这一项看下面这行。\n"
-)
-"""那一块的开头三句，**两个分支逐字相同**。
-
-写一份常量而不是各写一遍：这三句说的是同一件事（热度图为什么还画不出来、现在能看
-的是什么），而"两个分支各写一遍"迟早会分叉成两种说法——那时同一块面板会随数据多少
-而改变它对**功能本身**的陈述，读的人只会以为其中一句是旧的。
-
-两个说法在这里是**禁词**，各自都会把读者引到错的地方：
-
-* **不许说"脉冲活跃度"。** 这块面板能给的数（``reinforce_count``）确实出自那个基质，
-  可基质算的是**速率级**的一步补全，跟脉冲没有关系。写"脉冲活跃度"会让人以为这里
-  已经有东西在发放；"能转成 ``SpikeTrain``"与"在跑脉冲"是两件事，见
-  :mod:`memcore.substrate` 的模块文档。
-* **不许说"还没建"。** 基质是建好了的，缺的是字段的形状，真实的理由见
-  :func:`render_heat_placeholder`。
-
-两个都是"混在真话里"的形状：读的人不会去核对基质建没建、跑没跑脉冲，只会顺下来
-理解成"这块还没到时候"。
-"""
+_HEAT_TITLE = "SNN 热度（关联图 A · 速率级，不是脉冲）"
 
 
-def render_heat_placeholder() -> str:
-    """「SNN 热度」那一块**什么都还没有时**的文案：没有数字，也不编一个。
-
-    **绝不做假数据。** 这一段里**不许出现任何数字**，测试直接断言这一条——一个 ``0``
-    就足以让它看起来像"算过了，就是这个值"。
-
-    **"为什么还没有"要说准。** 真实的理由是**这块面板要的那个字段不存在**：基质一步
-    算出来的是"哪条被激活得最强"，一个 argmax，没有"每条记忆一个标量"这个形状。
-
-    别把"数据源不够好"混进这句。那个源本身值不值得用是另一件事：P4a 量到的数是它在
-    目标规模上塌掉（``n=500`` → 0.2250、``n=2000`` → 0.0300，同一份实测表）。
-
-    底下那行说的是**现状**（巩固还没跑过），不是**去哪实现**——面板上不写路线图。
-    """
-    return (
-        f"{_HEAT_HEAD}"
-        "  巩固还没跑过。默认每天自动跑一次；也可以从托盘菜单或「设置 → 记忆」里现在跑一轮。\n"
-    )
+def _heat_age(built_at: float | None, stale: bool | None) -> str:
+    """图龄那句。**不知道就不编时刻。**"""
+    if built_at is None or built_at <= 0.0:
+        return "  图的建立时刻未知。"
+    age = f"  图建于 {format_ts(built_at)}。"
+    if stale is True:
+        return age + "（之后库变过；重建请去「设置 → 记忆」。）"
+    if stale is None:
+        return age + "（没有跟库比对过——库太大了；要确定就重建。）"
+    return age
 
 
-def render_heat_summary(
-    *,
+def _consolidation_line(
     reinforced_memories: int,
     total_reinforcements: int,
     last_run_at: float | None,
 ) -> str:
-    """「SNN 热度」那一块的两态渲染。
-
-    Args:
-        reinforced_memories: 库里有几条记忆的 ``reinforce_count > 0``。
-        total_reinforcements: 这些计数之和。
-        last_run_at: 上一轮跑完的时刻；不知道（没有 / 坏了）时 ``None``。
-
-    **两态的分界线是"有没有可写的数"，不是"跑没跑过"。** 三个分支：
-
-    * ``reinforced_memories <= 0`` 且 ``last_run_at is None`` → 交给
-      :func:`render_heat_placeholder`，**零数字**。
-    * ``reinforced_memories <= 0`` 但**跑过**（``last_run_at`` 有一个真时刻）→ 同样
-      零数字，但**不能说"还没跑过"**：那一轮真的跑了，只是库里要么全是新的（还没
-      进图）、要么一条都没通过探针。把这两件事说成同一句，就是在一张跑过的库上
-      说假话——而假话的代价是用户以为定时任务没生效，跑去反复点「立即巩固」。
-    * 有数 → **真数字**，包括时间。
-
-    ``last_run_at`` 为 ``None`` 而那三个数不为零（事件在、``last.json`` 被删了）时
-    **只省掉时间那一截**，不编一个时刻出来。
-    """
+    """巩固那一行。与旧的巩固摘要同一套口径。"""
     if reinforced_memories <= 0 or total_reinforcements <= 0:
         if last_run_at is None:
-            return render_heat_placeholder()
-        return (
-            f"{_HEAT_HEAD}"
-            "  巩固跑过了，但上一次一条都没被回放认出——新的还没进关联图，"
-            "或者都没通过探针。\n"
-        )
+            return (
+                "  巩固还没跑过。默认每天自动跑一次；也可以从托盘菜单或"
+                "「设置 → 记忆」里现在跑一轮。"
+            )
+        return "  巩固跑过了，但上一次一条都没被回放认出——新的还没进关联图，或者都没通过探针。"
     tail = f" · 最近一次 {format_ts(last_run_at)}" if last_run_at is not None else ""
+    return f"  巩固：{reinforced_memories} 条被回放认出，累计 {total_reinforcements} 次{tail}。"
+
+
+def _selected_heat_line(heat: GraphHeat, selected_id: str) -> str:
+    if not selected_id:
+        return "  当前未选中（选一条后显示它的热度）。"
+    value = heat.values.get(selected_id)
+    if value is None:
+        return "  当前选中：这条还不在图里（图是上次建的；重建后才会出现）。"
+    if heat.node_count <= 0:
+        return "  当前选中：图里还没有节点。"
+    above = sum(1 for other in heat.values.values() if other < value) / heat.node_count
+    filled = max(0, min(10, round(value * 10)))
+    bar = "█" * filled + "░" * (10 - filled)
+    return f"  当前选中：{value:.2f} · 高于 {above:.0%} 的记忆 {bar}"
+
+
+def render_heat_panel(
+    *,
+    heat: GraphHeat | None,
+    selected_id: str,
+    graph_built_at: float | None,
+    stale: bool | None,
+    reinforced_memories: int,
+    total_reinforcements: int,
+    last_run_at: float | None,
+) -> str:
+    """「SNN 热度」那一块的完整渲染。
+
+    热度的唯一来源是 :func:`memcore.graph.graph_heat`：关联图 A 上**每条记忆一个**
+    的支撑度（top-m 边权平方和，按全库最大值归一化）。它是**速率级**的关联强度，
+    不是脉冲——所以标题里把这句话写死，避免读者把图上的热度和"在跑脉冲"混起来。
+
+    没有图、图里没有边、或选中的那条不在图里时，**各自说各自的状态**，不拿一个
+    0 冒充"算过了"；巩固那一行是另一份真实数据（``reinforce_count`` 与
+    ``last.json``），有没有图都照实写。
+    """
+    consolidation = _consolidation_line(reinforced_memories, total_reinforcements, last_run_at)
+    if heat is None:
+        return (
+            "SNN 热度：还没有关联图——它是速率级的关联支撑度，不是脉冲。\n"
+            "  打开记忆窗口会自动建图（超过两千条需要手动重建）；"
+            "建好后这里显示每条记忆的关联热度。\n"
+            f"{consolidation}\n"
+        )
+    if heat.node_count <= 0:
+        return f"SNN 热度：图里还没有节点——它是速率级的关联支撑度，不是脉冲。\n{consolidation}\n"
+    if heat.edge_count == 0:
+        return (
+            f"{_HEAT_TITLE}\n"
+            f"  图里有 {heat.node_count} 个节点，但还没有一条边——热度无法区分；"
+            f"等库里有更多相似记忆或重建图。\n"
+            f"{_heat_age(graph_built_at, stale)}\n"
+            f"{consolidation}\n"
+        )
     return (
-        f"{_HEAT_HEAD}"
-        f"  巩固：{reinforced_memories} 条被回放认出，累计 {total_reinforcements} 次{tail}。\n"
+        f"{_HEAT_TITLE}\n"
+        f"  库内 {heat.node_count} 条：中位 {heat.median:.2f}，最高 1.00；\n"
+        f"{_selected_heat_line(heat, selected_id)}\n"
+        f"  口径：该条与 top-m 邻居的 Jaccard 边权平方和，按全库最大值归一化。\n"
+        f"{_heat_age(graph_built_at, stale)}\n"
+        f"{consolidation}\n"
     )
 
 

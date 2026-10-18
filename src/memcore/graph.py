@@ -60,7 +60,7 @@ from .errors import SDRCapacityError, StoreCorruptError
 from .sdr import ASSOC_K, encode_assoc
 from .types import SDR, MemoryItem
 
-__all__ = ["FORMAT_VERSION", "GraphConfig", "GraphIndex"]
+__all__ = ["FORMAT_VERSION", "GraphConfig", "GraphHeat", "GraphIndex", "graph_heat"]
 
 FORMAT_VERSION = 1
 """``graph.npz`` 的格式版本。**与 :data:`memcore.store.SCHEMA_VERSION` 无关**：
@@ -539,3 +539,58 @@ def _select_top_m(
     keep = (picked >= config.min_weight) & (picked > 0.0)
     nbr_idx_out[:] = np.where(keep, order, -1).astype(np.int32)
     nbr_w_out[:] = np.where(keep, picked, 0.0).astype(np.float32)
+
+
+@dataclass(frozen=True)
+class GraphHeat:
+    """关联图上的**逐条记忆**热度。**速率级，不是脉冲。**
+
+    这是「SNN 热度」面板的数据源：对每条记忆 i，把它的 ``top-m`` 出边权重的平方
+    求和（``support_i = sum_j w_ij**2``），再按全库最大值归一化到 ``[0, 1]``。
+    它衡量的是"这条记忆被它的邻居支撑得有多强"——强边比弱边贡献大，孤立节点是 0。
+    它**不是**一步补全的 argmax：每条记忆都有自己的标量，这正是面板要的形状。
+
+    **它来自关联图 A（``hash`` 档），不是 W（``idf`` 档）。** 图是窗口里已经建好/
+    载入的那一份，算它只多一次 ``edges()`` + ``bincount``，5 万条 x top-m=8 上是
+    400k 个元素，毫秒级；不需要为了面板再建一份 W。
+    """
+
+    values: dict[str, float]
+    """``memory_id -> 归一化热度``，0..1。"""
+    support: dict[str, float]
+    """``memory_id -> 原始支撑度``（边权平方和）。"""
+    node_count: int
+    edge_count: int
+    max_support: float
+    median: float
+    """归一化热度的中位数。"""
+
+
+def graph_heat(graph: GraphIndex) -> GraphHeat:
+    """算 :class:`GraphHeat`。**纯函数，无随机数。**"""
+    if len(graph) == 0:
+        return GraphHeat(
+            values={},
+            support={},
+            node_count=0,
+            edge_count=0,
+            max_support=0.0,
+            median=0.0,
+        )
+
+    rows, _targets, weights = graph.edges()
+    support = np.bincount(rows, weights=weights**2, minlength=len(graph)).astype(np.float64)
+    max_support = float(support.max()) if support.size else 0.0
+    values = support / max_support if max_support > 0.0 else np.zeros_like(support)
+    return GraphHeat(
+        values={
+            node_id: float(value) for node_id, value in zip(graph.node_ids, values, strict=True)
+        },
+        support={
+            node_id: float(value) for node_id, value in zip(graph.node_ids, support, strict=True)
+        },
+        node_count=len(graph),
+        edge_count=int(rows.size),
+        max_support=max_support,
+        median=float(np.median(values)) if values.size else 0.0,
+    )

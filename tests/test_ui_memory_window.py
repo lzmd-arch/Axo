@@ -271,7 +271,7 @@ def test_the_heat_panel_without_data_carries_no_numbers(qapp: Any, store: Memory
 
     常驻：它是库一级的摘要，不是某一条记忆的属性——列表空着的时候它照样得说得出话。
 
-    无数字：**没有可写的数就一个数字都不许有**——一个 ``0`` 会让它看起来像算过。
+    无数字：**没有图就没有热度值**——一个 ``0`` 会让它看起来像算过。
     这一条与下面那条成对，两条各管一段输入。
     """
     import re
@@ -280,7 +280,7 @@ def test_the_heat_panel_without_data_carries_no_numbers(qapp: Any, store: Memory
 
     text = window.pending_view.toPlainText()
     assert window.memory_list.count() == 0  # 库里空着，面板照常显示
-    assert "未启用" in text
+    assert "还没有关联图" in text
     assert re.search(r"\d", text) is None
 
 
@@ -302,6 +302,51 @@ def test_the_heat_panel_with_data_shows_the_real_numbers(qapp: Any, store: Memor
     assert "1 条被回放认出" in text
     assert "累计 1 次" in text
     assert "还没跑过" not in text, "库里已经加固过了，这句话就是假的"
+
+
+def test_the_heat_panel_shows_per_memory_heat_when_a_graph_is_injected(
+    qapp: Any, store: MemoryStore
+) -> None:
+    """图注入之后，面板从"还没有关联图"变成逐条热度——这是接线，不是文案。
+
+    热度的算法在纯层测；这里只证明窗口真的把图、选中项与 ``reinforce_count``
+    一起递给了渲染器。
+    """
+    from memcore.graph import GraphIndex
+
+    items = [
+        store.add(make_item("路由器放在书房书架顶层。")),
+        store.add(make_item("卧室的信号比客厅弱。")),
+        store.add(make_item("每周三晚上有游泳课。")),
+    ]
+    node_ids = tuple(sorted(item.memory_id for item in items))
+    top_m = 2
+    nbr_idx = np.full((len(node_ids), top_m), -1, dtype=np.int32)
+    nbr_w = np.zeros((len(node_ids), top_m), dtype=np.float32)
+    for row, node_id in enumerate(node_ids):
+        others = [other for other in node_ids if other != node_id]
+        for slot, target in enumerate(others):
+            nbr_idx[row, slot] = node_ids.index(target)
+            nbr_w[row, slot] = 0.5
+    graph = GraphIndex(
+        node_ids=node_ids,
+        nbr_idx=nbr_idx,
+        nbr_w=nbr_w,
+        source_digest="0" * 64,
+        built_at=1_700_000_000.0,
+        top_m=top_m,
+        min_weight=0.0,
+    )
+
+    window = make_window(qapp, store)
+    window.set_graph(graph, stale=False)
+    window.memory_list.setCurrentRow(0)
+
+    text = window.pending_view.toPlainText()
+    assert "库内 3 条" in text
+    assert "当前选中" in text
+    assert "速率级" in text
+    assert "还没有关联图" not in text
 
 
 def test_the_heat_panel_follows_a_finished_round(qapp: Any, store: MemoryStore) -> None:
