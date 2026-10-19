@@ -44,8 +44,20 @@ from typing import Any
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
-from PySide6.QtCore import QMetaObject, QObject, Qt, QThread, QTimer, QUrl, Signal, Slot
-from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequence
+from PySide6.QtCore import (
+    QBuffer,
+    QByteArray,
+    QIODevice,
+    QMetaObject,
+    QObject,
+    Qt,
+    QThread,
+    QTimer,
+    QUrl,
+    Signal,
+    Slot,
+)
+from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QImage, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -422,17 +434,6 @@ def display_rows(messages: Sequence[Message]) -> list[dict[str, Any]]:
     return rows
 
 
-#: 附件的后缀 → MIME。**附件图按原样发出去**（不做转码——那要一个图像库，而它
-#: 不该为了这件事进产物）。所以这里只认那些模型侧一定认得的类型。
-_IMAGE_MIMES = {
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".gif": "image/gif",
-    ".webp": "image/webp",
-}
-
-
 def _attachment_prompt_block(attachments: Sequence[Attachment]) -> str:
     """附件进**请求**的那一段：文件正文。
 
@@ -452,15 +453,31 @@ def _attachment_marks(attachments: Sequence[Attachment]) -> str:
     return "\n\n（附：" + "、".join(item.name for item in attachments) + "）"
 
 
-def _image_data_uri(attachment: Attachment) -> str:
-    """一张附件图 → ``data:`` URI（视觉通道收的就是这个形状）。
+def _image_base64(attachment: Attachment) -> str:
+    """一张附件图 → **不带前缀的 base64**，统一转成 PNG。
 
-    后缀认不出来时按 PNG 报：那种情况下它是"带了图但没认出来"，而报一个错的 MIME
-    比报 PNG 更糟——服务端会拿它去解码，然后拒掉整个请求。
+    **不要在这里拼 ``data:`` 前缀。** ``ChatMessage.images`` 的契约是裸 base64，
+    而 OpenAI 兼容后端会自己拼 ``data:image/png;base64,…``；这里再拼一次会变成
+    ``data:image/png;base64,data:image/jpeg;base64,…``，服务端报
+    ``Invalid base64 data``（2026-10-19 用户贴图时就是这么炸的）。
+
+    **统一转 PNG**：后端那条路把 MIME 写死成 ``image/png``，而用户拖进来的图可能
+    是 JPEG / WebP。原样送 JPEG 字节却标 PNG，解码器是否宽容取决于端点；转一次
+    是最省心的做法，代价是一次内存里的重编码。
+
+    解不开的文件返回空串：调用方会把它从这一轮的图列表里剔掉，而不是把一段坏
+    base64 送出去。
     """
-    mime = _IMAGE_MIMES.get(attachment.path.suffix.lower(), "image/png")
-    payload = base64.b64encode(attachment.path.read_bytes()).decode("ascii")
-    return f"data:{mime};base64,{payload}"
+    image = QImage(str(attachment.path))
+    if image.isNull():
+        return ""
+    payload = QByteArray()
+    buffer = QBuffer(payload)
+    if not buffer.open(QIODevice.OpenModeFlag.WriteOnly):
+        return ""
+    image.save(buffer, "PNG")
+    buffer.close()
+    return base64.b64encode(bytes(payload)).decode("ascii")
 
 
 def _sticker_stored_path(path: str) -> str:
@@ -1874,7 +1891,9 @@ class MainWindow(QMainWindow):
         # :meth:`_attach_pending_images`）。
         pending, self._pending_attachments = self._pending_attachments, ()
         self._pending_images = tuple(
-            _image_data_uri(item) for item in pending if item.kind == "image"
+            encoded
+            for encoded in (_image_base64(item) for item in pending if item.kind == "image")
+            if encoded
         )
         text_for_prompt = text + _attachment_prompt_block(pending)
         text_for_transcript = text + _attachment_marks(pending)
