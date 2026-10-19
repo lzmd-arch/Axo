@@ -502,11 +502,21 @@ def _select_top_m(
     nbr_w_out: np.ndarray,
 ) -> None:
     """在交点数上就地选出每行的 top-m 邻居，写进输出块。**全矩阵从不落地。**"""
+    # 逐块算 Jaccard，而不是一次铺满整行。``inter`` 本身已经是 `(_CHUNK, N)`，
+    # 但 float64 的除法、``maximum`` 与 ``where`` 各会再要一份同形状的临时数组——
+    # N=5e4 时那不是几百 KB，是每个 ~100 MB。按列切块后临时量只剩 `(_CHUNK, _CHUNK)`，
+    # 而每个元素的算式与整块版本逐字相同，结果逐位不变。
+    similarity = np.empty(inter.shape, dtype=np.float32)
+    for start in range(0, inter.shape[1], _CHUNK):
+        stop = min(start + _CHUNK, inter.shape[1])
+        tile = inter[:, start:stop]
+        union = cardinality[:, None] + all_cardinality[None, start:stop] - tile
+        with np.errstate(invalid="ignore", divide="ignore"):
+            similarity[:, start:stop] = np.where(
+                union > 0, tile / np.maximum(union, 1), 0.0
+            ).astype(np.float32)
     # Jaccard = |A∩B| / (|A| + |B| − |A∩B|)。对角线是"自己和自己"，分子分母都是
     # 自己的势，得到 1.0——先把它们打成 -1，免得每个节点把自己当第一名。
-    union = cardinality[:, None] + all_cardinality[None, :] - inter
-    with np.errstate(invalid="ignore", divide="ignore"):
-        similarity = np.where(union > 0, inter / np.maximum(union, 1), 0.0).astype(np.float32)
     rows = np.arange(inter.shape[0])
     similarity[rows, rows + offset] = -1.0
     # 先过权重下限，再做 top-m：低于下限的对连候选都不该是。

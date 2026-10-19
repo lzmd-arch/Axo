@@ -56,27 +56,31 @@ def _csr(entries: Iterable[tuple[str, np.ndarray, int]], width: int) -> _Csr:
     """
     ids: list[str] = []
     flat_bits: list[np.ndarray] = []
-    flat_rows: list[np.ndarray] = []
     lengths: list[int] = []
     widths: list[int] = []
     for memory_id, idx, row_width in entries:
         idx = np.asarray(idx, dtype=np.int32)
         if idx.size == 0:
             continue
-        position = len(ids)
         ids.append(str(memory_id))
         lengths.append(int(idx.size))
         widths.append(int(row_width))
         flat_bits.append(idx)
-        flat_rows.append(np.full(idx.size, position, dtype=np.int32))
     if not ids:
         return _empty_csr()
 
     bits = np.concatenate(flat_bits)
+    # 行号按长度展开，不逐条造 ``np.full``：5 万条 × 573 位时那是 2.9 万个短数组，
+    # 合起来只为了再 concatenate 一次。``np.repeat`` 一步到位，峰值少一份与
+    # ``bits`` 等大的 int32 数组。
+    del flat_bits
+    # ``bincount`` 与顺序无关，所以不必先排好再数——省掉一份 ``sorted_bits``。
+    counts = np.bincount(bits, minlength=width).astype(np.int64)
     order = np.argsort(bits, kind="stable")
-    sorted_bits = bits[order]
-    sorted_rows = np.concatenate(flat_rows)[order]
-    counts = np.bincount(sorted_bits, minlength=width).astype(np.int64)
+    del bits
+    rows = np.repeat(np.arange(len(ids), dtype=np.int32), np.asarray(lengths, dtype=np.int64))
+    sorted_rows = rows[order]
+    del rows, order
     offsets = np.concatenate([[0], np.cumsum(counts)]).astype(np.int64)
     return (
         tuple(ids),
