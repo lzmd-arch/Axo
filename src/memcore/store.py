@@ -103,7 +103,7 @@ _MAX_META_BYTES = 256 * 1024
 
 #: 词法索引的 delta 最多容纳多少条新记忆，超过就整库重建一次。
 #:
-#: 50k 条上整库构建实测约 5 s（静默机器；机器有重活并行时会到 22 s）。按每条
+#: 50k 条上整库构建实测 3.5–5 s（机器有重活并行时会到 22 s）。按每条
 #: 记忆都重建，50k 库的每一轮对话都要付一次；delta 把这个成本摊到每 512 条。
 #: 512 条 delta 的 CSR 重建是 512×573 个位，毫秒级；再大就该做一次全量合并。
 _LEX_DELTA_MAX = 512
@@ -141,8 +141,8 @@ class MemoryStore:
         self._revision = 0
         self._lex_index: LexicalIndex | None = None
         self._lex_index_revision = -1
-        #: 只串行化"建索引"这件事，**不保护库**。建 50k 索引要 22 s，如果整段
-        #: 持有 ``_lock``，界面线程的一次记忆写入会被冻住 22 s；而索引构建在
+        #: 只串行化"建索引"这件事，**不保护库**。建 50k 索引要 3.5–22 s，如果整段
+        #: 持有 ``_lock``，界面线程的一次记忆写入会被冻住同样久；而索引构建在
         #: ``fetchall`` 之后只碰 Python 对象，不需要库锁。
         self._lex_build_lock = threading.Lock()
         self._embedding_revision = 0
@@ -429,7 +429,8 @@ class MemoryStore:
     def lexical_index(self) -> LexicalIndex:
         """词法倒排索引的缓存。按 ``revision`` 失效；只读 ``lex_*`` 列。
 
-        **构建期间不持有库锁。** 50k 条上 ``LexicalIndex.build`` 实测 22.3 s；
+        **构建期间不持有库锁。** 50k 条上 ``LexicalIndex.build`` 实测 3.5 s
+        （机器有重活并行时 22.3 s）；
         如果它整段持锁，界面线程的一次 ``add`` / ``delete`` 会被冻住同样久，
         表现是"发一条消息后界面卡死"，而原因看起来在召回、其实在索引构建。
          ``fetchall`` 在锁内（游标不是线程安全的），之后只碰 Python 对象。

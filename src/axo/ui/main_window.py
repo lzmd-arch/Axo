@@ -673,7 +673,8 @@ class MainWindow(QMainWindow):
         self._agent_worker: AgentWorker | None = None
         self._prepare_thread: QThread | None = None
         self._prepare_worker: AssemblyWorker | None = None
-        #: 启动时的词法倒排预热。50k 库上那一次构建是 22.3 s（见 worker 文档）；
+        #: 启动时的词法倒排预热。50k 库上那一次构建实测 3.5 s（有重活并行时
+        #: 22.3 s，见 worker 文档）；
         #: 放在这里是为了让首轮召回不必在调用栈里等它。
         self._lexindex_thread: QThread | None = None
         self._lexindex_worker: LexicalIndexWorker | None = None
@@ -1007,6 +1008,7 @@ class MainWindow(QMainWindow):
             return
         view.set_theme(self._resolved)
         view.set_wallpaper_opacity(self._theme.wallpaper_visible)
+        view.set_motion(self._theme.motion)
         self._push_wallpaper()
 
     def _push_wallpaper(self) -> None:
