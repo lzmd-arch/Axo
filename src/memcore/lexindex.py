@@ -119,8 +119,12 @@ class LexicalIndex:
 
     @classmethod
     def build(cls, rows: Iterable[tuple[str, object, object]]) -> LexicalIndex:
-        """从 ``(memory_id, lex_idx_blob, lex_width)`` 构建。没有词法码的条目跳过。"""
-        entries: list[tuple[str, np.ndarray]] = []
+        """从 ``(memory_id, lex_idx_blob, lex_width)`` 构建。没有词法码的条目跳过。
+
+        ``lex_width`` 必须留下来：不同宽度的两套码算出来的 Jaccard 是垃圾，
+        图通道的种子分没有第二道 ``_scan`` 兜底。
+        """
+        entries: list[tuple[str, np.ndarray, int]] = []
         width = 0
         for memory_id, idx_blob, row_width in rows:
             if idx_blob is None or row_width is None:
