@@ -490,6 +490,12 @@ QListWidget#settingsCategories::item:selected {
 /* 右侧表单是一张独立的磨砂卡片：页本身不画底，极光透上来之后文字直接落在
  * 不确定的底色上；给整块加一层面板玻璃，与左侧分类列的分隔线一起读成"两栏"。
  * 圆角与内边距由各页自己的 16px 外边距提供，这里只画底和边。 */
+/* 滚动区自身不画底、不画边：卡片是里面那个 QStackedWidget 画的。 */
+QScrollArea#settingsPageScroll {
+    background: transparent;
+    border: none;
+}
+
 QStackedWidget#settingsPages {
     background: $panelGlass;
     border: 1px solid $border;

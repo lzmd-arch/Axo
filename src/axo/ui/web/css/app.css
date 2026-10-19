@@ -675,7 +675,8 @@ body.busy .msg-assistant:last-child .msg-body::after {
    （发送），而麦克风是它旁边那个动作。"我在听"由描边换成强调色来说——同一条判断
    在 Qt 外壳那边是 `kind="primary"` 只给一个按钮。 */
 #mic,
-#sticker {
+#sticker,
+#call {
   flex: 0 0 auto;
   height: 44px;
   padding: 0 14px;

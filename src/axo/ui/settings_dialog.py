@@ -54,6 +54,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QSlider,
     QSpinBox,
     QStackedWidget,
@@ -2229,7 +2230,9 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("设置")
         self.setModal(False)
         # 对话框给个固定尺寸就够，不跟着屏幕长——它不是工作区，是一张表单。
-        self.resize(720, 560)
+        # 每个页面的内容高度不同，交给滚动区去容纳，而不是让窗口被最长的
+        # 那一页撑到接近屏幕高度（之前实测会到 1062 px）。
+        self.resize(760, 640)
 
         #: ``track`` 的契约：它要往这里记账（见 :mod:`axo.ui.thread_tracking`）。
         self._live_threads: list[QThread] = []
@@ -2287,7 +2290,15 @@ class SettingsDialog(QDialog):
         self.pages.addWidget(self.proactive)
         self.pages.addWidget(self.speech)
         self.pages.addWidget(self.data)
-        body.addWidget(self.pages, 1)
+        # **页面放进滚动区**：窗口高度不再由最长的那一页决定。没有这一层时，
+        # 内容更高的页面会把 QDialog 一路撑高，在 1080p 屏上接近满高。
+        self.page_scroll = QScrollArea(self)
+        self.page_scroll.setObjectName("settingsPageScroll")
+        self.page_scroll.setWidgetResizable(True)
+        self.page_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.page_scroll.viewport().setAutoFillBackground(False)
+        self.page_scroll.setWidget(self.pages)
+        body.addWidget(self.page_scroll, 1)
         outer.addLayout(body, 1)
 
         footer = QFrame(self)
