@@ -53,7 +53,9 @@ def test_index_is_invalidated_by_writes() -> None:
     after = store.lexical_index()
 
     assert "m-new" not in before.ids
-    assert "m-new" in after.ids
+    # 新增条目先进 delta，下一次全量合并才进 ids；contains 覆盖两者。
+    assert after.contains("m-new")
+    assert "m-new" in after.delta_ids
     assert store.revision > 0
 
 
@@ -184,3 +186,92 @@ def test_build_does_not_hold_the_store_lock_and_retries_after_a_write(monkeypatc
 
     assert "m-during-build" in index.ids
     assert len(calls) == 2
+
+
+def test_add_updates_the_index_without_a_full_rebuild(monkeypatch) -> None:
+    import memcore.store as store_module
+
+    store = _store_with("上海自来水", "猫咪在窗台上")
+    store.lexical_index()
+
+    def fail(_rows):
+        raise AssertionError("新增一条记忆不该触发整库重建")
+
+    monkeypatch.setattr(store_module.LexicalIndex, "build", staticmethod(fail))
+    store.add(
+        MemoryItem(
+            memory_id="m-new",
+            kind=MemoryKind.FACT,
+            tier=Tier.RECENT,
+            content="新条目的正文",
+            created_at=1_700_000_200.0,
+            lex_sdr=encode_lexical("新条目的正文"),
+        )
+    )
+
+    updated = store.lexical_index()
+
+    assert updated.contains("m-new")
+    assert "m-new" in updated.candidates(encode_lexical("新条目的正文"), limit=10)
+
+
+def test_delta_merges_after_the_limit(monkeypatch) -> None:
+    import memcore.store as store_module
+
+    monkeypatch.setattr(store_module, "_LEX_DELTA_MAX", 2)
+    store = _store_with("基线")
+    store.lexical_index()
+    for index in range(3):
+        store.add(
+            MemoryItem(
+                memory_id=f"m-new-{index}",
+                kind=MemoryKind.FACT,
+                tier=Tier.RECENT,
+                content=f"新增条目{index}",
+                created_at=1_700_000_300.0 + index,
+                lex_sdr=encode_lexical(f"新增条目{index}"),
+            )
+        )
+
+    merged = store.lexical_index()
+
+    assert merged.delta_ids == ()
+    assert all(merged.contains(f"m-new-{index}") for index in range(3))
+
+
+def test_delete_forces_a_rebuild_without_the_item() -> None:
+    store = _store_with("上海自来水", "猫咪在窗台上")
+    store.lexical_index()
+    store.delete("m0")
+
+    index = store.lexical_index()
+
+    assert not index.contains("m0")
+    assert index.delta_ids == ()
+
+
+def test_update_forces_a_rebuild_with_the_new_code() -> None:
+    store = _store_with("上海自来水")
+    store.lexical_index()
+    item = store.get("m0")
+    assert item is not None
+
+    store.update(item.copy(content="猫咪在窗台上", lex_sdr=encode_lexical("猫咪在窗台上")))
+    index = store.lexical_index()
+
+    assert index.delta_ids == ()
+    assert index.contains("m0")
+    assert "m0" in index.candidates(encode_lexical("猫咪在窗台上"), limit=10)
+
+
+def test_delta_works_on_an_empty_base_and_can_widen_the_width() -> None:
+    empty = LexicalIndex.build([])
+    query = SDR(idx=np.asarray([1, 2], dtype=np.int32), weights=np.ones(2), width=64)
+    assert empty.candidates(query, limit=10) == ()
+
+    grown = empty.with_added("a", np.asarray([1, 5], dtype=np.int32), 64)
+    assert grown.candidates(query, limit=10) == ("a",)
+
+    wide = grown.with_added("b", np.asarray([70], dtype=np.int32), 128)
+    wide_query = SDR(idx=np.asarray([70], dtype=np.int32), weights=np.ones(1), width=128)
+    assert wide.candidates(wide_query, limit=10) == ("b",)

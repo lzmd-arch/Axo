@@ -56,6 +56,7 @@
 from __future__ import annotations
 
 import math
+from functools import lru_cache
 
 from .text import is_cjk
 
@@ -91,20 +92,12 @@ _LATIN_PER_CHAR = 0.35
 _OTHER_PER_CHAR = 1.00
 
 
-def estimate_tokens(text: str) -> int:
-    """估算一段文本占多少 token。**不含**消息模板的固定开销。
+#: 只缓存这么短的正文。召回候选是记忆正文；会话里的工具输出可能很长，把
+#: 8,192 条长文本留在全局缓存里会让内存无界增长。
+_TOKEN_CACHE_MAX_CHARS = 4096
 
-    模板开销由 :class:`axo.session.budget.TokenBudget` 按消息条数另算
-    （实测**每条消息** 5 token，整个对话另有 12 的固定底价）——它属于协议层，
-    不属于文本本身。把两者混在一个函数里，会让「这段记忆值多少 token」这个
-    可核对的问题变成一个不可分解的黑盒。
 
-    **空白不计入。** BPE 分词器会把词前的空格并进那个词自己的 token 里，单独数
-    一遍空格等于把它算两次——实测中这是英文文本上最大的一项偏差（1.43 倍）。
-
-    空串返回 0（而不是 1）：空内容在会话逐字稿里是合法状态（被中断的空回复），
-    而给它记 1 token 会让「哪些消息不占预算」这类判断失去意义。
-    """
+def _estimate_tokens_uncached(text: str) -> int:
     if not text:
         return 0
 
@@ -134,3 +127,31 @@ def estimate_tokens(text: str) -> int:
         + other * _OTHER_PER_CHAR
     )
     return max(1, int(math.ceil(total)))
+
+
+@lru_cache(maxsize=8192)
+def _estimate_tokens_cached(text: str) -> int:
+    return _estimate_tokens_uncached(text)
+
+
+def estimate_tokens(text: str) -> int:
+    """估算一段文本占多少 token。**不含**消息模板的固定开销。
+
+    模板开销由 :class:`axo.session.budget.TokenBudget` 按消息条数另算
+    （实测**每条消息** 5 token，整个对话另有 12 的固定底价）——它属于协议层，
+    不属于文本本身。把两者混在一个函数里，会让「这段记忆值多少 token」这个
+    可核对的问题变成一个不可分解的黑盒。
+
+    **空白不计入。** BPE 分词器会把词前的空格并进那个词自己的 token 里，单独数
+    一遍空格等于把它算两次——实测中这是英文文本上最大的一项偏差（1.43 倍）。
+
+    空串返回 0（而不是 1）：空内容在会话逐字稿里是合法状态（被中断的空回复），
+    而给它记 1 token 会让「哪些消息不占预算」这类判断失去意义。
+
+    **短正文按内容缓存。** 同一段记忆会在很多轮召回里反复成为候选，而它的正文
+    在两次编辑之间不变；每次重新逐字符扫一遍是纯浪费。超过
+    :data:`_TOKEN_CACHE_MAX_CHARS` 的长文本不进缓存，避免工具输出把全局缓存撑大。
+    """
+    if len(text) <= _TOKEN_CACHE_MAX_CHARS:
+        return _estimate_tokens_cached(text)
+    return _estimate_tokens_uncached(text)

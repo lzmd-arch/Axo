@@ -101,6 +101,13 @@ _DECAY_EPSILON = 1e-4
 #: 一次 UPDATE 里 ``meta_json`` 的体积上限（字节）。见 :meth:`MemoryStore.add`。
 _MAX_META_BYTES = 256 * 1024
 
+#: 词法索引的 delta 最多容纳多少条新记忆，超过就整库重建一次。
+#:
+#: 50k 条上整库构建实测约 5 s（静默机器；机器有重活并行时会到 22 s）。按每条
+#: 记忆都重建，50k 库的每一轮对话都要付一次；delta 把这个成本摊到每 512 条。
+#: 512 条 delta 的 CSR 重建是 512×573 个位，毫秒级；再大就该做一次全量合并。
+_LEX_DELTA_MAX = 512
+
 
 class MemoryStore:
     """记忆库。
@@ -274,7 +281,36 @@ class MemoryStore:
             )
             self._connection.commit()
             self._revision += 1
+            self._update_lex_index_after_add(item)
         return item
+
+    def _update_lex_index_after_add(self, item: MemoryItem) -> None:
+        """把新增条目接进当前索引；接不了就让索引失效，等下一次全量重建。
+
+        调用方必须已经持有 ``_lock`` 并完成了 ``_revision += 1``。这里只在
+        "索引恰好停在上一个 revision"时生效；否则索引本来就该重建，什么都不做。
+        """
+        index = self._lex_index
+        if index is None or self._lex_index_revision != self._revision - 1:
+            return
+        if index.contains(item.memory_id):
+            # UPSERT 覆盖了既有条目：base 里的旧词法位不能留，删掉整份索引。
+            # 编辑是低频动作，不值得为它维护 tombstone。
+            self._lex_index = None
+            self._lex_index_revision = -1
+            return
+        if item.lex_sdr is None:
+            # 新条目没有词法码。索引对既有条目仍然正确；下一轮候选路径会因为
+            # ``unencoded_count() > 0`` 退回全量扫描，所以不必重建。
+            self._lex_index_revision = self._revision
+            return
+        if len(index.delta_ids) >= _LEX_DELTA_MAX:
+            # delta 满了：停止追加，下一次 lexical_index() 做一次全量合并。
+            self._lex_index = None
+            self._lex_index_revision = -1
+            return
+        self._lex_index = index.with_added(item.memory_id, item.lex_sdr.idx, item.lex_sdr.width)
+        self._lex_index_revision = self._revision
 
     def update(self, item: MemoryItem) -> MemoryItem:
         """更新一条已存在的记忆。不存在时抛 :class:`StoreError`。
@@ -297,6 +333,9 @@ class MemoryStore:
             self._connection.commit()
             if cursor.rowcount > 0:
                 self._revision += 1
+                # 删除要维护 tombstone 才能增量；删除是低频动作，整库重建更简单。
+                self._lex_index = None
+                self._lex_index_revision = -1
             return cursor.rowcount > 0
 
     def transform(self, memory_id: str, change: Callable[[MemoryItem], MemoryItem]) -> MemoryItem:
@@ -400,7 +439,11 @@ class MemoryStore:
         with self._lex_build_lock:
             while True:
                 with self._lock:
-                    if self._lex_index is not None and self._lex_index_revision == self._revision:
+                    if (
+                        self._lex_index is not None
+                        and self._lex_index_revision == self._revision
+                        and len(self._lex_index.delta_ids) <= _LEX_DELTA_MAX
+                    ):
                         return self._lex_index
                     revision = self._revision
                     rows = self._connection.execute(
@@ -547,16 +590,17 @@ class MemoryStore:
             self._connection.commit()
             self._embedding_revision += 1
 
-    def normalized_embedding_matrix(self, space_id: str) -> tuple[list[str], np.ndarray]:
+    def normalized_embedding_matrix(self, space_id: str) -> tuple[tuple[str, ...], np.ndarray]:
         """某空间的已归一化向量矩阵，按 embedding revision 缓存。
 
         ``recall`` 每轮都要在这个矩阵上做余弦；50k×768 的每次复制 + 归一化是
-        纯浪费。缓存只在 ``set_embedding`` 之后失效。
+        纯浪费。缓存只在 ``set_embedding`` 之后失效。返回的 id 是**元组**：每轮
+        再复制 5 万个字符串到 list 里没有意义，调用方只读。
         """
         with self._lock:
             cached = self._normalized_cache.get(space_id)
             if cached is not None and cached[0] == self._embedding_revision:
-                return list(cached[1]), cached[2]
+                return cached[1], cached[2]
             ids, matrix = self.embedding_matrix(space_id)
             norms = np.linalg.norm(matrix, axis=1, keepdims=True)
             normalized = matrix / np.maximum(norms, 1e-12)
@@ -565,7 +609,7 @@ class MemoryStore:
                 tuple(ids),
                 normalized,
             )
-            return ids, normalized
+            return tuple(ids), normalized
 
     def get_embedding(self, memory_id: str, space_id: str) -> np.ndarray | None:
         with self._lock:
