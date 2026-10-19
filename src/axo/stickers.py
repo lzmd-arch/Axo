@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import shutil
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -154,18 +155,29 @@ def seed_default_stickers(dest: Path, source: Path | None = None) -> tuple[str, 
         dest.mkdir(parents=True, exist_ok=True)
     except OSError:
         return ()
+    # 资产文件名保持 ASCII（zip 归档门禁要求的），中文名写在 manifest 里；
+    # 复制进用户目录时用中文名——文件名就是模型与用户看到的名字。
+    manifest: dict[str, str] = {}
+    manifest_path = origin / "manifest.json"
+    if manifest_path.is_file():
+        with contextlib.suppress(OSError, json.JSONDecodeError):
+            loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                manifest = {str(key): str(value) for key, value in loaded.items()}
     added: list[str] = []
     for child in sorted(origin.iterdir(), key=lambda path: path.name.casefold()):
         if not child.is_file() or child.suffix.lower() not in STICKER_SUFFIXES:
             continue
-        target = dest / child.name
+        shown = manifest.get(child.name)
+        name = f"{shown}{child.suffix}" if shown else child.name
+        target = dest / name
         if target.exists():
             continue
         try:
             shutil.copy2(child, target)
         except OSError:
             continue
-        added.append(child.name)
+        added.append(name)
     with contextlib.suppress(OSError):
         marker.write_text("1", encoding="utf-8")
     return tuple(added)

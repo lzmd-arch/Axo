@@ -127,7 +127,8 @@ _MIRRORED = (
     "axo/ui/web/css/app.css",
     "axo/ui/web/js/app.js",
     "axo/ui/assets/splash/character.png",
-    "axo/ui/assets/stickers/开心.png",
+    "axo/ui/assets/stickers/happy.png",
+    "axo/ui/assets/stickers/manifest.json",
 )
 """自检第 2 条：镜像里必须有这几条（都在 ``_internal/`` 下）。
 

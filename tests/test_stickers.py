@@ -245,3 +245,16 @@ def test_add_skips_non_images_and_the_file_already_there(tmp_path: Path) -> None
 
     assert add_stickers(dest, [inside, note]) == ()
     assert sorted(path.name for path in dest.iterdir()) == ["已有.png"]
+
+
+def test_seed_uses_the_manifest_for_display_names(tmp_path: Path) -> None:
+    """资产文件名是 ASCII（zip 归档门禁），用户与模型看到的是 manifest 里的中文名。"""
+    source = tmp_path / "builtin"
+    touch(source, "happy.png")
+    (source / "manifest.json").write_text('{"happy.png": "开心"}', encoding="utf-8")
+    dest = tmp_path / "user"
+
+    added = seed_default_stickers(dest, source=source)
+
+    assert added == ("开心.png",)
+    assert [sticker.name for sticker in stickers_in(dest)] == ["开心"]
