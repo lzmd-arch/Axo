@@ -51,37 +51,37 @@
     <linearGradient id="gill0" gradientUnits="userSpaceOnUse" x1="258" y1="190" x2="150" y2="74">
       <stop offset="0" stop-color="#F5E6E8"/>
       <stop offset="0.52" stop-color="#F1DCE1"/>
-      <stop offset="0.87" stop-color="#8FF3D3" stop-opacity="0.8"/>
+      <stop offset="0.93" stop-color="#8FF3D3" stop-opacity="0.55"/>
       <stop offset="1" stop-color="#00E5A0"/>
     </linearGradient>
     <linearGradient id="gill1" gradientUnits="userSpaceOnUse" x1="258" y1="204" x2="118" y2="145">
       <stop offset="0" stop-color="#F5E6E8"/>
       <stop offset="0.52" stop-color="#F1DCE1"/>
-      <stop offset="0.87" stop-color="#8FF3D3" stop-opacity="0.8"/>
+      <stop offset="0.93" stop-color="#8FF3D3" stop-opacity="0.55"/>
       <stop offset="1" stop-color="#00E5A0"/>
     </linearGradient>
     <linearGradient id="gill2" gradientUnits="userSpaceOnUse" x1="256" y1="222" x2="142" y2="266">
       <stop offset="0" stop-color="#F5E6E8"/>
       <stop offset="0.52" stop-color="#F1DCE1"/>
-      <stop offset="0.87" stop-color="#8FF3D3" stop-opacity="0.8"/>
+      <stop offset="0.93" stop-color="#8FF3D3" stop-opacity="0.55"/>
       <stop offset="1" stop-color="#00E5A0"/>
     </linearGradient>
     <linearGradient id="gill3" gradientUnits="userSpaceOnUse" x1="342" y1="190" x2="450" y2="74">
       <stop offset="0" stop-color="#F5E6E8"/>
       <stop offset="0.52" stop-color="#F1DCE1"/>
-      <stop offset="0.87" stop-color="#8FF3D3" stop-opacity="0.8"/>
+      <stop offset="0.93" stop-color="#8FF3D3" stop-opacity="0.55"/>
       <stop offset="1" stop-color="#00E5A0"/>
     </linearGradient>
     <linearGradient id="gill4" gradientUnits="userSpaceOnUse" x1="342" y1="204" x2="482" y2="145">
       <stop offset="0" stop-color="#F5E6E8"/>
       <stop offset="0.52" stop-color="#F1DCE1"/>
-      <stop offset="0.87" stop-color="#8FF3D3" stop-opacity="0.8"/>
+      <stop offset="0.93" stop-color="#8FF3D3" stop-opacity="0.55"/>
       <stop offset="1" stop-color="#00E5A0"/>
     </linearGradient>
     <linearGradient id="gill5" gradientUnits="userSpaceOnUse" x1="344" y1="222" x2="458" y2="266">
       <stop offset="0" stop-color="#F5E6E8"/>
       <stop offset="0.52" stop-color="#F1DCE1"/>
-      <stop offset="0.87" stop-color="#8FF3D3" stop-opacity="0.8"/>
+      <stop offset="0.93" stop-color="#8FF3D3" stop-opacity="0.55"/>
       <stop offset="1" stop-color="#00E5A0"/>
     </linearGradient>
   </defs>
