@@ -164,6 +164,7 @@ from .chat_worker import ChatWorker, ModelListWorker
 from .consolidation_scheduler import MIN_DELAY_MS, ConsolidationScheduler
 from .data_move import MoveKind, MovePlan, plan_move
 from .data_root import MoveReport, discard_source, stage_move
+from .glass import AuroraBackdrop
 from .layout import plan_pane_sizes
 from .memory_window import MemoryWindow
 from .memory_worker import (
@@ -985,6 +986,9 @@ class MainWindow(QMainWindow):
         else:
             resolved = apply_theme(app, theme, os_color_scheme())
         self._resolved = resolved
+        backdrop = getattr(self, "_backdrop", None)
+        if backdrop is not None:
+            backdrop.set_accent(resolved.accent, animated=theme.motion)
         # 图标装在这里而不是 ``__init__`` 里单写一处：换主色（设置窗口的实时预览、
         # 系统明暗翻转）走的是同一个入口，装在这儿才不会有"托盘变了、标题栏还是旧
         # 色"的两处不一致。
@@ -1043,11 +1047,35 @@ class MainWindow(QMainWindow):
         """
         self._apply_theme(self._theme)
 
+    def resizeEvent(self, event: Any) -> None:  # noqa: N802 — Qt 命名
+        super().resizeEvent(event)
+        backdrop = getattr(self, "_backdrop", None)
+        if backdrop is not None and self.centralWidget() is not None:
+            backdrop.setGeometry(self.centralWidget().rect())
+
+    def showEvent(self, event: Any) -> None:  # noqa: N802
+        super().showEvent(event)
+        backdrop = getattr(self, "_backdrop", None)
+        if backdrop is not None:
+            backdrop.set_animated(self._theme.motion)
+
+    def hideEvent(self, event: Any) -> None:  # noqa: N802
+        super().hideEvent(event)
+        backdrop = getattr(self, "_backdrop", None)
+        if backdrop is not None:
+            backdrop.set_animated(False)
+
     # ── 构建界面 ────────────────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
         central = QWidget(self)
         self.setCentralWidget(central)
+        # **全局玻璃底**：顶栏、列表、输入框都半透明，底下这块极光就是"可糊的东西"。
+        # 它必须是 central 的第一个子控件并 lower()，否则会盖在内容上。
+        self._backdrop = AuroraBackdrop(central)
+        self._backdrop.setGeometry(central.rect())
+        self._backdrop.set_accent(self._resolved.accent, animated=self._theme.motion)
+        self._backdrop.lower()
         outer = QVBoxLayout(central)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)

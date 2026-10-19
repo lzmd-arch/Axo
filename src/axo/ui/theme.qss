@@ -37,9 +37,10 @@ QDialog {
  * 各画一条会得到一条夹在中间的双线。 */
 QFrame#header,
 QFrame#contextStrip {
-    background: $bgElevated;
+    /* 半透明面板：下面那层极光透上来，顶栏才与对话区的玻璃是同一套材质。 */
+    background: $panelGlass;
     border: none;
-    border-bottom: 1px solid $border;
+    border-bottom: 1px solid $glassLine;
 }
 
 /* 三个面板容器本身不画底：底色由窗口出，面板只负责排布。
@@ -104,7 +105,7 @@ QProgressBar#contextBar {
 QLineEdit,
 QComboBox,
 QSpinBox {
-    background: $bgSunken;
+    background: $panelGlassSoft;
     border: 1px solid $border;
     border-radius: 6px;
     padding: 4px 8px;
@@ -134,7 +135,7 @@ QSpinBox:disabled {
 }
 
 QTextBrowser {
-    background: $bgSunken;
+    background: $panelGlassSoft;
     border: 1px solid $border;
     border-radius: 6px;
     padding: 6px;
@@ -163,7 +164,7 @@ QLabel#memoryAssocNote {
 /* ── 列表 ──────────────────────────────────────────────────── */
 
 QListWidget {
-    background: $bgSunken;
+    background: $panelGlassSoft;
     border: 1px solid $border;
     border-radius: 6px;
     padding: 4px;
@@ -328,23 +329,28 @@ QPushButton[kind="danger"]:disabled {
     color: $fgMuted;
 }
 
+/* 顶栏那几个图标按钮与 QPushButton 同一套玻璃：它们原来落在实心顶栏上，
+ * 透明底让它们看着像"标签"而不是"按钮"。 */
 QToolButton {
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: 6px;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 $glassTop, stop:1 $glassBottom);
+    border: 1px solid $glassLine;
+    border-top-color: $glassLineTop;
+    border-bottom-color: $glassLineBottom;
+    border-radius: 10px;
     padding: 4px 8px;
     color: $fg;
 }
 
 QToolButton:hover {
-    background: $accentSoft;
-    border-color: $border;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 $glassTopHover, stop:1 $glassBottomHover);
 }
 
 QToolButton:pressed,
 QToolButton:checked {
-    background: $accentSoft;
-    border-color: $accent;
+    background: $glassPressed;
+    border-color: $glassLine;
 }
 
 QToolButton:disabled {

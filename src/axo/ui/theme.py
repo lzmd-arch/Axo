@@ -491,6 +491,11 @@ def _substitutions(resolved: Resolved) -> dict[str, str]:
         # 那类"态"用的是同一族颜色。它留着 ``glass`` 这个名字只是为了"按钮那一段
         # 只出现 $glass*"，别在别处也这么用。
         "glassPressed": tokens.bg_sunken,
+        # 面板（顶栏、列表、输入框）用的半透明底。**比按钮那组不透明得多**：
+        # 按钮只需要读出"一层玻璃"，面板下面压着的是正文与列表行——透太多，
+        # 字就落在不确定的底色上。0.76/0.72 是"能看见背后的极光，但读字不受影响"。
+        "panelGlass": rgba(tokens.bg_elevated, 0.76),
+        "panelGlassSoft": rgba(tokens.bg_sunken, 0.72),
         # 主按钮那道纵向渐变的两头。**顺序随明暗翻**：``accentHover`` 是
         # "离背景更远"的那一支，而"更远"在暗态是更亮、在亮态是更暗，所以
         # "上亮下暗"要的那一对在两种模式下正好互换。写死一个顺序的话，亮色模式下
