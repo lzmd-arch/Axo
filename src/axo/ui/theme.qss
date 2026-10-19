@@ -37,10 +37,13 @@ QDialog {
  * 各画一条会得到一条夹在中间的双线。 */
 QFrame#header,
 QFrame#contextStrip {
-    /* 半透明面板：下面那层极光透上来，顶栏才与对话区的玻璃是同一套材质。 */
-    background: $panelGlass;
+    /* 半透明面板：下面那层极光透上来，顶栏才与对话区的玻璃是同一套材质。
+       顶栏几乎全透明（只留一条亮底边），否则极光被压成一片深色。 */
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 rgba(255, 255, 255, 0.10),
+                                stop:1 rgba(255, 255, 255, 0.015));
     border: none;
-    border-bottom: 1px solid $glassLine;
+    border-bottom: 1px solid $glassLineTop;
 }
 
 /* 三个面板容器本身不画底：底色由窗口出，面板只负责排布。
@@ -333,13 +336,18 @@ QPushButton[kind="danger"]:disabled {
  * 透明底让它们看着像"标签"而不是"按钮"。 */
 QToolButton {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                                stop:0 $glassTop, stop:1 $glassBottom);
+                                stop:0 $glassTopHover, stop:1 $glassBottom);
     border: 1px solid $glassLine;
     border-top-color: $glassLineTop;
     border-bottom-color: $glassLineBottom;
     border-radius: 10px;
     padding: 4px 8px;
     color: $fg;
+}
+
+QFrame#header QToolButton {
+    border-top-color: $glassLineTop;
+    border-bottom-color: $glassLineBottom;
 }
 
 QToolButton:hover {
