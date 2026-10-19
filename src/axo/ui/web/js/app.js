@@ -520,6 +520,11 @@
       image.src = item.uri || "";
       image.alt = item.name || "表情包";
       button.appendChild(image);
+      // 图上已经印了名字；缩略图只有 ~90px 时那行字太小，这里再给一行。
+      var label = document.createElement("span");
+      label.className = "sticker-name";
+      label.textContent = item.name || "";
+      button.appendChild(label);
       button.addEventListener("click", function () {
         if (!bridge || busy || personaPending || channelDead) return;
         hideStickerPanel();
