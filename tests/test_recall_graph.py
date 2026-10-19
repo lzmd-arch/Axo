@@ -29,7 +29,7 @@ import pytest
 
 from memcore.graph import GraphConfig, GraphIndex
 from memcore.ids import new_ulid
-from memcore.recall import RecallConfig, _graph_channel, recall
+from memcore.recall import RecallConfig, _graph_channel, _prefilter_ids, recall
 from memcore.sdr import encode_lexical
 from memcore.store import MemoryStore
 from memcore.types import SDR, MemoryItem, MemoryKind, Taint, Tier
@@ -299,3 +299,21 @@ def test_seeds_come_from_the_lexical_index_not_a_full_decode(
     scores = _graph_channel(store, query_lex=encode_lexical(QUERY), graph=graph, decay=0.5)
 
     assert scores
+
+
+def test_graph_candidates_are_capped_by_spread(store: MemoryStore, monkeypatch) -> None:
+    """扩散后正分很多时，只把分最高的那批并进候选，避免并集超限回退全量扫描。"""
+    import memcore.recall as recall_module
+
+    monkeypatch.setattr(recall_module, "_GRAPH_CANDIDATE_LIMIT", 3)
+    graph_scores = {f"id{index}": float(index) for index in range(10)}
+
+    ids = _prefilter_ids(
+        store,
+        query_lex=None,
+        scores_by_id=None,
+        graph_scores=graph_scores,
+        window_ids=None,
+    )
+
+    assert ids == {"id7", "id8", "id9"}

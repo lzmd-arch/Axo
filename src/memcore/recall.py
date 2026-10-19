@@ -217,6 +217,14 @@ _PREFILTER_LIMIT = 1000
 #: 各通道候选并集的上限；超过它就退回全量扫描（时间窗很大时）。
 _CANDIDATE_UNION_LIMIT = 20000
 
+#: 图通道扩散后，最多把多少条正分节点并进候选集。
+#:
+#: 50k 真实文本放大语料上，查询与几乎全库都有词面碰撞：种子 50,000 条、扩散后
+#: 正分也 50,000 条，并集必然超过 :data:`_CANDIDATE_UNION_LIMIT` 而退回全量扫描
+#: （约 9 s）。图通道本来就只是候选来源之一；取扩散分最高的 5,000 条不改变
+#: 被扫到条目的打分，只决定"哪些条目值得扫"。
+_GRAPH_CANDIDATE_LIMIT = 5000
+
 
 @dataclass
 class _Candidate:
@@ -539,7 +547,11 @@ def _prefilter_ids(
     if window_ids is not None:
         ids.update(window_ids)
     if graph_scores is not None:
-        ids.update(memory_id for memory_id, score in graph_scores.items() if score > 0.0)
+        positive = sorted(
+            ((memory_id, score) for memory_id, score in graph_scores.items() if score > 0.0),
+            key=lambda pair: (-pair[1], pair[0]),
+        )
+        ids.update(memory_id for memory_id, _score in positive[:_GRAPH_CANDIDATE_LIMIT])
     if len(ids) > _CANDIDATE_UNION_LIMIT:
         return None
     return ids
