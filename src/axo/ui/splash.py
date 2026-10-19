@@ -64,7 +64,7 @@ _RADIUS = 26
 _SHADOW = 18
 """窗口四周留给投影的边（画在透明层里，不属于可见底板）。"""
 
-_CHARACTER_BOX = QRectF(16, 6, 372, 430)
+_CHARACTER_BOX = QRectF(28, 10, 372, 430)
 """立绘的包围盒。形象换了也不用动——按 ``KeepAspectRatio`` 装进去。"""
 
 _PREROLL_MS = 650
