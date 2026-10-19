@@ -121,6 +121,26 @@ def test_a_component_that_is_not_running_says_so() -> None:
     assert "http://speech.test:8800" in result.reason, "没说清是哪个地址——用户要去起它"
 
 
+def test_a_timeout_is_not_reported_as_not_running() -> None:
+    """**超时 ≠ 没启动。** 端口上有东西在答，只是还没合成完；说成"没连上"会让人
+    去查一个没坏的东西。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    result = _client(handler).synthesize("你好")
+
+    assert result.ok is False
+    assert "没有回话" in result.reason
+    assert "没连上" not in result.reason
+    assert "稍等" in result.reason
+
+
+def test_the_synthesis_timeout_is_long_enough_for_a_cold_start() -> None:
+    """冷启动实测 54 秒；30 秒会在第一次开口时误报。"""
+    assert RemoteSpeech().timeout >= 60
+
+
 def test_a_non_200_carries_the_status_and_the_body() -> None:
     result = _client(lambda _request: httpx.Response(500, text="引擎炸了")).synthesize("你好")
 

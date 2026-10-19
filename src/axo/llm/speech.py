@@ -32,9 +32,11 @@ from ..tts import DEFAULT_SPEECH_ENDPOINT, SpeechResult, speech_payload
 
 __all__ = ["RemoteSpeech"]
 
-_TIMEOUT_S = 30.0
-"""合成超时。**比生成宽**：克隆 TTS 第一次合成要加载参考音（几秒到十几秒），而
-卡在"正在说"上的体验比慢一点差得多；超时之后照样回一句人话。"""
+_TIMEOUT_S = 120.0
+"""合成超时。**比生成宽**：克隆 TTS 第一次合成要加载模型与参考音（实测冷启动 54 秒，
+热合成 4–21 秒），而卡在"正在说"上的体验比慢一点差得多；超时之后照样回一句人话。
+
+2026-10-19 实测：30 秒会在冷启动/上一句还没合成完时误报成「组件没连上」。"""
 
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]", "0.0.0.0"})
@@ -98,9 +100,19 @@ class RemoteSpeech:
                 trust_env=not _is_loopback(self.base_url),
             ) as client:
                 response = client.post("/v1/audio/speech", json=body)
+        except httpx.TimeoutException as exc:
+            # **超时不是"没连上"**：端口上明明有东西在答，只是还没合成完。把两者
+            # 说成一句话会让人去查一个没坏的东西。
+            return SpeechResult(
+                reason=(
+                    f"语音组件在 {self.timeout:g} 秒内没有回话（{self.base_url}）。"
+                    "可能正在加载模型，或者上一句还没合成完；稍等一下再说一遍。"
+                    f" 原始错误：{type(exc).__name__}: {exc}"
+                )
+            )
         except httpx.HTTPError as exc:
-            # httpx 的传输错误族（连接失败、超时、TLS）。**收窄到 HTTPError**：
-            # ValueError 一类的编程错误不该被说成"组件没在跑"。
+            # 连接失败、TLS 一类的传输错误。**收窄到 HTTPError**：ValueError 一类
+            # 的编程错误不该被说成"组件没在跑"。
             return SpeechResult(
                 reason=(
                     f"语音组件没连上（{self.base_url}）。它是不是没启动？"
