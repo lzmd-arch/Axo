@@ -297,6 +297,12 @@ class Theme:
     症状是"壁纸莫名其妙没了"，看不出是路径问题。
     """
     wallpaper_visible: int = WALLPAPER_VISIBLE_DEFAULT
+    motion: bool = True
+    """网页侧的动效（液态玻璃的流动、消息弹入、按钮回弹）。默认开。
+
+    关掉之后只留静态玻璃：动画在低配机/晕动/录屏时是负担，而"关不掉"比"没有"
+    更糟——同 `prefers-reduced-motion` 的理由，只是让用户能自己选。
+    """
 
     def __post_init__(self) -> None:
         if self.mode not in _MODE_CHOICES:

@@ -33,31 +33,40 @@ from .types import SDR
 __all__ = ["LexicalIndex"]
 
 
-def _empty_csr() -> tuple[tuple[str, ...], np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+_Csr = tuple[tuple[str, ...], np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+
+
+def _empty_csr() -> _Csr:
     return (
         (),
         np.zeros(0, dtype=np.int32),
         np.zeros(1, dtype=np.int64),
         np.zeros(1, dtype=np.int64),
         np.zeros(0, dtype=np.int32),
+        np.zeros(0, dtype=np.int32),
     )
 
 
-def _csr(
-    entries: Iterable[tuple[str, np.ndarray]], width: int
-) -> tuple[tuple[str, ...], np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """把 ``(memory_id, 活跃位)`` 编成 CSR：``(ids, rows, offsets, counts, lengths)``。"""
+def _csr(entries: Iterable[tuple[str, np.ndarray, int]], width: int) -> _Csr:
+    """把 ``(memory_id, 活跃位, 宽度)`` 编成 CSR。
+
+    返回 ``(ids, rows, offsets, counts, lengths, widths)``；``widths`` 是每条记忆
+    自己的表示宽度。召回必须保留它：宽度不同的两套码算出来的 Jaccard 是垃圾，
+    而它看起来会像一个正常分数（见 :func:`memcore.recall._lexical_score`）。
+    """
     ids: list[str] = []
     flat_bits: list[np.ndarray] = []
     flat_rows: list[np.ndarray] = []
     lengths: list[int] = []
-    for memory_id, idx in entries:
+    widths: list[int] = []
+    for memory_id, idx, row_width in entries:
         idx = np.asarray(idx, dtype=np.int32)
         if idx.size == 0:
             continue
         position = len(ids)
         ids.append(str(memory_id))
         lengths.append(int(idx.size))
+        widths.append(int(row_width))
         flat_bits.append(idx)
         flat_rows.append(np.full(idx.size, position, dtype=np.int32))
     if not ids:
@@ -75,6 +84,7 @@ def _csr(
         offsets,
         counts,
         np.asarray(lengths, dtype=np.int32),
+        np.asarray(widths, dtype=np.int32),
     )
 
 
@@ -90,6 +100,8 @@ class LexicalIndex:
     """每个位的文档频率；保留给调用方做稀有度判断。"""
     lengths: np.ndarray
     """每条记忆的词法活跃位数（与 ``ids`` 同序，int32）。"""
+    widths: np.ndarray
+    """每条记忆自己的表示宽度（与 ``ids`` 同序，int32）。"""
     width: int
     delta_ids: tuple[str, ...] = ()
     """还没并进 base 的新增条目，按写入顺序。"""
@@ -97,6 +109,7 @@ class LexicalIndex:
     delta_offsets: np.ndarray = field(default_factory=lambda: np.zeros(1, dtype=np.int64))
     delta_counts: np.ndarray = field(default_factory=lambda: np.zeros(1, dtype=np.int64))
     delta_lengths: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.int32))
+    delta_widths: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.int32))
     delta_bits: tuple[np.ndarray, ...] = ()
     """与 ``delta_ids`` 同序的活跃位；只用于下一次 ``with_added`` 时重建 delta CSR。"""
 
@@ -112,14 +125,15 @@ class LexicalIndex:
             if idx.size == 0:
                 continue
             width = max(width, int(row_width))
-            entries.append((str(memory_id), idx))
-        ids, flat_rows, offsets, counts, lengths = _csr(entries, width)
+            entries.append((str(memory_id), idx, int(row_width)))
+        ids, flat_rows, offsets, counts, lengths, widths = _csr(entries, width)
         return cls(
             ids=ids,
             rows=flat_rows,
             offsets=offsets,
             counts=counts,
             lengths=lengths,
+            widths=widths,
             width=max(1, width),
         )
 
@@ -137,13 +151,22 @@ class LexicalIndex:
         if idx.size == 0:
             return self
         entries = [
-            (existing_id, bits)
-            for existing_id, bits in zip(self.delta_ids, self.delta_bits, strict=True)
+            (existing_id, bits, entry_width)
+            for existing_id, bits, entry_width in zip(
+                self.delta_ids, self.delta_bits, self.delta_widths, strict=True
+            )
             if existing_id != memory_id
         ]
-        entries.append((str(memory_id), idx))
+        entries.append((str(memory_id), idx, int(width)))
         new_width = max(self.width, int(width))
-        delta_ids, delta_rows, delta_offsets, delta_counts, delta_lengths = _csr(entries, new_width)
+        (
+            delta_ids,
+            delta_rows,
+            delta_offsets,
+            delta_counts,
+            delta_lengths,
+            delta_widths,
+        ) = _csr(entries, new_width)
         return replace(
             self,
             width=new_width,
@@ -152,19 +175,16 @@ class LexicalIndex:
             delta_offsets=delta_offsets,
             delta_counts=delta_counts,
             delta_lengths=delta_lengths,
-            delta_bits=tuple(bits for _memory_id, bits in entries),
+            delta_widths=delta_widths,
+            delta_bits=tuple(bits for _memory_id, bits, _width in entries),
         )
 
-    def candidates(self, query: SDR, *, limit: int) -> tuple[str, ...]:
-        """按精确 Jaccard 取前 ``limit`` 条词法候选。
-
-        只返回与查询至少共享一个位的条目——Jaccard 为 0 的条目本来就不可能被
-        词法通道选中，放进候选只会增加扫描成本。
-        """
+    def _touched(self, query: SDR) -> tuple[np.ndarray, np.ndarray]:
+        """返回与查询共享位、且宽度一致的条目：``(位置, Jaccard 分)``。"""
         base_size = len(self.ids)
         total = base_size + len(self.delta_ids)
-        if limit <= 0 or total == 0 or query.k == 0:
-            return ()
+        if total == 0 or query.k == 0:
+            return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.float64)
 
         # 所有共享位的 postings 一次 concatenate 再 bincount：比逐位 ``np.add.at``
         # 快一个量级，而这里每个查询本来就要扫 5 万×数百个 posting。delta 的行号
@@ -181,28 +201,76 @@ class LexicalIndex:
                 if stop > start:
                     postings.append(self.delta_rows[start:stop] + base_size)
         if not postings:
-            return ()
+            return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.float64)
 
         intersection = np.bincount(np.concatenate(postings), minlength=total).astype(np.int64)
         touched = np.flatnonzero(intersection)
         if touched.size == 0:
-            return ()
+            return touched, np.zeros(0, dtype=np.float64)
+
         inter = intersection[touched]
         lengths = np.empty(touched.size, dtype=np.int32)
+        widths = np.empty(touched.size, dtype=np.int32)
         in_base = touched < base_size
         if in_base.any():
             lengths[in_base] = self.lengths[touched[in_base]]
+            widths[in_base] = self.widths[touched[in_base]]
         if (~in_base).any():
-            lengths[~in_base] = self.delta_lengths[touched[~in_base] - base_size]
+            delta_positions = touched[~in_base] - base_size
+            lengths[~in_base] = self.delta_lengths[delta_positions]
+            widths[~in_base] = self.delta_widths[delta_positions]
+
+        # 宽度不同的两套码不能算相似度。候选路径原先靠 ``_scan`` 再拦一次，
+        # 但图通道的种子分只看这里，必须在源头就挡掉。
+        compatible = widths == query.width
+        if not compatible.all():
+            touched = touched[compatible]
+            inter = inter[compatible]
+            lengths = lengths[compatible]
+        if touched.size == 0:
+            return touched, np.zeros(0, dtype=np.float64)
+
         union = query.k + lengths - inter
-        score = inter / np.maximum(union, 1)
+        return touched, inter / np.maximum(union, 1)
+
+    def candidates(self, query: SDR, *, limit: int) -> tuple[str, ...]:
+        """按精确 Jaccard 取前 ``limit`` 条词法候选。
+
+        只返回与查询至少共享一个位的条目——Jaccard 为 0 的条目本来就不可能被
+        词法通道选中，放进候选只会增加扫描成本。
+        """
+        if limit <= 0:
+            return ()
+        touched, score = self._touched(query)
+        if touched.size == 0:
+            return ()
 
         # 同分按位置稳定排序：候选集合必须可复现，否则相同输入在两次运行里会
         # 给出不同的 top-k，预算边缘的条目忽进忽出。
         order = np.lexsort((touched, -score))[:limit]
+        base_size = len(self.ids)
         return tuple(
             self.ids[int(position)]
             if int(position) < base_size
             else self.delta_ids[int(position) - base_size]
             for position in touched[order]
         )
+
+    def scores(self, query: SDR) -> dict[str, float]:
+        """每条与查询共享位、且宽度一致的记忆的 Jaccard 分。
+
+        图通道的种子分只需要这个字典；不要为了它再 ``iter_items()`` 解码一遍
+        全库 SDR——50k 上那是数秒，而这里是一次 posting 扫描。
+        """
+        touched, score = self._touched(query)
+        if touched.size == 0:
+            return {}
+        base_size = len(self.ids)
+        return {
+            (
+                self.ids[int(position)]
+                if int(position) < base_size
+                else self.delta_ids[int(position) - base_size]
+            ): float(value)
+            for position, value in zip(touched, score, strict=True)
+        }

@@ -305,6 +305,19 @@ class AppearancePage(QWidget):
                 f"而消息是铺满整个对话区滚动的——没有哪一块是可以不看的。"
             )
         )
+
+        outer.addWidget(_section("动效"))
+        self.motion_box = QCheckBox("界面动效（液态玻璃流动、消息弹入、按钮回弹）", self)
+        self.motion_box.setObjectName("appearanceMotionBox")
+        self.motion_box.setChecked(self._theme.motion)
+        self.motion_box.toggled.connect(self._on_motion_changed)
+        outer.addWidget(self.motion_box)
+        outer.addWidget(
+            _hint(
+                "关掉之后只保留静态玻璃：壁纸、磨砂、层次都还在，只是不再有流动与弹入。"
+                "系统开了「减少动态效果」时这里也会自动按关处理。"
+            )
+        )
         outer.addStretch(1)
 
     # ── 状态进出 ────────────────────────────────────────────────────────────
@@ -347,6 +360,7 @@ class AppearancePage(QWidget):
             for button in self._mode_group.buttons():
                 button.setChecked(button.property("modeValue") == self._theme.mode)
             self.visible_slider.setValue(self._theme.wallpaper_visible)
+            self.motion_box.setChecked(self._theme.motion)
         finally:
             self._syncing = False
 
@@ -375,6 +389,7 @@ class AppearancePage(QWidget):
             "mode": self._theme.mode,
             "wallpaper": self._theme.wallpaper,
             "wallpaper_visible": self._theme.wallpaper_visible,
+            "motion": self._theme.motion,
         }
         fields.update(changes)
         theme = Theme(**fields)
@@ -516,6 +531,9 @@ class AppearancePage(QWidget):
     def _on_visible_changed(self, value: int) -> None:
         self.visible_value.setText(f"{value}%")
         self._replace(wallpaper_visible=value)
+
+    def _on_motion_changed(self, checked: bool) -> None:
+        self._replace(motion=bool(checked))
 
 
 class BackendPage(QWidget):

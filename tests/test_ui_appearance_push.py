@@ -51,6 +51,9 @@ class Recorder:
     def set_wallpaper_opacity(self, percent: int) -> None:
         self.calls.append(f"setWallpaperOpacity({percent})")
 
+    def set_motion(self, enabled: bool) -> None:
+        self.calls.append(f"setMotion({enabled})")
+
     def set_wallpaper(self, path: str | None) -> None:
         self.calls.append(f"setWallpaper({path!r})")
 
@@ -85,8 +88,9 @@ def test_the_push_sends_theme_opacity_and_wallpaper() -> None:
     assert stub.chat_view.calls == [
         "setTheme",
         f"setWallpaperOpacity({stub._theme.wallpaper_visible})",
+        f"setMotion({stub._theme.motion})",
         "setWallpaper(None)",
-    ], "三件里少一件，网页侧就有一块停在 CSS 默认值上"
+    ], "四件里少一件，网页侧就有一块停在 CSS 默认值上"
 
 
 def _calls_in_build_ui() -> list[str]:

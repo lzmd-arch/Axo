@@ -1976,3 +1976,20 @@ def test_the_proactive_tool_switch_and_city(qapp, data_root) -> None:
 
     dialog.proactive.revert()
     assert dialog.proactive.current() == ProactiveSettings()
+
+
+def test_the_motion_switch_turns_off_the_animations(qapp, data_root) -> None:
+    """动效是外观页的一格；关掉发出的是完整 Theme，且能撤销。"""
+
+    dialog = _dialog()
+    seen: list[Theme] = []
+    dialog.theme_changed.connect(seen.append)
+
+    assert dialog.appearance.motion_box.isChecked(), "默认开"
+
+    dialog.appearance.motion_box.setChecked(False)
+
+    assert seen[-1].motion is False
+
+    dialog.appearance._replace(motion=True)  # noqa: SLF001 — 测试直接走同一个入口
+    assert seen[-1].motion is True

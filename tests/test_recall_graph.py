@@ -284,3 +284,18 @@ def test_a_zero_weight_says_nothing_about_the_channel(
     ledger = _run(store, graph=graph, weight=0.0)
 
     assert not any("联想" in note for note in ledger.notes), ledger.notes
+
+
+def test_seeds_come_from_the_lexical_index_not_a_full_decode(
+    store: MemoryStore, graph: GraphIndex, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """图通道的种子分不该再遍历全库、解码每条 SDR。"""
+
+    def fail():
+        raise AssertionError("图通道不该调用 iter_items()")
+
+    monkeypatch.setattr(store, "iter_items", fail)
+
+    scores = _graph_channel(store, query_lex=encode_lexical(QUERY), graph=graph, decay=0.5)
+
+    assert scores

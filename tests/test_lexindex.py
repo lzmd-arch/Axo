@@ -275,3 +275,32 @@ def test_delta_works_on_an_empty_base_and_can_widen_the_width() -> None:
     wide = grown.with_added("b", np.asarray([70], dtype=np.int32), 128)
     wide_query = SDR(idx=np.asarray([70], dtype=np.int32), weights=np.ones(1), width=128)
     assert wide.candidates(wide_query, limit=10) == ("b",)
+
+
+def test_scores_match_sdr_jaccard_for_every_memory() -> None:
+    store = _store_with("上海自来水来自海上", "上海的路由器", "猫咪在窗台上")
+    index = store.lexical_index()
+    query = encode_lexical("上海 路由器")
+
+    scores = index.scores(query)
+
+    for item in store.iter_items():
+        expected = item.lex_sdr.jaccard(query)
+        assert scores.get(item.memory_id, 0.0) == expected
+
+
+def test_scores_skip_representations_with_a_different_width() -> None:
+    width = 128
+
+    def blob(bits: list[int]) -> bytes:
+        return np.asarray(bits, dtype=np.int32).tobytes()
+
+    index = LexicalIndex.build(
+        [
+            ("same", blob([1, 2, 3]), width),
+            ("other", blob([1, 2, 3]), width + 1),
+        ]
+    )
+    query = SDR(idx=np.asarray([1, 2], dtype=np.int32), weights=np.ones(2), width=width)
+
+    assert index.scores(query) == {"same": 2 / 3}

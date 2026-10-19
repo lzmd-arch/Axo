@@ -489,25 +489,20 @@ def _graph_channel(
     沾边），过滤是**候选池**的事、发生在 :func:`_scan`。副作用是"本会话刚说的话"也能
     当种子把邻居拉进来——这在联想语义下正是想要的效果。这是个**显式决定**。
 
-    代价：这一趟是**第二次** ``store.iter_items()``（它解码 SDR）。权重为 0 时
-    :func:`recall` 连调都不调它，所以关着开关的人付不到这个代价。
+    **种子分走词法倒排索引，不再 ``iter_items()``。** 旧实现为了拿每个图节点的
+    Jaccard 会把全库记忆的 SDR 解码一遍；50k 上那是数秒，而候选路径早就有同一套
+    位索引。``LexicalIndex.scores`` 用一次 posting 扫描给出同样的分，并且保留
+    "宽度不同不给种子"的守卫。权重为 0 时 :func:`recall` 仍然连调都不调它。
     """
     if graph is None or query_lex is None or len(graph) == 0:
         return None
 
-    lex_of: dict[str, SDR] = {}
-    for item in store.iter_items():
-        if item.lex_sdr is not None:
-            lex_of[item.memory_id] = item.lex_sdr
-
+    # 宽度对不上的节点**不给种子**：两套不可比的表示算出来的 Jaccard 是垃圾，
+    # 而它会以"看起来正常"的分数混进扩散（照 _lexical_score 的同一口径）。
+    lex_scores = store.lexical_index().scores(query_lex)
     base = np.zeros(len(graph), dtype=np.float64)
     for row, node_id in enumerate(graph.node_ids):
-        source = lex_of.get(node_id)
-        # 宽度对不上的节点**不给种子**：两套不可比的表示算出来的 Jaccard 是垃圾，
-        # 而它会以"看起来正常"的分数混进扩散（照 _lexical_score 的同一口径）。
-        if source is None or source.width != query_lex.width:
-            continue
-        base[row] = source.jaccard(query_lex)
+        base[row] = lex_scores.get(node_id, 0.0)
 
     spread = graph.diffuse(base, decay=decay)
     return {

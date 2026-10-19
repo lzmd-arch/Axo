@@ -66,6 +66,7 @@ _K_ACCENT = f"{_NS}/accent"
 _K_MODE = f"{_NS}/mode"
 _K_WALLPAPER = f"{_NS}/wallpaper"
 _K_VISIBLE = f"{_NS}/wallpaper_visible"
+_K_MOTION = f"{_NS}/motion"
 
 _K_BACKEND_HOST = "backend/host"
 _K_ALLOW_REMOTE = "backend/allow_remote"
@@ -468,6 +469,7 @@ class SettingsStore:
             wallpaper_visible=clamp_wallpaper_visible(
                 self._backend.value(_K_VISIBLE, DEFAULT_THEME.wallpaper_visible)
             ),
+            motion=_as_bool(self._backend.value(_K_MOTION, True), True),
         )
 
     def save(self, theme: Theme) -> None:
@@ -477,6 +479,7 @@ class SettingsStore:
         self._backend.setValue(_K_MODE, theme.mode)
         self._backend.setValue(_K_WALLPAPER, theme.wallpaper)
         self._backend.setValue(_K_VISIBLE, int(theme.wallpaper_visible))
+        self._backend.setValue(_K_MOTION, bool(theme.motion))
 
     # ── 后端 ────────────────────────────────────────────────────────────────
 

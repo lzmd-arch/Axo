@@ -34,6 +34,7 @@ JS 与 Python 的契约（两边都是**只增不改**，否则旧前端会静�
                     window.ChatHost.setCallState(state, meta)        off|listening|capturing|thinking|speaking|error
                     window.ChatHost.setCallLevel(level)              0–100
                     window.ChatHost.setCallPartial(text)             只显示，永不提交
+                    window.ChatHost.setMotion(on)                    动效开关（false = 只留静态玻璃）
                     window.ChatHost.appendToolConfirm(call_id, name, summary, meta)
                     window.ChatHost.resolveToolConfirm(call_id, granted, accepted)
 
@@ -346,6 +347,7 @@ class ChatView(QWidget):
         self._theme: dict[str, str] = {}
         self._wallpaper: str = ""
         self._wallpaper_opacity: int = -1  # -1 = 还没设过，别推
+        self._motion: bool = True
 
         #: 人设卡片的当前状态，**同样是缓存 + 重推**。这里比外观那三项更要紧：
         #: 网页侧的输入框在"正等人设"期间是禁用的，推送丢了就是输入框点不动，
@@ -405,6 +407,7 @@ class ChatView(QWidget):
             self._call("setTheme", self._theme)
         if self._wallpaper_opacity >= 0:
             self._call("setWallpaperOpacity", self._wallpaper_opacity)
+        self._call("setMotion", self._motion)
         if self._wallpaper:
             self._call("setWallpaper", self._wallpaper)
         # 人设卡片排最后：asking 时它会抢焦点（focus 到那个输入框），排在
@@ -503,6 +506,11 @@ class ChatView(QWidget):
         """
         self._wallpaper = path or ""
         self._call("setWallpaper", self._wallpaper)
+
+    def set_motion(self, enabled: bool) -> None:
+        """网页动效开关。静态玻璃仍然保留，只是不再流动/回弹/弹入。"""
+        self._motion = bool(enabled)
+        self._call("setMotion", self._motion)
 
     def set_wallpaper_opacity(self, percent: int) -> None:
         """壁纸可见度，0–100。与 :attr:`~axo.ui.theme.Theme.wallpaper_visible`

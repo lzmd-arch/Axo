@@ -367,6 +367,11 @@
       statusLabel.textContent = text || "";
     },
 
+    setMotion: function (enabled) {
+      // 只翻一个 class：CSS 里 body.no-motion 把动画与过渡停掉，玻璃本身不动。
+      document.body.classList.toggle("no-motion", !enabled);
+    },
+
     setVoiceState: function (state) {
       voiceState = state || "";
       updateComposer();

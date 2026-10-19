@@ -1133,3 +1133,16 @@ def test_proactive_tool_turns_default_on_and_keep_the_city() -> None:
     loaded = store.load_proactive()
     assert loaded.allow_tools is False
     assert loaded.weather_city == "杭州"
+
+
+def test_motion_is_on_by_default_and_roundtrips() -> None:
+    """界面动效默认开；关掉之后存得住，下次启动还是关。"""
+    from axo.ui.theme import Theme
+
+    assert SettingsStore(FakeBackend()).load().motion is True
+
+    store = SettingsStore(FakeBackend())
+    store.save(Theme(motion=False))
+    assert store.load().motion is False
+
+    assert SettingsStore(FakeBackend({"appearance/motion": "false"})).load().motion is False
