@@ -220,6 +220,34 @@ def main(argv: list[str] | None = None) -> int:
     # ``aboutToQuit`` 三条路都汇进去，而它是幂等的。
     app.setQuitOnLastWindowClosed(False)
 
+    # ── 开屏：在记忆库与主窗口之前 ─────────────────────────────────────────
+    #
+    # 主窗口的构造是同步的（本机实测 ~0.6 s，库大或组件探活时会到 1–2 s），
+    # 期间事件循环不转。先把它放出来，用户看到的就不是一片空桌面。
+    #
+    # **主题要在 MainWindow 之前读一遍。** 主窗口构造函数里的
+    # ``_apply_theme`` 是应用级样式表的唯一入口，但开屏要赶在它之前画；两处
+    # 读的是同一个 ``QSettings``、同一份 ``SettingsStore.load()``，所以颜色
+    # 不会分叉。隔离模式与 ``AXO_NO_SPLASH`` 由 :func:`splash_enabled` 判。
+    from .splash import splash_enabled
+
+    settings = make_settings()
+    splash = None
+    if splash_enabled():
+        from .settings_store import SettingsStore
+        from .splash import SplashScreen
+        from .theme import resolve
+        from .theme_qt import QSettingsBackend, os_color_scheme
+
+        theme_now = SettingsStore(QSettingsBackend(settings)).load()
+        splash = SplashScreen(theme=theme_now, resolved=resolve(theme_now, os_color_scheme()))
+        # 与 ``main_window`` 同一个理由：没有别的引用时，顶层窗口会被 GC
+        # 并连带销毁原生窗口——表现是"开屏一闪就不见了"。
+        app.splash = splash  # type: ignore[attr-defined]
+        splash.show()
+        app.processEvents()
+        splash.pre_roll()
+
     # ── 记忆放在哪：**必须在建 MainWindow 之前** ────────────────────────────
     # 那个窗口一建好，四个 store 加一张图就把 ``paths`` 现算出来的路径焊死了
     # （见 main_window.py 里那几行）。而"位置"住在注册表里、读它要 Qt，所以这件事
@@ -229,15 +257,30 @@ def main(argv: list[str] | None = None) -> int:
     # 不存在"搬到一半、库还开着"那种状态。
     from .data_root import boot_data_root
 
-    move_report = boot_data_root(make_settings())
+    if splash is not None:
+        splash.set_stage("正在打开记忆库…")
+        app.processEvents()
+    move_report = boot_data_root(settings)
 
     from .main_window import MainWindow  # 推迟到 QApplication 之后
 
-    window = MainWindow()
+    if splash is not None:
+        splash.set_stage("正在准备界面…")
+        app.processEvents()
+    try:
+        window = MainWindow()
+    except BaseException:
+        # 构造失败时开屏不能留在屏幕上挡住 traceback 所在的桌面。
+        if splash is not None:
+            splash.close()
+        raise
     # 保持引用。父级为 None 的顶层窗口在 Python 侧如果没有别的引用，会被 GC 掉
     # 并连带销毁原生窗口——表现为"窗口一闪而过"。挂在 app 上是最省事的锚点。
     app.main_window = window  # type: ignore[attr-defined]
     window.show()
+    if splash is not None:
+        splash.set_stage("就绪")
+        splash.finish()
     # **在 show() 之后说。** 搬迁的结果要有个父窗口才弹得出来，而在建窗口之前既没有
     # 地方说、抛异常又等于"程序打不开"。这一步可能弹一个对话框问"旧的那份删不删"，
     # 所以不能塞进 MainWindow 的构造函数里——那会让它出现在主窗口之前。

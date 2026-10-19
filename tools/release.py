@@ -35,6 +35,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 PYPROJECT = ROOT / "pyproject.toml"
+PACKAGE_INIT = ROOT / "src" / "axo" / "__init__.py"
+"""``axo.__version__`` 的家。
+
+**它必须与 pyproject 一起改。** 窗口标题、开屏与 Qt 的 applicationVersion 读的是
+这里，而安装包/仓库标签读的是 pyproject——只改一处时程序会自称旧版本，看起来像
+"升级没成功"，但没有任何一步会报错。
+"""
 
 #: 只扫这些后缀——二进制里搜字符串既慢又没意义（要查二进制得换工具）。
 TEXT_EXT = (
@@ -198,7 +205,14 @@ def bump(version: str) -> None:
     revised = re.sub(r'^version = "[^"]+"', f'version = "{version}"', text, count=1, flags=re.M)
     if revised == text:
         raise SystemExit(f"pyproject.toml 里的版本已经是 {version}？")
+    init_text = PACKAGE_INIT.read_text(encoding="utf-8")
+    init_revised, count = re.subn(
+        r'^__version__ = "[^"]+"', f'__version__ = "{version}"', init_text, count=1, flags=re.M
+    )
+    if count != 1:
+        raise SystemExit("src/axo/__init__.py 里找不到 __version__。")
     PYPROJECT.write_text(revised, encoding="utf-8", newline="\n")
+    PACKAGE_INIT.write_text(init_revised, encoding="utf-8", newline="\n")
     print(f"版本 {current_version()} → {version}")
 
 

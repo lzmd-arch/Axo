@@ -429,3 +429,29 @@ def test_torch_never_enters_this_repository() -> None:
             f"pyproject.toml 的依赖里出现了 {banned}——PyTorch 不进本仓（见那条纪律）；"
             "语音引擎是独立组件，Axo 只带调用端"
         )
+
+
+def test_package_version_matches_pyproject() -> None:
+    """``axo.__version__`` 必须与 ``pyproject.toml`` 一致。
+
+    两处漂移时，``app.setApplicationVersion`` 与开屏读的是前者、安装包与仓库
+    标签读的是后者：程序会自称旧版本，看起来像"升级没成功"，而没有任何一步会
+    报错。发版脚本的 ``bump()`` 同时改两处，这条测试守的是"有人手改了其中一处"。
+    """
+    declared = re.search(
+        r'^version = "([^"]+)"',
+        (_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"),
+        re.M,
+    )
+    assert declared is not None
+    tree = ast.parse((_REPO_ROOT / "src" / "axo" / "__init__.py").read_text(encoding="utf-8"))
+    values = [
+        node.value.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and isinstance(node.value, ast.Constant)
+        and any(
+            isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets
+        )
+    ]
+    assert values == [declared.group(1)]

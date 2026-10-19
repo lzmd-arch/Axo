@@ -97,6 +97,7 @@ DATAS = (
     ("src/axo/ui/theme.qss", "axo/ui"),
     ("src/axo/ui/axo-icon.png", "axo/ui"),
     ("src/axo/ui/web", "axo/ui/web"),
+    ("src/axo/ui/assets", "axo/ui/assets"),
 )
 """要带进镜像的**非 ``.py`` 资产**（本仓的非 Python 资产就这些）。
 
@@ -125,8 +126,9 @@ _MIRRORED = (
     "axo/ui/web/index.html",
     "axo/ui/web/css/app.css",
     "axo/ui/web/js/app.js",
+    "axo/ui/assets/splash/character.png",
 )
-"""自检第 2 条：镜像里必须有这四个（都在 ``_internal/`` 下）。
+"""自检第 2 条：镜像里必须有这几条（都在 ``_internal/`` 下）。
 
 只抽这四条而不是把 ``web/`` 整个列一遍：这四条各自代表一处 ``Path(__file__)`` 读取
 （qss 一处、网页三处不同目录），列全了只是把 ``DATAS`` 抄第二遍。
