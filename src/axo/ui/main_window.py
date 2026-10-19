@@ -1268,6 +1268,10 @@ class MainWindow(QMainWindow):
 
         self.session_list = QListWidget(pane)
         self.session_list.setObjectName("sessionList")
+        # 标题由 delegate 自己省略（见 widgets.SessionItemDelegate），但列表仍会按
+        # ``DisplayRole`` 里的全文去算横向范围——长标题于是凭空多出一条横向滚动条。
+        # 它没有可滚的内容，只是把列表底边顶掉一行。
+        self.session_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         # 两行式（标题 + 时间）。**自绘 delegate，不用 setItemWidget**——后者会把
         # 每行变成真实子控件，于是选择点击被吃掉、选中高亮要自己画、
         # `currentItemChanged` 的语义也变得可疑。delegate 只改"怎么画"。

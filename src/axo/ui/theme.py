@@ -496,6 +496,10 @@ def _substitutions(resolved: Resolved) -> dict[str, str]:
         # 字就落在不确定的底色上。0.76/0.72 是"能看见背后的极光，但读字不受影响"。
         "panelGlass": rgba(tokens.bg_elevated, 0.30),
         "panelGlassSoft": rgba(tokens.bg_sunken, 0.42),
+        # 滚动条滑块。与网页那一侧同一组 alpha（``app.css`` 里 18% / 30%）：两
+        # 套渲染引擎没有共享变量的办法，只能把这两个数写在两处并各配一条断言。
+        "scrollThumb": rgba(tokens.fg, 0.18),
+        "scrollThumbHover": rgba(tokens.fg, 0.30),
         # 主按钮那道纵向渐变的两头。**顺序随明暗翻**：``accentHover`` 是
         # "离背景更远"的那一支，而"更远"在暗态是更亮、在亮态是更暗，所以
         # "上亮下暗"要的那一对在两种模式下正好互换。写死一个顺序的话，亮色模式下

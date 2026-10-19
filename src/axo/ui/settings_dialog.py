@@ -2267,6 +2267,8 @@ class SettingsDialog(QDialog):
         body.addWidget(self.categories)
 
         self.pages = QStackedWidget(self)
+        # 样式表的挂载点：页本身透明，右边这块是一张压在极光上的磨砂卡片。
+        self.pages.setObjectName("settingsPages")
         self.appearance = AppearancePage(self)
         self.persona = PersonaPage(self)
         self.backend = BackendPage(self)

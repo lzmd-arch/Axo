@@ -105,6 +105,29 @@ def test_the_list_shows_every_entry(qapp: Any, store: MemoryStore) -> None:
     assert window.memory_list.count() == store.count()
 
 
+def test_lists_never_grow_a_horizontal_scrollbar(qapp: Any, store: MemoryStore) -> None:
+    """长 URL / 长英文串不该把列表底边顶出一条横向滚动条。
+
+    列表是纵向浏览的；横向那条没有可滚的内容，只会挤掉一行高度。
+    """
+    from PySide6.QtCore import Qt
+
+    window = make_window(qapp, store)
+
+    off = Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert window.memory_list.horizontalScrollBarPolicy() == off
+    assert window.assoc_view.horizontalScrollBarPolicy() == off
+
+
+def test_only_the_irreversible_action_is_marked_danger(qapp: Any, store: MemoryStore) -> None:
+    """四个动作里只有「彻底删除」不可撤销，样式表按 ``kind`` 给它告警色。"""
+    window = make_window(qapp, store)
+
+    assert window.delete_button.property("kind") == "danger"
+    assert window.forget_button.property("kind") is None
+    assert window.restore_button.property("kind") is None
+
+
 def test_the_list_is_newest_first(qapp: Any, store: MemoryStore) -> None:
     """``summaries()`` 按 ``memory_id DESC``——ULID 单调，所以最新在前。"""
     first = store.add(make_item("先写的。"))

@@ -190,6 +190,18 @@ QListWidget::item:selected {
     color: $fgStrong;
 }
 
+/* 记忆列表是**多行文本**，换行之后相邻两条的边界只剩那 6px 内边距，扫读时很难
+ * 分出"这一条到哪结束"。通用列表只有单行，不需要这条；这里补一条分隔线。 */
+QListWidget#memoryList::item {
+    padding: 7px 8px;
+    border-bottom: 1px solid $border;
+}
+
+/* 选中行已经是整块 accentSoft，再加一条分隔线会把它切碎。 */
+QListWidget#memoryList::item:selected {
+    border-bottom-color: $accentSoft;
+}
+
 /* 会话列表的两行式由 ``widgets.SessionItemDelegate`` 全权绘制，所以这里把通用
  * 规则给的 item 内边距**收回**。理由：QSS 的 ``padding`` 与自绘 delegate 对
  * "内容区从哪开始"的理解不是同一套（前者缩的是子控件矩形，后者的 ``paint`` 拿到
@@ -197,6 +209,52 @@ QListWidget::item:selected {
  * 那种错位看起来像是字体坏了，查不到这里。**几何归 delegate，颜色归样式表。** */
 QListWidget#sessionList::item {
     padding: 0;
+}
+
+/* ── 滚动条 ────────────────────────────────────────────────── */
+
+/* 默认样式在暗色下是一条亮白的槽，比内容还显眼。这里与网页对话区（``app.css``
+ * 的 ``::-webkit-scrollbar``）取同一套：10px、透明槽、滑块 18%、悬停 30%。
+ *
+ * **不画两端的箭头**：Fusion 的箭头是位图，换 DPI 会糊，而滚动条本来就不靠它们
+ * 操作（滚轮/拖拽）。把 ``add-line`` / ``sub-line`` 的高度压成 0 即可拿掉，
+ * 但 ``add-page`` / ``sub-page`` 必须显式透明——不写的话 Qt 会给它们补一层
+ * 默认底色，看起来像滑块上下各接了一截。 */
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+    margin: 2px 2px 2px 0;
+}
+QScrollBar:horizontal {
+    background: transparent;
+    height: 10px;
+    margin: 0 2px 2px 2px;
+}
+QScrollBar::handle:vertical,
+QScrollBar::handle:horizontal {
+    background: $scrollThumb;
+    border-radius: 4px;
+    min-height: 32px;
+    min-width: 32px;
+}
+QScrollBar::handle:vertical:hover,
+QScrollBar::handle:horizontal:hover {
+    background: $scrollThumbHover;
+}
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical,
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal {
+    width: 0;
+    height: 0;
+    border: none;
+    background: transparent;
+}
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical,
+QScrollBar::add-page:horizontal,
+QScrollBar::sub-page:horizontal {
+    background: transparent;
 }
 
 /* ── 按钮 ──────────────────────────────────────────────────── */
@@ -266,7 +324,10 @@ QPushButton:pressed {
 /* 禁用态**退出磨砂那套**：一块半透明的、还带高光的按钮，看起来像"可以点"。
  * 这一条也顺带把那组 glass 占位符的适用范围钉死——它们只管"活着"的按钮。 */
 QPushButton:disabled {
-    background: $bg;
+    /* **不是 ``$bg``。** 那支在面板玻璃上会挖出一块近乎纯黑的洞——四个灰色
+       按钮并排时，禁用态比可用态还抢眼。改用同一族的面板底：它仍然没有高光、
+       没有亮顶，读得出"不响应"，但不至于把那一行变成一块墓碑。 */
+    background: $panelGlassSoft;
     border-color: $border;
     color: $fgMuted;
 }
@@ -424,6 +485,15 @@ QListWidget#settingsCategories::item:selected {
     background: $accentSoft;
     border-left: 2px solid $accent;
     color: $fgStrong;
+}
+
+/* 右侧表单是一张独立的磨砂卡片：页本身不画底，极光透上来之后文字直接落在
+ * 不确定的底色上；给整块加一层面板玻璃，与左侧分类列的分隔线一起读成"两栏"。
+ * 圆角与内边距由各页自己的 16px 外边距提供，这里只画底和边。 */
+QStackedWidget#settingsPages {
+    background: $panelGlass;
+    border: 1px solid $border;
+    border-radius: 12px;
 }
 
 QFrame#settingsFooter {

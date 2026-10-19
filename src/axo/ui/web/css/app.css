@@ -182,11 +182,20 @@ body.has-wallpaper #scrim {
 /* 空状态。住在 #stream 里（见 index.html 的说明），所以它得自己让开位置，
    不能像 .msg 那样左右各占一半。 */
 #empty {
-  max-width: var(--max-width);
+  /* 它直接浮在壁纸上（``.msg`` 才有气泡底）。纯文字落在任意一张图上时，
+     ``--fg-muted`` 的对比度没有保障，所以给它自己一小块与壁纸无关的底——
+     形状收成一个药丸，不抢对话区的视觉重心。 */
+  width: fit-content;
+  max-width: min(var(--max-width), calc(100% - 32px));
   margin: 24px auto 0;
+  padding: 7px 16px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-elevated) 78%, transparent);
   color: var(--fg-muted);
   font-size: 14px;
   text-align: center;
+  text-shadow: 0 1px 2px color-mix(in srgb, var(--bg) 55%, transparent);
 }
 
 /* ── 首次使用的人设卡片 ─────────────────────────────────────────────────── */

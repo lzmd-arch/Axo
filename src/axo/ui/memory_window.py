@@ -301,6 +301,9 @@ class MemoryWindow(QMainWindow):
         self.memory_list = QListWidget(pane)
         self.memory_list.setObjectName("memoryList")
         self.memory_list.setWordWrap(True)
+        # 正文里有长 URL / 长英文串时，自动换行仍会留下一条横向滚动条；列表本来就是
+        # 纵向浏览的，横向那条只会挤掉一行高度。
+        self.memory_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         column.addWidget(self.memory_list, 1)
         return pane
 
@@ -314,6 +317,8 @@ class MemoryWindow(QMainWindow):
         self.forget_button = QPushButton("遗忘", bar)
         self.restore_button = QPushButton("恢复", bar)
         self.delete_button = QPushButton("彻底删除", bar)
+        # 与主窗口的「删除选中会话」同一支 danger：四个按钮里只有它不可撤销。
+        self.delete_button.setProperty("kind", "danger")
         row.addWidget(self.edit_button)
         row.addWidget(self.forget_button)
         row.addWidget(self.restore_button)
@@ -367,6 +372,7 @@ class MemoryWindow(QMainWindow):
 
         self.assoc_view = QListWidget(pane)
         self.assoc_view.setObjectName("memoryNeighbors")
+        self.assoc_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         # 固定高度：邻居最多 top_m（8）条，让它跟着内容伸缩会把上面的详情挤得忽高
         # 忽低。滚轮够看剩下的。
         self.assoc_view.setMaximumHeight(160)
