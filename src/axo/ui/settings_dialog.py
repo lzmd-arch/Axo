@@ -68,6 +68,7 @@ from ..paths import voices_dir, wallpapers_dir
 from ..tts import voices_in
 from .color import parse_hex, readable_foreground
 from .data_root import data_root_description
+from .glass import GlassHost, fade_page, fade_window
 from .settings_store import (
     DEFAULT_CLOUD_BASE_URL,
     DEFAULT_HOST,
@@ -2236,6 +2237,8 @@ class SettingsDialog(QDialog):
         self._probe_worker: _ProbeWorker | None = None
         #: 「撤销修改」回到的那一份。`set_state` 会覆盖它。
         self._snapshot: Theme = theme
+        self._motion = bool(theme.motion)
+        self._accent = resolved.accent
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -2300,7 +2303,9 @@ class SettingsDialog(QDialog):
         footer_row.addWidget(self.close_button)
         outer.addWidget(footer)
 
-        self.categories.currentRowChanged.connect(self.pages.setCurrentIndex)
+        self._glass = GlassHost(self, accent=resolved.accent, animated=theme.motion)
+
+        self.categories.currentRowChanged.connect(self._on_category_changed)
         self.categories.setCurrentRow(0)
         self.appearance.changed.connect(self.theme_changed)
         self.backend.apply_requested.connect(self.backend_changed)
@@ -2353,6 +2358,25 @@ class SettingsDialog(QDialog):
 
     # ── 状态进出 ────────────────────────────────────────────────────────────
 
+    def set_glass(self, accent: str, *, motion: bool) -> None:
+        """主题/动效变了：换极光颜色，并决定以后还要不要动画。"""
+        self._accent = accent
+        self._motion = bool(motion)
+        glass = getattr(self, "_glass", None)
+        if glass is not None:
+            glass.set_theme(accent, animated=motion)
+
+    def showEvent(self, event: Any) -> None:  # noqa: N802 — Qt 命名
+        super().showEvent(event)
+        if self._motion:
+            fade_window(self)
+
+    def _on_category_changed(self, index: int) -> None:
+        self.pages.setCurrentIndex(index)
+        page = self.pages.currentWidget()
+        if self._motion and page is not None:
+            fade_page(page, duration=140)
+
     def set_state(
         self,
         theme: Theme,
@@ -2374,6 +2398,7 @@ class SettingsDialog(QDialog):
         而设置里其实有目录"，一处看不出来的不一致；漏传直接 ``TypeError`` 更省事。
         """
         self._snapshot = theme
+        self.set_glass(resolved.accent, motion=theme.motion)
         self.appearance.set_state(theme, resolved)
         self.backend.set_state(backend, note)
         self.tools.set_state(tools)

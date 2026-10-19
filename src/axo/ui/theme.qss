@@ -227,8 +227,13 @@ QListWidget#sessionList::item {
  * 圆角与内边距同时从 6px/5px 放大到 10px/6px：玻璃感靠"厚"读出来，薄薄一片
  * 半透明只会像没画完。 */
 QPushButton {
+    /* 四段：顶上那一道是光，中间是材质，底下压暗——只给两段的话看起来像
+       "一块浅色圆角矩形"，读不出玻璃的厚度。 */
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                                stop:0 $glassTop, stop:1 $glassBottom);
+                                stop:0 $glassTopHover,
+                                stop:0.10 $glassTop,
+                                stop:0.90 $glassBottom,
+                                stop:1 $glassBottomHover);
     border: 1px solid $glassLine;
     border-top-color: $glassLineTop;
     border-bottom-color: $glassLineBottom;
@@ -241,7 +246,11 @@ QPushButton {
  * 变亮（暗态）或变暗（亮态）给出，哪个方向见 ``_GlassAlphas``。 */
 QPushButton:hover {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                                stop:0 $glassTopHover, stop:1 $glassBottomHover);
+                                stop:0 $glassTopHover,
+                                stop:0.45 $glassTopHover,
+                                stop:0.55 $glassBottomHover,
+                                stop:1 $glassBottomHover);
+    border-top-color: $glassLineTop;
 }
 
 /* 按下态换成一个**不透明**的下沉色，见 ``_substitutions`` 里 "glassPressed"
@@ -336,7 +345,10 @@ QPushButton[kind="danger"]:disabled {
  * 透明底让它们看着像"标签"而不是"按钮"。 */
 QToolButton {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                                stop:0 $glassTopHover, stop:1 $glassBottom);
+                                stop:0 $glassTopHover,
+                                stop:0.10 $glassTop,
+                                stop:0.90 $glassBottom,
+                                stop:1 $glassBottomHover);
     border: 1px solid $glassLine;
     border-top-color: $glassLineTop;
     border-bottom-color: $glassLineBottom;
@@ -381,7 +393,7 @@ QCheckBox:disabled {
  * 规则：那条规则给的是「下沉的底 + 四边圆角边框」，画在这里会变成"窗口里嵌了
  * 一个小框"，而它其实是一条侧边导航。 */
 QListWidget#settingsCategories {
-    background: $bg;
+    background: $panelGlassSoft;
     border: none;
     border-right: 1px solid $border;
     border-radius: 0;
@@ -415,7 +427,7 @@ QListWidget#settingsCategories::item:selected {
 }
 
 QFrame#settingsFooter {
-    background: $bgElevated;
+    background: $panelGlass;
     border: none;
     border-top: 1px solid $border;
 }

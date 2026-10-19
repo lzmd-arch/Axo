@@ -13,11 +13,19 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import (
+    QAbstractAnimation,
+    QEasingCurve,
+    QEvent,
+    QObject,
+    QPropertyAnimation,
+    Qt,
+    QTimer,
+)
 from PySide6.QtGui import QColor, QPainter, QRadialGradient
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QGraphicsOpacityEffect, QWidget
 
-__all__ = ["AuroraBackdrop"]
+__all__ = ["AuroraBackdrop", "GlassHost", "fade_page", "fade_window"]
 
 
 class AuroraBackdrop(QWidget):
@@ -97,3 +105,74 @@ class AuroraBackdrop(QWidget):
             gradient.setColorAt(1.0, color_end)
             painter.fillRect(self.rect(), gradient)
         painter.end()
+
+
+class GlassHost(QObject):
+    """给任意顶层窗口铺一块极光，并跟随它的尺寸/显隐。**不改窗口的布局。**
+
+    设置与记忆窗口都是独立顶层窗口；它们各自建自己的控件，这一层只负责"背景有
+    东西可透"。窗口显示时开始计时，隐藏时停表——与主窗口用的是同一套规则。
+    """
+
+    def __init__(
+        self, window: QWidget, *, accent: str, animated: bool = True, parent: QObject | None = None
+    ) -> None:
+        super().__init__(parent or window)
+        self._window = window
+        self._accent = accent
+        self._animated = bool(animated)
+        self.backdrop = AuroraBackdrop(window)
+        self.backdrop.setGeometry(window.rect())
+        self.backdrop.set_accent(accent, animated=animated)
+        self.backdrop.lower()
+        window.installEventFilter(self)
+
+    def set_theme(self, accent: str, *, animated: bool) -> None:
+        self._accent = accent
+        self._animated = bool(animated)
+        self.backdrop.set_accent(accent, animated=animated)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
+        # **窗口销毁时这个对象可能已经先丢了 Python 属性**，而 Qt 仍会调一次
+        # eventFilter。缺属性不是错误，忽略即可——在这里抛会从 Qt 的事件循环里
+        # 冒出来，变成一条与本意无关的报错。
+        window = getattr(self, "_window", None)
+        backdrop = getattr(self, "backdrop", None)
+        if window is None or backdrop is None:
+            return False
+        if watched is window:
+            if event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
+                backdrop.setGeometry(window.rect())
+                if event.type() == QEvent.Type.Show:
+                    backdrop.set_animated(bool(getattr(self, "_animated", True)))
+            elif event.type() == QEvent.Type.Hide:
+                backdrop.set_animated(False)
+        return False
+
+
+def fade_window(window: QWidget, *, duration: int = 240) -> None:
+    """顶层窗口淡入。**只动透明度**，不改布局、不改焦点。"""
+    try:
+        start = float(window.windowOpacity())
+        window.setWindowOpacity(0.0)
+        animation = QPropertyAnimation(window, b"windowOpacity", window)
+        animation.setDuration(duration)
+        animation.setStartValue(0.0)
+        animation.setEndValue(start if start > 0 else 1.0)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        animation.start(QAbstractAnimation.DeletionPolicy.DeleteWhenStopped)
+    except Exception:  # noqa: BLE001 — 某些平台不实现 windowOpacity；不动也比崩好
+        window.setWindowOpacity(1.0)
+
+
+def fade_page(page: QWidget, *, duration: int = 150) -> None:
+    """切页时淡入。效果挂在页上，动画结束就摘掉，免得挡住子控件的事件。"""
+    effect = QGraphicsOpacityEffect(page)
+    page.setGraphicsEffect(effect)
+    animation = QPropertyAnimation(effect, b"opacity", page)
+    animation.setDuration(duration)
+    animation.setStartValue(0.35)
+    animation.setEndValue(1.0)
+    animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+    animation.finished.connect(lambda: page.setGraphicsEffect(None))
+    animation.start(QAbstractAnimation.DeletionPolicy.DeleteWhenStopped)

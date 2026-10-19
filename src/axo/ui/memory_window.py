@@ -68,6 +68,7 @@ from ..memory.consolidation import last_run
 from ..memory.edit import can_encode, edited_content
 from ..memory.forget import can_soft_forget, restored, soft_forgotten
 from ..memory.persona import BUILTIN_REF, USER_REF, read_only_reason
+from .glass import GlassHost, fade_window
 from .memory_worker import MemoryProbeWorker
 from .thread_tracking import track, wait_for_all
 from .window_place import place_window
@@ -121,8 +122,10 @@ class MemoryWindow(QMainWindow):
             约定，测试因此可以在 ``tmp_path`` 上造一个真库跑完整的读写路径。
     """
 
-    def __init__(self, *, memory: MemoryStore) -> None:
+    def __init__(self, *, memory: MemoryStore, accent: str = "", motion: bool = True) -> None:
         super().__init__()
+        self._accent = accent or "#6b8afd"
+        self._motion = bool(motion)
         self.setWindowTitle("记忆")
         # **与主窗口用同一个函数**，不是各写一遍 `resize(940, 640)`。写死的尺寸在
         # 1366×768 的笔记本上（加上任务栏）就已经顶到屏幕边，在更小的屏上则直接
@@ -163,9 +166,23 @@ class MemoryWindow(QMainWindow):
 
         self._build_ui()
         self._wire()
+        self._glass = GlassHost(self, accent=self._accent, animated=self._motion)
         self.reload()
 
     # ── 外部接线 ────────────────────────────────────────────────────────────
+
+    def set_glass(self, accent: str, *, motion: bool) -> None:
+        """主题/动效变了：换极光颜色，并决定还要不要动画。"""
+        self._accent = accent
+        self._motion = bool(motion)
+        glass = getattr(self, "_glass", None)
+        if glass is not None:
+            glass.set_theme(accent, animated=motion)
+
+    def showEvent(self, event: Any) -> None:  # noqa: N802 — Qt 命名
+        super().showEvent(event)
+        if self._motion:
+            fade_window(self)
 
     def set_embedding(self, embedding: OllamaEmbeddingBackend | None) -> None:
         """接上当前的嵌入后端（``None`` = 这一轮没有语义通道）。

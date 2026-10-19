@@ -989,6 +989,12 @@ class MainWindow(QMainWindow):
         backdrop = getattr(self, "_backdrop", None)
         if backdrop is not None:
             backdrop.set_accent(resolved.accent, animated=theme.motion)
+        dialog = getattr(self, "_settings_dialog", None)
+        if dialog is not None and hasattr(dialog, "set_glass"):
+            dialog.set_glass(resolved.accent, motion=theme.motion)
+        memory_window = getattr(self, "_memory_window", None)
+        if memory_window is not None and hasattr(memory_window, "set_glass"):
+            memory_window.set_glass(resolved.accent, motion=theme.motion)
         # 图标装在这里而不是 ``__init__`` 里单写一处：换主色（设置窗口的实时预览、
         # 系统明暗翻转）走的是同一个入口，装在这儿才不会有"托盘变了、标题栏还是旧
         # 色"的两处不一致。
@@ -3769,7 +3775,9 @@ class MainWindow(QMainWindow):
     def _on_open_memory(self) -> None:
         """打开记忆浏览器。**独立窗口，不挤进三格 splitter。**"""
         if self._memory_window is None:
-            window = MemoryWindow(memory=self._memory)
+            window = MemoryWindow(
+                memory=self._memory, accent=self._resolved.accent, motion=self._theme.motion
+            )
             # **先补一次**：当前会话、嵌入后端与这一轮的账本都发生在窗口还不存在的
             # 时候，那几次 emit 没有人听。补完之后才接线，否则窗口会拿到的是一份
             # "什么都没有"的快照，而它看起来完全正常。
