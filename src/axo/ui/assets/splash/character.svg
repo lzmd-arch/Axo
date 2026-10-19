@@ -1,0 +1,515 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 900" width="600" height="900">
+  <defs>
+    <linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FAEFF1"/>
+      <stop offset="0.55" stop-color="#F5E6E8"/>
+      <stop offset="1" stop-color="#EBD3D9"/>
+    </linearGradient>
+    <linearGradient id="skinShade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#E8CDD4"/>
+      <stop offset="1" stop-color="#D9B8C2"/>
+    </linearGradient>
+    <linearGradient id="outfit" x1="0" y1="0" x2="0.2" y2="1">
+      <stop offset="0" stop-color="#2A3038"/>
+      <stop offset="0.5" stop-color="#1E2228"/>
+      <stop offset="1" stop-color="#171A1F"/>
+    </linearGradient>
+    <linearGradient id="outfitHi" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#36404B"/>
+      <stop offset="1" stop-color="#1E2228"/>
+    </linearGradient>
+    <linearGradient id="hair" x1="0" y1="0" x2="0.3" y2="1">
+      <stop offset="0" stop-color="#333B46"/>
+      <stop offset="0.55" stop-color="#242A33"/>
+      <stop offset="1" stop-color="#1B1F25"/>
+    </linearGradient>
+    <linearGradient id="gillTip" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#F5E6E8" stop-opacity="0"/>
+      <stop offset="0.45" stop-color="#8FF3D3" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#00E5A0"/>
+    </linearGradient>
+    <linearGradient id="tailSkin" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F7EAEC"/>
+      <stop offset="0.6" stop-color="#EBD3D9"/>
+      <stop offset="1" stop-color="#C9A9B5"/>
+    </linearGradient>
+    <radialGradient id="coreGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#FFD9A0" stop-opacity="0.95"/>
+      <stop offset="0.35" stop-color="#FFB454" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#FFB454" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="tealHalo" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#00E5A0" stop-opacity="0.55"/>
+      <stop offset="0.5" stop-color="#00E5A0" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#00E5A0" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="iris" cx="0.45" cy="0.4" r="0.65">
+      <stop offset="0" stop-color="#9FFFF0"/>
+      <stop offset="0.45" stop-color="#28E7B2"/>
+      <stop offset="1" stop-color="#08705A"/>
+    </radialGradient>
+    <linearGradient id="gill0" gradientUnits="userSpaceOnUse" x1="258" y1="190" x2="150" y2="74">
+      <stop offset="0" stop-color="#F5E6E8"/>
+      <stop offset="0.52" stop-color="#F1DCE1"/>
+      <stop offset="0.87" stop-color="#8FF3D3" stop-opacity="0.8"/>
+      <stop offset="1" stop-color="#00E5A0"/>
+    </linearGradient>
+    <linearGradient id="gill1" gradientUnits="userSpaceOnUse" x1="258" y1="204" x2="118" y2="145">
+      <stop offset="0" stop-color="#F5E6E8"/>
+      <stop offset="0.52" stop-color="#F1DCE1"/>
+      <stop offset="0.87" stop-color="#8FF3D3" stop-opacity="0.8"/>
+      <stop offset="1" stop-color="#00E5A0"/>
+    </linearGradient>
+    <linearGradient id="gill2" gradientUnits="userSpaceOnUse" x1="256" y1="222" x2="142" y2="266">
+      <stop offset="0" stop-color="#F5E6E8"/>
+      <stop offset="0.52" stop-color="#F1DCE1"/>
+      <stop offset="0.87" stop-color="#8FF3D3" stop-opacity="0.8"/>
+      <stop offset="1" stop-color="#00E5A0"/>
+    </linearGradient>
+    <linearGradient id="gill3" gradientUnits="userSpaceOnUse" x1="342" y1="190" x2="450" y2="74">
+      <stop offset="0" stop-color="#F5E6E8"/>
+      <stop offset="0.52" stop-color="#F1DCE1"/>
+      <stop offset="0.87" stop-color="#8FF3D3" stop-opacity="0.8"/>
+      <stop offset="1" stop-color="#00E5A0"/>
+    </linearGradient>
+    <linearGradient id="gill4" gradientUnits="userSpaceOnUse" x1="342" y1="204" x2="482" y2="145">
+      <stop offset="0" stop-color="#F5E6E8"/>
+      <stop offset="0.52" stop-color="#F1DCE1"/>
+      <stop offset="0.87" stop-color="#8FF3D3" stop-opacity="0.8"/>
+      <stop offset="1" stop-color="#00E5A0"/>
+    </linearGradient>
+    <linearGradient id="gill5" gradientUnits="userSpaceOnUse" x1="344" y1="222" x2="458" y2="266">
+      <stop offset="0" stop-color="#F5E6E8"/>
+      <stop offset="0.52" stop-color="#F1DCE1"/>
+      <stop offset="0.87" stop-color="#8FF3D3" stop-opacity="0.8"/>
+      <stop offset="1" stop-color="#00E5A0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- ── 尾巴：轴突形态，从腰后伸向右下 ───────────────────────────── -->
+  <g id="tail">
+    <ellipse cx="500" cy="700" rx="90" ry="70" fill="url(#tealHalo)" opacity="0.35"/>
+    <path d="M 330 450
+             C 424 456, 504 500, 528 580
+             C 546 644, 524 706, 482 738
+             C 508 690, 512 640, 492 594
+             C 466 532, 400 498, 326 490 Z"
+          fill="url(#tailSkin)" stroke="#C9A9B5" stroke-width="2"/>
+    <!-- 髓鞘节段 -->
+    <g fill="none" stroke="#C49FAC" stroke-width="3" opacity="0.75">
+      <path d="M 372 470 C 386 505, 414 528, 448 542"/>
+      <path d="M 416 492 C 432 528, 462 556, 492 568"/>
+      <path d="M 456 530 C 472 566, 496 592, 514 600"/>
+      <path d="M 480 584 C 492 616, 502 646, 500 676"/>
+      <path d="M 470 650 C 486 676, 488 700, 482 720"/>
+    </g>
+    <!-- 突触扣 -->
+    <ellipse cx="482" cy="732" rx="18" ry="15" fill="#F5E6E8" stroke="#B98F9E" stroke-width="2"/>
+    <ellipse cx="482" cy="732" rx="10" ry="8" fill="#FFD9A0" opacity="0.85"/>
+    <!-- 尾尖电火花（克制版） -->
+    <g stroke="#FFB454" stroke-width="2.5" stroke-linecap="round" opacity="0.9">
+      <path d="M 510 712 l 14 -9"/>
+      <path d="M 516 730 l 16 2"/>
+      <path d="M 504 748 l 8 14"/>
+      <path d="M 458 748 l -10 10"/>
+    </g>
+    <g fill="#FFB454">
+      <circle cx="526" cy="701" r="2.6"/>
+      <circle cx="534" cy="733" r="2.2"/>
+      <circle cx="514" cy="764" r="2.4"/>
+      <circle cx="446" cy="760" r="2"/>
+    </g>
+  </g>
+
+  <!-- 外鳃：三束/侧。**羽状轮廓由采样生成**（见 tools 之外的 gen_gills 草稿）：宽度按 sin 包络收尖，边缘用余弦做小锯齿，读起来才是绒状分叉，而不是枝条。 -->
+  <g id="gills" transform="rotate(-5 300 232)">
+    <g class="frond">
+      <path d="M 259.6 188.3 L 258.9 183.9 L 256.5 181.3 L 253.8 179.0 L 251.9 175.7 L 251.2 171.1 L 250.7 166.4 L 249.0 162.8 L 245.6 161.0 L 241.2 160.0 L 237.9 158.0 L 236.5 154.0 L 236.4 148.6 L 235.8 143.8 L 233.0 141.1 L 228.1 140.4 L 223.2 139.7 L 220.1 137.1 L 219.3 132.4 L 219.3 126.9 L 217.9 122.8 L 213.8 121.1 L 208.2 120.7 L 203.4 119.6 L 201.0 116.4 L 200.4 111.4 L 199.7 106.6 L 197.0 103.5 L 192.2 102.4 L 186.7 101.8 L 182.7 99.9 L 180.6 96.3 L 179.4 91.9 L 177.3 88.3 L 173.6 86.1 L 168.7 84.9 L 164.1 83.4 L 160.6 81.1 L 157.5 78.4 L 154.2 75.8 L 151.8 72.6 L 148.2 75.4 L 151.0 78.5 L 152.8 82.2 L 154.9 85.8 L 156.6 89.7 L 157.3 94.5 L 157.8 99.6 L 159.4 103.7 L 162.7 106.3 L 166.9 108.2 L 170.2 110.8 L 171.6 115.1 L 171.6 120.7 L 172.3 125.7 L 175.1 128.8 L 179.9 130.0 L 184.8 131.1 L 187.9 133.9 L 188.7 138.8 L 188.7 144.5 L 190.1 148.7 L 194.2 150.6 L 199.8 150.9 L 204.5 152.0 L 207.0 155.2 L 207.6 160.3 L 208.2 165.2 L 210.9 168.1 L 215.8 168.9 L 221.2 169.1 L 225.3 170.6 L 227.3 174.0 L 228.4 178.3 L 230.3 181.8 L 233.9 183.5 L 238.8 184.0 L 243.3 184.6 L 246.7 186.3 L 249.2 188.9 L 252.0 191.3 L 256.4 191.7 Z" fill="url(#gill0)" stroke="#D9B8C2" stroke-width="1.2"/>
+      <path d="M 258 190 C 224 158, 184 116, 150 74" fill="none" stroke="#E8CDD4" stroke-width="2.4" opacity="0.9"/>
+      <g fill="none" stroke="#E8CDD4" stroke-width="1.4" stroke-linecap="round">
+    <path d="M 245.0 177.6 L 251.2 171.1 M 245.0 177.6 L 238.8 184.0" opacity="0.31"/>
+    <path d="M 237.0 169.7 L 245.6 161.0 M 237.0 169.7 L 228.4 178.3" opacity="0.34"/>
+    <path d="M 228.8 161.5 L 236.5 154.0 M 228.8 161.5 L 221.2 169.1" opacity="0.37"/>
+    <path d="M 220.6 153.2 L 233.0 141.1 M 220.6 153.2 L 208.2 165.2" opacity="0.41"/>
+    <path d="M 212.3 144.5 L 220.1 137.1 M 212.3 144.5 L 204.5 152.0" opacity="0.44"/>
+    <path d="M 204.0 135.8 L 217.9 122.8 M 204.0 135.8 L 190.1 148.7" opacity="0.47"/>
+    <path d="M 195.7 126.8 L 203.4 119.6 M 195.7 126.8 L 187.9 133.9" opacity="0.51"/>
+    <path d="M 187.4 117.7 L 199.7 106.6 M 187.4 117.7 L 175.1 128.8" opacity="0.54"/>
+    <path d="M 179.2 108.4 L 186.7 101.8 M 179.2 108.4 L 171.6 115.1" opacity="0.58"/>
+    <path d="M 171.0 99.1 L 179.4 91.9 M 171.0 99.1 L 162.7 106.3" opacity="0.61"/>
+    <path d="M 163.0 89.7 L 168.7 84.9 M 163.0 89.7 L 157.3 94.5" opacity="0.64"/>
+      </g>
+      <g fill="#8FF3D3" opacity="0.95">
+      <circle cx="217.9" cy="122.8" r="2.6"/>
+      <circle cx="190.1" cy="148.7" r="2.6"/>
+      <circle cx="203.4" cy="119.6" r="2.8"/>
+      <circle cx="187.9" cy="133.9" r="2.8"/>
+      <circle cx="199.7" cy="106.6" r="2.9"/>
+      <circle cx="175.1" cy="128.8" r="2.9"/>
+      <circle cx="186.7" cy="101.8" r="3.0"/>
+      <circle cx="171.6" cy="115.1" r="3.0"/>
+      <circle cx="179.4" cy="91.9" r="3.2"/>
+      <circle cx="162.7" cy="106.3" r="3.2"/>
+      <circle cx="168.7" cy="84.9" r="3.4"/>
+      <circle cx="157.3" cy="94.5" r="3.4"/>
+      <circle cx="157.5" cy="78.4" r="3.5"/>
+      <circle cx="152.8" cy="82.2" r="3.5"/>
+      </g>
+      <circle cx="150" cy="74" r="20" fill="url(#tealHalo)"/>
+      <circle cx="150" cy="74" r="6.5" fill="#8FF3D3"/>
+      <circle cx="150" cy="74" r="2.8" fill="#E9FFF9"/>
+    </g>
+    <g class="frond">
+      <path d="M 258.5 201.4 L 256.4 197.7 L 253.6 196.8 L 250.6 196.3 L 247.9 194.3 L 245.7 190.4 L 243.6 186.2 L 240.9 183.8 L 237.4 184.2 L 233.5 185.8 L 229.9 185.9 L 227.3 182.8 L 225.4 177.6 L 223.1 173.4 L 219.8 172.4 L 215.3 174.4 L 210.6 176.5 L 207.0 175.7 L 204.6 171.4 L 202.8 166.0 L 200.0 162.8 L 195.8 163.3 L 190.5 165.9 L 185.7 167.3 L 182.2 165.3 L 180.1 160.6 L 177.8 156.0 L 174.3 154.3 L 169.2 155.6 L 163.7 157.6 L 159.1 157.7 L 155.9 155.0 L 153.4 151.0 L 150.2 148.2 L 145.8 147.7 L 140.5 148.6 L 135.4 149.1 L 131.1 148.1 L 127.1 146.6 L 122.9 145.3 L 119.4 142.8 L 116.6 147.2 L 120.3 149.3 L 123.4 152.6 L 126.7 155.5 L 129.7 158.9 L 131.9 163.6 L 134.0 168.7 L 137.0 172.3 L 141.3 173.5 L 146.2 173.5 L 150.4 174.7 L 153.3 178.5 L 155.2 184.2 L 157.6 189.1 L 161.5 190.9 L 166.7 189.8 L 171.9 188.4 L 175.9 189.7 L 178.4 194.3 L 180.4 200.0 L 183.5 203.5 L 188.0 203.2 L 193.3 200.6 L 198.2 199.0 L 201.6 200.9 L 204.1 205.6 L 206.6 210.1 L 210.1 211.5 L 214.8 209.5 L 219.7 206.6 L 223.8 205.6 L 226.9 207.7 L 229.5 211.3 L 232.5 213.6 L 236.2 213.0 L 240.4 210.4 L 244.4 208.2 L 247.8 207.7 L 250.8 208.7 L 253.9 209.1 L 257.5 206.6 Z" fill="url(#gill1)" stroke="#D9B8C2" stroke-width="1.2"/>
+      <path d="M 258 204 C 220 196, 166 176, 118 145" fill="none" stroke="#E8CDD4" stroke-width="2.4" opacity="0.9"/>
+      <g fill="none" stroke="#E8CDD4" stroke-width="1.4" stroke-linecap="round">
+    <path d="M 243.0 200.4 L 245.7 190.4 M 243.0 200.4 L 240.4 210.4" opacity="0.31"/>
+    <path d="M 233.5 197.8 L 237.4 184.2 M 233.5 197.8 L 229.5 211.3" opacity="0.34"/>
+    <path d="M 223.5 194.7 L 227.3 182.8 M 223.5 194.7 L 219.7 206.6" opacity="0.37"/>
+    <path d="M 213.2 191.2 L 219.8 172.4 M 213.2 191.2 L 206.6 210.1" opacity="0.41"/>
+    <path d="M 202.6 187.4 L 207.0 175.7 M 202.6 187.4 L 198.2 199.0" opacity="0.44"/>
+    <path d="M 191.8 183.1 L 200.0 162.8 M 191.8 183.1 L 183.5 203.5" opacity="0.47"/>
+    <path d="M 180.8 178.5 L 185.7 167.3 M 180.8 178.5 L 175.9 189.7" opacity="0.51"/>
+    <path d="M 169.7 173.5 L 177.8 156.0 M 169.7 173.5 L 161.5 190.9" opacity="0.54"/>
+    <path d="M 158.5 168.1 L 163.7 157.6 M 158.5 168.1 L 153.3 178.5" opacity="0.58"/>
+    <path d="M 147.3 162.3 L 153.4 151.0 M 147.3 162.3 L 141.3 173.5" opacity="0.61"/>
+    <path d="M 136.2 156.1 L 140.5 148.6 M 136.2 156.1 L 131.9 163.6" opacity="0.64"/>
+      </g>
+      <g fill="#8FF3D3" opacity="0.95">
+      <circle cx="200.0" cy="162.8" r="2.6"/>
+      <circle cx="183.5" cy="203.5" r="2.6"/>
+      <circle cx="185.7" cy="167.3" r="2.8"/>
+      <circle cx="175.9" cy="189.7" r="2.8"/>
+      <circle cx="177.8" cy="156.0" r="2.9"/>
+      <circle cx="161.5" cy="190.9" r="2.9"/>
+      <circle cx="163.7" cy="157.6" r="3.0"/>
+      <circle cx="153.3" cy="178.5" r="3.0"/>
+      <circle cx="153.4" cy="151.0" r="3.2"/>
+      <circle cx="141.3" cy="173.5" r="3.2"/>
+      <circle cx="140.5" cy="148.6" r="3.4"/>
+      <circle cx="131.9" cy="163.6" r="3.4"/>
+      <circle cx="127.1" cy="146.6" r="3.5"/>
+      <circle cx="123.4" cy="152.6" r="3.5"/>
+      </g>
+      <circle cx="118" cy="145" r="20" fill="url(#tealHalo)"/>
+      <circle cx="118" cy="145" r="6.5" fill="#8FF3D3"/>
+      <circle cx="118" cy="145" r="2.8" fill="#E9FFF9"/>
+    </g>
+    <g class="frond">
+      <path d="M 255.2 220.0 L 251.6 218.5 L 248.8 219.0 L 246.2 220.3 L 243.6 221.2 L 240.4 221.1 L 236.8 219.8 L 233.1 218.4 L 229.8 218.0 L 227.2 219.2 L 225.1 221.9 L 223.1 224.8 L 220.6 226.6 L 217.3 226.5 L 213.4 224.9 L 209.5 223.3 L 206.2 223.1 L 203.7 225.1 L 201.9 228.7 L 200.0 232.4 L 197.6 234.6 L 194.3 234.7 L 190.5 233.3 L 186.7 232.1 L 183.5 232.4 L 181.1 234.9 L 179.2 238.8 L 177.3 242.6 L 174.8 244.9 L 171.7 245.5 L 168.1 245.0 L 164.6 244.7 L 161.7 245.8 L 159.3 248.5 L 157.2 252.1 L 155.1 255.3 L 152.5 257.7 L 149.7 259.2 L 146.9 260.9 L 144.3 263.0 L 141.3 264.0 L 142.7 268.0 L 145.7 266.9 L 149.1 266.9 L 152.3 266.4 L 155.5 265.8 L 158.9 266.0 L 162.7 267.1 L 166.6 268.4 L 170.2 268.9 L 173.2 267.9 L 175.7 265.4 L 178.1 262.7 L 180.9 261.0 L 184.3 261.2 L 188.3 262.7 L 192.3 264.4 L 195.8 264.6 L 198.4 262.7 L 200.4 259.2 L 202.4 255.5 L 204.9 253.4 L 208.2 253.3 L 212.1 254.8 L 216.0 256.1 L 219.2 255.9 L 221.5 253.5 L 223.3 249.6 L 225.0 245.8 L 227.3 243.5 L 230.4 243.0 L 233.9 243.7 L 237.2 244.2 L 240.0 243.2 L 242.1 240.6 L 243.8 237.0 L 245.5 233.6 L 247.7 231.3 L 250.3 230.1 L 252.9 229.2 L 255.3 227.6 L 256.8 224.0 Z" fill="url(#gill2)" stroke="#D9B8C2" stroke-width="1.2"/>
+      <path d="M 256 222 C 222 236, 182 252, 142 266" fill="none" stroke="#E8CDD4" stroke-width="2.4" opacity="0.9"/>
+      <g fill="none" stroke="#E8CDD4" stroke-width="1.4" stroke-linecap="round">
+    <path d="M 243.0 227.3 L 240.4 221.1 M 243.0 227.3 L 245.5 233.6" opacity="0.31"/>
+    <path d="M 234.9 230.6 L 229.8 218.0 M 234.9 230.6 L 240.0 243.2" opacity="0.34"/>
+    <path d="M 226.7 233.9 L 223.1 224.8 M 226.7 233.9 L 230.4 243.0" opacity="0.37"/>
+    <path d="M 218.4 237.3 L 213.4 224.9 M 218.4 237.3 L 223.3 249.6" opacity="0.41"/>
+    <path d="M 209.9 240.6 L 203.7 225.1 M 209.9 240.6 L 216.0 256.1" opacity="0.44"/>
+    <path d="M 201.2 244.0 L 197.6 234.6 M 201.2 244.0 L 204.9 253.4" opacity="0.47"/>
+    <path d="M 192.5 247.4 L 186.7 232.1 M 192.5 247.4 L 198.4 262.7" opacity="0.51"/>
+    <path d="M 183.7 250.7 L 179.2 238.8 M 183.7 250.7 L 188.3 262.7" opacity="0.54"/>
+    <path d="M 174.9 254.1 L 171.7 245.5 M 174.9 254.1 L 178.1 262.7" opacity="0.58"/>
+    <path d="M 166.0 257.4 L 161.7 245.8 M 166.0 257.4 L 170.2 268.9" opacity="0.61"/>
+    <path d="M 157.0 260.7 L 155.1 255.3 M 157.0 260.7 L 158.9 266.0" opacity="0.64"/>
+      </g>
+      <g fill="#8FF3D3" opacity="0.95">
+      <circle cx="197.6" cy="234.6" r="2.6"/>
+      <circle cx="204.9" cy="253.4" r="2.6"/>
+      <circle cx="186.7" cy="232.1" r="2.8"/>
+      <circle cx="198.4" cy="262.7" r="2.8"/>
+      <circle cx="179.2" cy="238.8" r="2.9"/>
+      <circle cx="188.3" cy="262.7" r="2.9"/>
+      <circle cx="171.7" cy="245.5" r="3.0"/>
+      <circle cx="178.1" cy="262.7" r="3.0"/>
+      <circle cx="161.7" cy="245.8" r="3.2"/>
+      <circle cx="170.2" cy="268.9" r="3.2"/>
+      <circle cx="155.1" cy="255.3" r="3.4"/>
+      <circle cx="158.9" cy="266.0" r="3.4"/>
+      <circle cx="146.9" cy="260.9" r="3.5"/>
+      <circle cx="149.1" cy="266.9" r="3.5"/>
+      </g>
+      <circle cx="142" cy="266" r="20" fill="url(#tealHalo)"/>
+      <circle cx="142" cy="266" r="6.5" fill="#8FF3D3"/>
+      <circle cx="142" cy="266" r="2.8" fill="#E9FFF9"/>
+    </g>
+    <g class="frond">
+      <path d="M 343.6 191.7 L 348.0 191.3 L 350.8 188.9 L 353.3 186.3 L 356.7 184.6 L 361.2 184.0 L 366.1 183.5 L 369.7 181.8 L 371.6 178.3 L 372.7 174.0 L 374.7 170.6 L 378.8 169.1 L 384.2 168.9 L 389.1 168.1 L 391.8 165.2 L 392.4 160.3 L 393.0 155.2 L 395.5 152.0 L 400.2 150.9 L 405.8 150.6 L 409.9 148.7 L 411.3 144.5 L 411.3 138.8 L 412.1 133.9 L 415.2 131.1 L 420.1 130.0 L 424.9 128.8 L 427.7 125.7 L 428.4 120.7 L 428.4 115.1 L 429.8 110.8 L 433.1 108.2 L 437.3 106.3 L 440.6 103.7 L 442.2 99.6 L 442.7 94.5 L 443.4 89.7 L 445.1 85.8 L 447.2 82.2 L 449.0 78.5 L 451.8 75.4 L 448.2 72.6 L 445.8 75.8 L 442.5 78.4 L 439.4 81.1 L 435.9 83.4 L 431.3 84.9 L 426.4 86.1 L 422.7 88.3 L 420.6 91.9 L 419.4 96.3 L 417.3 99.9 L 413.3 101.8 L 407.8 102.4 L 403.0 103.5 L 400.3 106.6 L 399.6 111.4 L 399.0 116.4 L 396.6 119.6 L 391.8 120.7 L 386.2 121.1 L 382.1 122.8 L 380.7 126.9 L 380.7 132.4 L 379.9 137.1 L 376.8 139.7 L 371.9 140.4 L 367.0 141.1 L 364.2 143.8 L 363.6 148.6 L 363.5 154.0 L 362.1 158.0 L 358.8 160.0 L 354.4 161.0 L 351.0 162.8 L 349.3 166.4 L 348.8 171.1 L 348.1 175.7 L 346.2 179.0 L 343.5 181.3 L 341.1 183.9 L 340.4 188.3 Z" fill="url(#gill3)" stroke="#D9B8C2" stroke-width="1.2"/>
+      <path d="M 342 190 C 376 158, 416 116, 450 74" fill="none" stroke="#E8CDD4" stroke-width="2.4" opacity="0.9"/>
+      <g fill="none" stroke="#E8CDD4" stroke-width="1.4" stroke-linecap="round">
+    <path d="M 355.0 177.6 L 361.2 184.0 M 355.0 177.6 L 348.8 171.1" opacity="0.31"/>
+    <path d="M 363.0 169.7 L 371.6 178.3 M 363.0 169.7 L 354.4 161.0" opacity="0.34"/>
+    <path d="M 371.2 161.5 L 378.8 169.1 M 371.2 161.5 L 363.5 154.0" opacity="0.37"/>
+    <path d="M 379.4 153.2 L 391.8 165.2 M 379.4 153.2 L 367.0 141.1" opacity="0.41"/>
+    <path d="M 387.7 144.5 L 395.5 152.0 M 387.7 144.5 L 379.9 137.1" opacity="0.44"/>
+    <path d="M 396.0 135.8 L 409.9 148.7 M 396.0 135.8 L 382.1 122.8" opacity="0.47"/>
+    <path d="M 404.3 126.8 L 412.1 133.9 M 404.3 126.8 L 396.6 119.6" opacity="0.51"/>
+    <path d="M 412.6 117.7 L 424.9 128.8 M 412.6 117.7 L 400.3 106.6" opacity="0.54"/>
+    <path d="M 420.8 108.4 L 428.4 115.1 M 420.8 108.4 L 413.3 101.8" opacity="0.58"/>
+    <path d="M 429.0 99.1 L 437.3 106.3 M 429.0 99.1 L 420.6 91.9" opacity="0.61"/>
+    <path d="M 437.0 89.7 L 442.7 94.5 M 437.0 89.7 L 431.3 84.9" opacity="0.64"/>
+      </g>
+      <g fill="#8FF3D3" opacity="0.95">
+      <circle cx="409.9" cy="148.7" r="2.6"/>
+      <circle cx="382.1" cy="122.8" r="2.6"/>
+      <circle cx="412.1" cy="133.9" r="2.8"/>
+      <circle cx="396.6" cy="119.6" r="2.8"/>
+      <circle cx="424.9" cy="128.8" r="2.9"/>
+      <circle cx="400.3" cy="106.6" r="2.9"/>
+      <circle cx="428.4" cy="115.1" r="3.0"/>
+      <circle cx="413.3" cy="101.8" r="3.0"/>
+      <circle cx="437.3" cy="106.3" r="3.2"/>
+      <circle cx="420.6" cy="91.9" r="3.2"/>
+      <circle cx="442.7" cy="94.5" r="3.4"/>
+      <circle cx="431.3" cy="84.9" r="3.4"/>
+      <circle cx="447.2" cy="82.2" r="3.5"/>
+      <circle cx="442.5" cy="78.4" r="3.5"/>
+      </g>
+      <circle cx="450" cy="74" r="20" fill="url(#tealHalo)"/>
+      <circle cx="450" cy="74" r="6.5" fill="#8FF3D3"/>
+      <circle cx="450" cy="74" r="2.8" fill="#E9FFF9"/>
+    </g>
+    <g class="frond">
+      <path d="M 342.5 206.6 L 346.1 209.1 L 349.2 208.7 L 352.2 207.7 L 355.6 208.2 L 359.6 210.4 L 363.8 213.0 L 367.5 213.6 L 370.5 211.3 L 373.1 207.7 L 376.2 205.6 L 380.3 206.6 L 385.2 209.5 L 389.9 211.5 L 393.4 210.1 L 395.9 205.6 L 398.4 200.9 L 401.8 199.0 L 406.7 200.6 L 412.0 203.2 L 416.5 203.5 L 419.6 200.0 L 421.6 194.3 L 424.1 189.7 L 428.1 188.4 L 433.3 189.8 L 438.5 190.9 L 442.4 189.1 L 444.8 184.2 L 446.7 178.5 L 449.6 174.7 L 453.8 173.5 L 458.7 173.5 L 463.0 172.3 L 466.0 168.7 L 468.1 163.6 L 470.3 158.9 L 473.3 155.5 L 476.6 152.6 L 479.7 149.3 L 483.4 147.2 L 480.6 142.8 L 477.1 145.3 L 472.9 146.6 L 468.9 148.1 L 464.6 149.1 L 459.5 148.6 L 454.2 147.7 L 449.8 148.2 L 446.6 151.0 L 444.1 155.0 L 440.9 157.7 L 436.3 157.6 L 430.8 155.6 L 425.7 154.3 L 422.2 156.0 L 419.9 160.6 L 417.8 165.3 L 414.3 167.3 L 409.5 165.9 L 404.2 163.3 L 400.0 162.8 L 397.2 166.0 L 395.4 171.4 L 393.0 175.7 L 389.4 176.5 L 384.7 174.4 L 380.2 172.4 L 376.9 173.4 L 374.6 177.6 L 372.7 182.8 L 370.1 185.9 L 366.5 185.8 L 362.6 184.2 L 359.1 183.8 L 356.4 186.2 L 354.3 190.4 L 352.1 194.3 L 349.4 196.3 L 346.4 196.8 L 343.6 197.7 L 341.5 201.4 Z" fill="url(#gill4)" stroke="#D9B8C2" stroke-width="1.2"/>
+      <path d="M 342 204 C 380 196, 434 176, 482 145" fill="none" stroke="#E8CDD4" stroke-width="2.4" opacity="0.9"/>
+      <g fill="none" stroke="#E8CDD4" stroke-width="1.4" stroke-linecap="round">
+    <path d="M 357.0 200.4 L 359.6 210.4 M 357.0 200.4 L 354.3 190.4" opacity="0.31"/>
+    <path d="M 366.5 197.8 L 370.5 211.3 M 366.5 197.8 L 362.6 184.2" opacity="0.34"/>
+    <path d="M 376.5 194.7 L 380.3 206.6 M 376.5 194.7 L 372.7 182.8" opacity="0.37"/>
+    <path d="M 386.8 191.2 L 393.4 210.1 M 386.8 191.2 L 380.2 172.4" opacity="0.41"/>
+    <path d="M 397.4 187.4 L 401.8 199.0 M 397.4 187.4 L 393.0 175.7" opacity="0.44"/>
+    <path d="M 408.2 183.1 L 416.5 203.5 M 408.2 183.1 L 400.0 162.8" opacity="0.47"/>
+    <path d="M 419.2 178.5 L 424.1 189.7 M 419.2 178.5 L 414.3 167.3" opacity="0.51"/>
+    <path d="M 430.3 173.5 L 438.5 190.9 M 430.3 173.5 L 422.2 156.0" opacity="0.54"/>
+    <path d="M 441.5 168.1 L 446.7 178.5 M 441.5 168.1 L 436.3 157.6" opacity="0.58"/>
+    <path d="M 452.7 162.3 L 458.7 173.5 M 452.7 162.3 L 446.6 151.0" opacity="0.61"/>
+    <path d="M 463.8 156.1 L 468.1 163.6 M 463.8 156.1 L 459.5 148.6" opacity="0.64"/>
+      </g>
+      <g fill="#8FF3D3" opacity="0.95">
+      <circle cx="416.5" cy="203.5" r="2.6"/>
+      <circle cx="400.0" cy="162.8" r="2.6"/>
+      <circle cx="424.1" cy="189.7" r="2.8"/>
+      <circle cx="414.3" cy="167.3" r="2.8"/>
+      <circle cx="438.5" cy="190.9" r="2.9"/>
+      <circle cx="422.2" cy="156.0" r="2.9"/>
+      <circle cx="446.7" cy="178.5" r="3.0"/>
+      <circle cx="436.3" cy="157.6" r="3.0"/>
+      <circle cx="458.7" cy="173.5" r="3.2"/>
+      <circle cx="446.6" cy="151.0" r="3.2"/>
+      <circle cx="468.1" cy="163.6" r="3.4"/>
+      <circle cx="459.5" cy="148.6" r="3.4"/>
+      <circle cx="476.6" cy="152.6" r="3.5"/>
+      <circle cx="472.9" cy="146.6" r="3.5"/>
+      </g>
+      <circle cx="482" cy="145" r="20" fill="url(#tealHalo)"/>
+      <circle cx="482" cy="145" r="6.5" fill="#8FF3D3"/>
+      <circle cx="482" cy="145" r="2.8" fill="#E9FFF9"/>
+    </g>
+    <g class="frond">
+      <path d="M 343.2 224.0 L 344.7 227.6 L 347.1 229.2 L 349.7 230.1 L 352.3 231.3 L 354.5 233.6 L 356.2 237.0 L 357.9 240.6 L 360.0 243.2 L 362.8 244.2 L 366.1 243.7 L 369.6 243.0 L 372.7 243.5 L 375.0 245.8 L 376.7 249.6 L 378.5 253.5 L 380.8 255.9 L 384.0 256.1 L 387.9 254.8 L 391.8 253.3 L 395.1 253.4 L 397.6 255.5 L 399.6 259.2 L 401.6 262.7 L 404.2 264.6 L 407.7 264.4 L 411.7 262.7 L 415.7 261.2 L 419.1 261.0 L 421.9 262.7 L 424.3 265.4 L 426.8 267.9 L 429.8 268.9 L 433.4 268.4 L 437.3 267.1 L 441.1 266.0 L 444.5 265.8 L 447.7 266.4 L 450.9 266.9 L 454.3 266.9 L 457.3 268.0 L 458.7 264.0 L 455.7 263.0 L 453.1 260.9 L 450.3 259.2 L 447.5 257.7 L 444.9 255.3 L 442.8 252.1 L 440.7 248.5 L 438.3 245.8 L 435.4 244.7 L 431.9 245.0 L 428.3 245.5 L 425.2 244.9 L 422.7 242.6 L 420.8 238.8 L 418.9 234.9 L 416.5 232.4 L 413.3 232.1 L 409.5 233.3 L 405.7 234.7 L 402.4 234.6 L 400.0 232.4 L 398.1 228.7 L 396.3 225.1 L 393.8 223.1 L 390.5 223.3 L 386.6 224.9 L 382.7 226.5 L 379.4 226.6 L 376.9 224.8 L 374.9 221.9 L 372.8 219.2 L 370.2 218.0 L 366.9 218.4 L 363.2 219.8 L 359.6 221.1 L 356.4 221.2 L 353.8 220.3 L 351.2 219.0 L 348.4 218.5 L 344.8 220.0 Z" fill="url(#gill5)" stroke="#D9B8C2" stroke-width="1.2"/>
+      <path d="M 344 222 C 378 236, 418 252, 458 266" fill="none" stroke="#E8CDD4" stroke-width="2.4" opacity="0.9"/>
+      <g fill="none" stroke="#E8CDD4" stroke-width="1.4" stroke-linecap="round">
+    <path d="M 357.0 227.3 L 354.5 233.6 M 357.0 227.3 L 359.6 221.1" opacity="0.31"/>
+    <path d="M 365.1 230.6 L 360.0 243.2 M 365.1 230.6 L 370.2 218.0" opacity="0.34"/>
+    <path d="M 373.3 233.9 L 369.6 243.0 M 373.3 233.9 L 376.9 224.8" opacity="0.37"/>
+    <path d="M 381.6 237.3 L 376.7 249.6 M 381.6 237.3 L 386.6 224.9" opacity="0.41"/>
+    <path d="M 390.1 240.6 L 384.0 256.1 M 390.1 240.6 L 396.3 225.1" opacity="0.44"/>
+    <path d="M 398.8 244.0 L 395.1 253.4 M 398.8 244.0 L 402.4 234.6" opacity="0.47"/>
+    <path d="M 407.5 247.4 L 401.6 262.7 M 407.5 247.4 L 413.3 232.1" opacity="0.51"/>
+    <path d="M 416.3 250.7 L 411.7 262.7 M 416.3 250.7 L 420.8 238.8" opacity="0.54"/>
+    <path d="M 425.1 254.1 L 421.9 262.7 M 425.1 254.1 L 428.3 245.5" opacity="0.58"/>
+    <path d="M 434.0 257.4 L 429.8 268.9 M 434.0 257.4 L 438.3 245.8" opacity="0.61"/>
+    <path d="M 443.0 260.7 L 441.1 266.0 M 443.0 260.7 L 444.9 255.3" opacity="0.64"/>
+      </g>
+      <g fill="#8FF3D3" opacity="0.95">
+      <circle cx="395.1" cy="253.4" r="2.6"/>
+      <circle cx="402.4" cy="234.6" r="2.6"/>
+      <circle cx="401.6" cy="262.7" r="2.8"/>
+      <circle cx="413.3" cy="232.1" r="2.8"/>
+      <circle cx="411.7" cy="262.7" r="2.9"/>
+      <circle cx="420.8" cy="238.8" r="2.9"/>
+      <circle cx="421.9" cy="262.7" r="3.0"/>
+      <circle cx="428.3" cy="245.5" r="3.0"/>
+      <circle cx="429.8" cy="268.9" r="3.2"/>
+      <circle cx="438.3" cy="245.8" r="3.2"/>
+      <circle cx="441.1" cy="266.0" r="3.4"/>
+      <circle cx="444.9" cy="255.3" r="3.4"/>
+      <circle cx="450.9" cy="266.9" r="3.5"/>
+      <circle cx="453.1" cy="260.9" r="3.5"/>
+      </g>
+      <circle cx="458" cy="266" r="20" fill="url(#tealHalo)"/>
+      <circle cx="458" cy="266" r="6.5" fill="#8FF3D3"/>
+      <circle cx="458" cy="266" r="2.8" fill="#E9FFF9"/>
+    </g>
+  </g>
+
+  <!-- ── 身体 ─────────────────────────────────────────────────────── -->
+  <g id="body">
+    <!-- 腿 -->
+    <path d="M 268 488 C 262 540, 264 600, 270 650 C 274 700, 276 760, 280 812
+             L 296 812 C 296 770, 296 726, 294 674 C 292 610, 296 548, 302 488 Z" fill="url(#skin)"/>
+    <path d="M 332 488 C 338 540, 336 600, 330 650 C 326 700, 324 760, 320 812
+             L 304 812 C 304 770, 304 726, 306 674 C 308 610, 304 548, 298 488 Z" fill="url(#skin)"/>
+    <path d="M 270 650 C 276 660, 288 664, 294 660" fill="none" stroke="#E2C4CC" stroke-width="2" opacity="0.65"/>
+    <path d="M 330 650 C 324 660, 312 664, 306 660" fill="none" stroke="#E2C4CC" stroke-width="2" opacity="0.65"/>
+    <path d="M 272 560 C 278 570, 288 572, 294 566" fill="none" stroke="#F7E9EC" stroke-width="4" opacity="0.5"/>
+    <path d="M 328 560 C 322 570, 312 572, 306 566" fill="none" stroke="#F7E9EC" stroke-width="4" opacity="0.5"/>
+    <!-- 脚 -->
+    <path d="M 278 818 C 274 830, 278 840, 292 840 C 304 840, 310 834, 310 826 L 300 818 Z" fill="url(#skin)" stroke="#D9B8C2" stroke-width="1.5"/>
+    <path d="M 322 818 C 326 830, 322 840, 308 840 C 296 840, 290 834, 290 826 L 300 818 Z" fill="url(#skin)" stroke="#D9B8C2" stroke-width="1.5"/>
+
+    <!-- 连衣裙 / 连帽外套 -->
+    <path d="M 238 302 C 246 286, 268 278, 300 278 C 332 278, 354 286, 362 302
+             L 358 352 C 356 386, 350 408, 344 428
+             C 352 456, 358 482, 360 508 L 240 508
+             C 242 482, 248 456, 256 428
+             C 250 408, 244 386, 242 352 Z"
+          fill="url(#outfit)" stroke="#12151A" stroke-width="2"/>
+    <path d="M 256 428 C 280 434, 320 434, 344 428" fill="none" stroke="#0E1115" stroke-width="4" opacity="0.8"/>
+    <path d="M 258 438 C 280 443, 320 443, 342 438" fill="none" stroke="#3A4552" stroke-width="2" opacity="0.5"/>
+    <!-- 高光与褶皱 -->
+    <path d="M 258 300 C 266 320, 268 350, 266 380" fill="none" stroke="#3A4552" stroke-width="3" opacity="0.55"/>
+    <path d="M 340 312 C 336 342, 336 376, 338 404" fill="none" stroke="#0F1216" stroke-width="3" opacity="0.6"/>
+    <path d="M 252 470 C 280 478, 320 478, 348 470" fill="none" stroke="#0F1216" stroke-width="3" opacity="0.7"/>
+    <!-- 兜帽 -->
+    <path d="M 250 300 C 252 278, 272 266, 300 266 C 328 266, 348 278, 350 300
+             C 340 288, 320 282, 300 282 C 280 282, 260 288, 250 300 Z"
+          fill="url(#outfitHi)" stroke="#12151A" stroke-width="2"/>
+    <!-- 胸口核心的开口 -->
+    <circle cx="300" cy="356" r="26" fill="#12151A"/>
+    <circle cx="300" cy="356" r="23" fill="url(#skinShade)"/>
+
+    <!-- 袖子与手臂 -->
+    <path d="M 244 304 C 222 330, 214 386, 218 438 C 221 470, 228 504, 236 530
+             L 258 524 C 250 490, 244 452, 246 410 C 248 368, 254 332, 258 310 Z"
+          fill="url(#outfitHi)" stroke="#12151A" stroke-width="2"/>
+    <path d="M 356 304 C 378 330, 386 386, 382 438 C 379 470, 372 504, 364 530
+             L 342 524 C 350 490, 356 452, 354 410 C 352 368, 346 332, 342 310 Z"
+          fill="url(#outfitHi)" stroke="#12151A" stroke-width="2"/>
+    <path d="M 236 528 C 244 534, 254 532, 258 524" fill="none" stroke="#0E1115" stroke-width="3"/>
+    <path d="M 364 528 C 356 534, 346 532, 342 524" fill="none" stroke="#0E1115" stroke-width="3"/>
+    <path d="M 240 534 C 236 544, 238 556, 246 560 C 254 560, 258 552, 256 544 Z" fill="url(#skin)" stroke="#D9B8C2" stroke-width="1.5"/>
+    <path d="M 360 534 C 364 544, 362 556, 354 560 C 346 560, 342 552, 344 544 Z" fill="url(#skin)" stroke="#D9B8C2" stroke-width="1.5"/>
+    <g stroke="#D9B8C2" stroke-width="1.4" fill="none">
+      <path d="M 244 548 L 244 558 M 249 547 L 249 558"/>
+      <path d="M 356 548 L 356 558 M 351 547 L 351 558"/>
+    </g>
+  </g>
+
+  <!-- ── 头 ───────────────────────────────────────────────────────── -->
+  <g id="head" transform="rotate(-5 300 232)">
+    <!-- 颈 -->
+    <path d="M 284 226 L 316 226 L 320 284 C 312 292, 288 292, 280 284 Z" fill="url(#skinShade)"/>
+    <!-- 后发 -->
+    <path d="M 242 238 C 230 160, 246 100, 300 94 C 354 100, 370 160, 358 238
+             C 350 250, 250 250, 242 238 Z" fill="url(#hair)"/>
+    <!-- 脸 -->
+    <path d="M 300 112
+             C 330 112, 346 138, 347 172
+             C 348 206, 338 234, 322 246
+             C 312 253, 306 256, 300 256
+             C 294 256, 288 253, 278 246
+             C 262 234, 252 206, 253 172
+             C 254 138, 270 112, 300 112 Z"
+          fill="url(#skin)" stroke="#D9B8C2" stroke-width="1.5"/>
+    <!-- 耳朵（被鳃与头发挡住大半，只留一点） -->
+    <path d="M 252 190 C 244 184, 242 196, 248 206 C 252 212, 256 210, 257 204 Z" fill="url(#skin)"/>
+    <path d="M 348 190 C 356 184, 358 196, 352 206 C 348 212, 344 210, 343 204 Z" fill="url(#skin)"/>
+
+    <!-- 刘海与侧发 -->
+    <path d="M 250 178 C 246 132, 266 108, 300 106 C 334 108, 354 132, 350 178
+             C 342 168, 336 158, 330 150
+             C 324 162, 316 168, 310 156
+             C 304 168, 296 170, 290 156
+             C 284 166, 276 166, 270 150
+             C 264 160, 258 170, 250 178 Z"
+          fill="url(#hair)"/>
+    <path d="M 250 174 C 246 200, 246 226, 252 246 C 258 252, 264 250, 266 242
+             C 260 222, 258 198, 260 176 Z" fill="url(#hair)"/>
+    <path d="M 350 174 C 354 200, 354 226, 348 246 C 342 252, 336 250, 334 242
+             C 340 222, 342 198, 340 176 Z" fill="url(#hair)"/>
+    <!-- 发丝 -->
+    <g fill="none" stroke="#3E4957" stroke-width="2" stroke-linecap="round" opacity="0.8">
+      <path d="M 282 120 C 276 132, 272 144, 270 154"/>
+      <path d="M 318 120 C 324 132, 328 144, 330 154"/>
+      <path d="M 300 112 C 298 126, 298 140, 300 150"/>
+    </g>
+
+    <!-- 眉毛 -->
+    <path d="M 268 178 C 274 174, 282 174, 287 177" fill="none" stroke="#3A2E33" stroke-width="2.4" stroke-linecap="round"/>
+    <path d="M 332 178 C 326 174, 318 174, 313 177" fill="none" stroke="#3A2E33" stroke-width="2.4" stroke-linecap="round"/>
+
+    <!-- 眼睛（安静、微微半阖） -->
+    <g>
+      <path d="M 266 196 C 274 188, 286 188, 292 196 C 286 202, 274 202, 266 196 Z" fill="#FFF8FA"/>
+      <circle cx="279" cy="195" r="8" fill="url(#iris)"/>
+      <circle cx="279" cy="195" r="3.4" fill="#0B2E29"/>
+      <circle cx="276" cy="192" r="2.2" fill="#FFFFFF" opacity="0.95"/>
+      <path d="M 266 196 C 274 189, 286 189, 292 196" fill="none" stroke="#2B2126" stroke-width="2.6" stroke-linecap="round"/>
+      <path d="M 291 193 L 296 190" stroke="#2B2126" stroke-width="2" stroke-linecap="round"/>
+      <g stroke="#BFFFF0" stroke-width="1" opacity="0.9">
+        <path d="M 276 195 l 5 -3 M 275 197 l 7 1"/>
+      </g>
+    </g>
+    <g>
+      <path d="M 308 196 C 316 188, 326 188, 334 196 C 326 202, 316 202, 308 196 Z" fill="#FFF8FA"/>
+      <circle cx="321" cy="195" r="8" fill="url(#iris)"/>
+      <circle cx="321" cy="195" r="3.4" fill="#0B2E29"/>
+      <circle cx="318" cy="192" r="2.2" fill="#FFFFFF" opacity="0.95"/>
+      <path d="M 308 196 C 316 189, 326 189, 334 196" fill="none" stroke="#2B2126" stroke-width="2.6" stroke-linecap="round"/>
+      <path d="M 309 193 L 304 190" stroke="#2B2126" stroke-width="2" stroke-linecap="round"/>
+      <g stroke="#BFFFF0" stroke-width="1" opacity="0.9">
+        <path d="M 318 195 l 5 -3 M 317 197 l 7 1"/>
+      </g>
+    </g>
+
+    <!-- 鼻与嘴 -->
+    <path d="M 300 214 C 298 218, 298 221, 301 222" fill="none" stroke="#D2A9B5" stroke-width="1.8" stroke-linecap="round"/>
+    <path d="M 292 232 C 298 236, 304 236, 309 232" fill="none" stroke="#B97E8F" stroke-width="2.2" stroke-linecap="round"/>
+    <!-- 腮红 -->
+    <ellipse cx="268" cy="216" rx="12" ry="6" fill="#F3B7C4" opacity="0.35"/>
+    <ellipse cx="332" cy="216" rx="12" ry="6" fill="#F3B7C4" opacity="0.35"/>
+  </g>
+
+  <!-- ── 衣料脉络与胸口核心（最上层） ─────────────────────────────── -->
+  <g id="traces">
+    <g fill="none" stroke="#00E5A0" stroke-linecap="round">
+      <g opacity="0.16" stroke-width="7">
+        <path d="M 258 318 C 274 330, 288 340, 298 352"/>
+        <path d="M 342 318 C 326 330, 312 340, 302 352"/>
+        <path d="M 252 470 C 274 476, 326 476, 348 470"/>
+        <path d="M 232 360 C 236 400, 240 440, 246 476"/>
+        <path d="M 368 360 C 364 400, 360 440, 354 476"/>
+      </g>
+      <g opacity="0.8" stroke-width="2">
+        <path d="M 258 318 C 274 330, 288 340, 298 352"/>
+        <path d="M 342 318 C 326 330, 312 340, 302 352"/>
+        <path d="M 252 470 C 274 476, 326 476, 348 470"/>
+        <path d="M 232 360 C 236 400, 240 440, 246 476"/>
+        <path d="M 368 360 C 364 400, 360 440, 354 476"/>
+      </g>
+    </g>
+    <g fill="#00E5A0">
+      <circle cx="258" cy="318" r="2.4"/>
+      <circle cx="342" cy="318" r="2.4"/>
+      <circle cx="252" cy="470" r="2.2"/>
+      <circle cx="348" cy="470" r="2.2"/>
+      <circle cx="232" cy="360" r="2"/>
+      <circle cx="368" cy="360" r="2"/>
+    </g>
+
+    <!-- 胸口核心：暖光（静息 / 陪伴） -->
+    <circle cx="300" cy="356" r="56" fill="url(#coreGlow)"/>
+    <circle cx="300" cy="356" r="16" fill="#FFE7C2"/>
+    <circle cx="300" cy="356" r="12" fill="#FFB454"/>
+    <circle cx="300" cy="356" r="17" fill="none" stroke="#00E5A0" stroke-width="1.6" opacity="0.8"/>
+    <circle cx="296" cy="351" r="4" fill="#FFF8EC" opacity="0.9"/>
+  </g>
+  <!-- 边缘光：石墨衣服与深色开屏底会糊在一起，右缘一道极淡的冷光把剪影分离出来。 -->
+  <g fill="none" stroke-linecap="round">
+    <path d="M 356 306 C 378 340, 384 392, 380 438 C 377 470, 370 504, 362 530"
+          stroke="#00E5A0" stroke-width="2" opacity="0.35"/>
+    <path d="M 360 412 C 362 452, 358 482, 360 506" stroke="#8A93A0" stroke-width="1.4" opacity="0.35"/>
+    <path d="M 344 120 C 352 146, 356 178, 354 210 C 352 232, 348 246, 342 254"
+          stroke="#8A93A0" stroke-width="1.6" opacity="0.45"/>
+    <path d="M 336 486 C 352 500, 372 512, 392 522" stroke="#00E5A0" stroke-width="1.6" opacity="0.3"/>
+  </g>
+</svg>

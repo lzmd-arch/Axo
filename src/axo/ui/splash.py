@@ -58,13 +58,13 @@ _MOVIE_NAMES = ("character.gif", "character.webp")
 _STILL_NAME = "character.png"
 _FALLBACK = Path(__file__).with_name("axo-icon.png")
 
-_WIDTH = 620
-_HEIGHT = 360
+_WIDTH = 740
+_HEIGHT = 430
 _RADIUS = 26
 _SHADOW = 18
 """窗口四周留给投影的边（画在透明层里，不属于可见底板）。"""
 
-_CHARACTER_BOX = QRectF(44, 52, 260, 256)
+_CHARACTER_BOX = QRectF(16, 6, 372, 430)
 """立绘的包围盒。形象换了也不用动——按 ``KeepAspectRatio`` 装进去。"""
 
 _PREROLL_MS = 650
@@ -369,20 +369,20 @@ class SplashScreen(QWidget):
 
     def _paint_text(self, painter: QPainter, tokens, accent: QColor) -> None:
         painter.setOpacity(self._intro)
-        x = _SHADOW + 344
+        x = _SHADOW + 366
         painter.setPen(QColor(tokens.fg_strong))
         title = QFont(self.font())
         title.setPointSize(30)
         title.setBold(True)
         painter.setFont(title)
-        painter.drawText(QRectF(x, _SHADOW + 96, 250, 46), Qt.AlignmentFlag.AlignLeft, "Axo")
+        painter.drawText(QRectF(x, _SHADOW + 136, 300, 46), Qt.AlignmentFlag.AlignLeft, "Axo")
 
         painter.setPen(QColor(tokens.fg_muted))
         subtitle = QFont(self.font())
         subtitle.setPointSize(11)
         painter.setFont(subtitle)
         painter.drawText(
-            QRectF(x, _SHADOW + 143, 250, 24),
+            QRectF(x, _SHADOW + 183, 300, 24),
             Qt.AlignmentFlag.AlignLeft,
             "阿螈 · 记忆终端",
         )
@@ -391,9 +391,9 @@ class SplashScreen(QWidget):
         stage.setPointSize(10)
         painter.setFont(stage)
         painter.setPen(QColor(tokens.fg))
-        painter.drawText(QRectF(x, _SHADOW + 196, 250, 22), Qt.AlignmentFlag.AlignLeft, self._stage)
+        painter.drawText(QRectF(x, _SHADOW + 244, 300, 22), Qt.AlignmentFlag.AlignLeft, self._stage)
 
-        self._paint_dots(painter, x, _SHADOW + 240, accent)
+        self._paint_dots(painter, x, _SHADOW + 292, accent)
 
         version = QFont(self.font())
         version.setPointSize(8)
