@@ -49,6 +49,7 @@ from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequen
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -152,7 +153,7 @@ from ..session.budget import TokenBudget, TokenMeter, reserve_for
 from ..session.environment import build_environment
 from ..session.indicator import ContextState, context_state, format_context
 from ..session.store import Message, Session, SessionStore, new_session_id
-from ..stickers import stickers_in
+from ..stickers import Sticker, add_stickers, find_in, stickers_in
 from ..tts import SpeechReceipt
 from ..weather import OpenMeteoWeather
 from ..weather_watch import WeatherBaseline, material_text
@@ -888,6 +889,7 @@ class MainWindow(QMainWindow):
         if app is not None:
             app.aboutToQuit.connect(self._shutdown)
         self._refresh_models()
+        self._refresh_stickers()
         self.chat_view.set_status("正在探测本地模型服务…")
 
         # 人设要先于第一条请求存在：它是 L0 层唯一的内容，而"任何模型读到的完全
@@ -1344,6 +1346,9 @@ class MainWindow(QMainWindow):
         self._speech_pipeline.failed.connect(self._on_pipeline_failed)
         # 拖进来的文件走**与打字同一条路**的下游（`_on_attach_files`），只是入口在网页那边。
         self.chat_view.files_dropped.connect(self._on_files_dropped)
+        self.chat_view.sticker_sent.connect(self._on_send_sticker)
+        self.chat_view.stickers_add_requested.connect(self._on_add_stickers)
+        self.chat_view.stickers_folder_requested.connect(self._on_open_stickers_folder)
         self.chat_view.tool_confirm_decided.connect(self._on_tool_confirm)
         self.model_combo.currentIndexChanged.connect(self._on_model_changed)
         self.refresh_button.clicked.connect(self._refresh_models)
@@ -1782,7 +1787,14 @@ class MainWindow(QMainWindow):
         """
         return route_turn(text, self._router_state)
 
-    def _on_submit(self, text: str, *, spoken: bool = False, audio: bytes = "") -> None:
+    def _on_submit(
+        self,
+        text: str,
+        *,
+        spoken: bool = False,
+        audio: bytes = "",
+        sticker: Sticker | None = None,
+    ) -> None:
         # **用户开口 = 她让路。** 这一句排在下面 ``_streaming`` 那一支**之前**：
         # 生成中再提交会被忽略，但"她正在说"与生成是两件事——她说话**不锁输入框**
         # （那正是这一条链的立论），所以用户完全可能在她说到一半时开口。
@@ -1867,10 +1879,19 @@ class MainWindow(QMainWindow):
         text_for_prompt = text + _attachment_prompt_block(pending)
         text_for_transcript = text + _attachment_marks(pending)
 
-        self._append(Message(role="user", content=text_for_transcript, spoken=spoken))
-        self.chat_view.append_message(
-            "user", text_for_transcript, {"title": _SPOKEN_TITLE} if spoken else None
+        meta = {"title": _SPOKEN_TITLE} if spoken else None
+        if sticker is not None:
+            meta = dict(meta or {})
+            meta["image"] = sticker.as_uri()
+        self._append(
+            Message(
+                role="user",
+                content=text_for_transcript,
+                spoken=spoken,
+                image=_sticker_stored_path(str(sticker.path)) if sticker is not None else "",
+            )
         )
+        self.chat_view.append_message("user", text_for_transcript, meta)
 
         # 预留量**跟着后端走**：云端是 0（一个字都不传 ``max_tokens``），Ollama 那条
         # 链才用 DEFAULT_RESERVE_OUTPUT——那是它的协议怪癖，不是我们的额度。
@@ -2214,6 +2235,52 @@ class MainWindow(QMainWindow):
                 "**原声没有发出去**（这一轮发的是转写文字）。\n\n" + where + "。",
             )
         return assembly, False
+
+    # ── 表情包 ────────────────────────────────────────────────────────────
+
+    def _refresh_stickers(self) -> None:
+        """重扫用户目录并推给网页。**每轮工具表也会现扫**，两边用的是同一个目录。"""
+        self._stickers: tuple[Sticker, ...] = stickers_in(stickers_dir())
+        self.chat_view.set_stickers(
+            [{"name": sticker.name, "uri": sticker.as_uri()} for sticker in self._stickers]
+        )
+
+    @Slot(str)
+    def _on_send_sticker(self, name: str) -> None:
+        """用户从面板里点了一张：**走与打字同一条下游**，只是多带一张图。"""
+        if self._streaming:
+            return
+        sticker = find_in(stickers_in(stickers_dir()), name)
+        if sticker is None:
+            self.chat_view.append_message("system", f"没有找到表情包「{name}」，可能已经被删掉了。")
+            self._refresh_stickers()
+            return
+        self._on_submit(f"[表情包] {sticker.name}", sticker=sticker)
+
+    @Slot()
+    def _on_add_stickers(self) -> None:
+        paths, _selected = QFileDialog.getOpenFileNames(
+            self,
+            "添加表情包",
+            str(Path.home()),
+            "图片 (*.png *.jpg *.jpeg *.gif *.webp)",
+        )
+        if not paths:
+            return
+        added = add_stickers(stickers_dir(), [Path(raw) for raw in paths])
+        self._refresh_stickers()
+        if added:
+            self.chat_view.append_message(
+                "system", "已添加表情包：" + "、".join(added) + "。下一轮她就能用了。"
+            )
+        else:
+            self.chat_view.append_message("system", "没有添加任何文件（可能都已存在）。")
+
+    @Slot()
+    def _on_open_stickers_folder(self) -> None:
+        folder = stickers_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
     @Slot(list)
     def _on_files_dropped(self, uris: list) -> None:

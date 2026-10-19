@@ -40,6 +40,9 @@ class RecordingChatView(QWidget):
     call_toggled = Signal()
     call_interrupted = Signal()
     call_muted = Signal(bool)
+    sticker_sent = Signal(str)
+    stickers_add_requested = Signal()
+    stickers_folder_requested = Signal()
     files_dropped = Signal(list)
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -78,6 +81,9 @@ class RecordingChatView(QWidget):
 
     def set_call_partial(self, text: str) -> None:
         self.calls.append("setCallPartial")
+
+    def set_stickers(self, stickers: list[dict[str, str]]) -> None:
+        self.calls.append(f"setStickers({len(stickers)})")
 
     def clear(self) -> None:
         self.calls.append("clear")

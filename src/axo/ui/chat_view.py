@@ -18,6 +18,9 @@ JS 与 Python 的契约（两边都是**只增不改**，否则旧前端会静�
                     window.bridge.call_toggle()                      开始/结束通话
                     window.bridge.call_interrupt()                   通话中插话：停播并开麦
                     window.bridge.call_mute(muted)                   通话静音开/关
+                    window.bridge.send_sticker(name)                 用户发一张表情包
+                    window.bridge.add_stickers()                     打开"添加表情包"文件选择
+                    window.bridge.open_stickers_folder()             打开表情包目录
     Python → JS     window.ChatHost.appendMessage(role, text, meta)   role: user|assistant|system|tool|proactive
                                                                       meta: {title?, footer?, image?}
                     window.ChatHost.pushToken(text)                  流式增量
@@ -35,6 +38,7 @@ JS 与 Python 的契约（两边都是**只增不改**，否则旧前端会静�
                     window.ChatHost.setCallLevel(level)              0–100
                     window.ChatHost.setCallPartial(text)             只显示，永不提交
                     window.ChatHost.setMotion(on)                    动效开关（false = 只留静态玻璃）
+                    window.ChatHost.setStickers(list)                [{name, uri}, ...]
                     window.ChatHost.appendToolConfirm(call_id, name, summary, meta)
                     window.ChatHost.resolveToolConfirm(call_id, granted, accepted)
 
@@ -177,6 +181,15 @@ class WebBridge(QObject):
     call_muted = Signal(bool)
     """通话静音开关。"""
 
+    sticker_sent = Signal(str)
+    """用户从表情面板里点了一张：``name`` 是文件名去掉扩展名。"""
+
+    stickers_add_requested = Signal()
+    """表情面板里的「添加图片…」被按下。"""
+
+    stickers_folder_requested = Signal()
+    """表情面板里的「打开文件夹」被按下。"""
+
     voice_toggled = Signal()
     """麦克风按钮被按了一下。:class:`ChatView` 把它原样转发出去。
 
@@ -211,6 +224,20 @@ class WebBridge(QObject):
     @Slot(bool)
     def call_mute(self, muted: bool) -> None:
         self.call_muted.emit(bool(muted))
+
+    @Slot(str)
+    def send_sticker(self, name: str) -> None:
+        name = (name or "").strip()
+        if name:
+            self.sticker_sent.emit(name)
+
+    @Slot()
+    def add_stickers(self) -> None:
+        self.stickers_add_requested.emit()
+
+    @Slot()
+    def open_stickers_folder(self) -> None:
+        self.stickers_folder_requested.emit()
 
     @Slot()
     def voice_toggle(self) -> None:
@@ -324,6 +351,15 @@ class ChatView(QWidget):
     call_muted = Signal(bool)
     """通话静音开关。"""
 
+    sticker_sent = Signal(str)
+    """用户从表情面板里点了一张。"""
+
+    stickers_add_requested = Signal()
+    """表情面板里的「添加图片…」被按下。"""
+
+    stickers_folder_requested = Signal()
+    """表情面板里的「打开文件夹」被按下。"""
+
     files_dropped = Signal(list)
     """拖进来一批文件（``file://`` URL）。**与桥那个同名但不是一个对象**——
     理由见 :attr:`WebBridge.voice_toggled` 那条注释：少声明一次，构造就会炸。"""
@@ -338,6 +374,9 @@ class ChatView(QWidget):
         self._bridge.call_toggled.connect(self.call_toggled)
         self._bridge.call_interrupted.connect(self.call_interrupted)
         self._bridge.call_muted.connect(self.call_muted)
+        self._bridge.sticker_sent.connect(self.sticker_sent)
+        self._bridge.stickers_add_requested.connect(self.stickers_add_requested)
+        self._bridge.stickers_folder_requested.connect(self.stickers_folder_requested)
         self._bridge.files_dropped.connect(self.files_dropped)
 
         #: 外观三件套的**当前值**。存下来是为了在 ``loadFinished`` 之后重推：
@@ -365,6 +404,9 @@ class ChatView(QWidget):
         self._call_meta: dict[str, Any] = {}
         self._call_level: int = -1
         self._call_partial: str = ""
+        #: 表情包目录（``[{name, uri}]``），同样缓存 + 重推：页面后加载，只推一次
+        #: 会落在空页面上。
+        self._stickers: list[dict[str, str]] = []
 
         self._view = _SafeView(self)
         self._page = _SafePage(self._view)
@@ -423,6 +465,8 @@ class ChatView(QWidget):
             self._call("setCallLevel", self._call_level)
         if self._call_partial:
             self._call("setCallPartial", self._call_partial)
+        if self._stickers:
+            self._call("setStickers", self._stickers)
 
     # ── 向网页推送 ──────────────────────────────────────────────────────────
 
@@ -437,6 +481,11 @@ class ChatView(QWidget):
         """
         payload = ", ".join(json.dumps(arg, ensure_ascii=True) for arg in args)
         self._page.runJavaScript(f"window.ChatHost && window.ChatHost.{function}({payload});")
+
+    def set_stickers(self, stickers: list[dict[str, str]]) -> None:
+        """把表情包目录推给网页。每项 ``{name, uri}``，``uri`` 是 ``file:`` URL。"""
+        self._stickers = [dict(item) for item in stickers]
+        self._call("setStickers", self._stickers)
 
     def set_call_state(self, state: str, meta: dict[str, Any] | None = None) -> None:
         """通话状态。认不出的值当 ``off``（理由同 :meth:`set_voice_state`）。"""

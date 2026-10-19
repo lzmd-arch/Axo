@@ -262,6 +262,13 @@ def main(argv: list[str] | None = None) -> int:
         app.processEvents()
     move_report = boot_data_root(settings)
 
+    # 内置表情包只在第一次播种。**目录归用户**：删掉一张默认表情是用户的决定，
+    # 每次启动补回来会让"删除"看起来没生效（见 ``axo.stickers.seed_default_stickers``）。
+    from ..paths import stickers_dir
+    from ..stickers import seed_default_stickers
+
+    seed_default_stickers(stickers_dir())
+
     from .main_window import MainWindow  # 推迟到 QApplication 之后
 
     if splash is not None:

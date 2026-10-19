@@ -21,6 +21,12 @@
   var input = document.getElementById("input");
   var sendButton = document.getElementById("send");
   var micButton = document.getElementById("mic");
+  var stickerButton = document.getElementById("sticker");
+  var stickerPanel = document.getElementById("sticker-panel");
+  var stickerGrid = document.getElementById("sticker-grid");
+  var stickerEmpty = document.getElementById("sticker-empty");
+  var stickerAdd = document.getElementById("sticker-add");
+  var stickerFolder = document.getElementById("sticker-folder");
   var callButton = document.getElementById("call");
   var callBar = document.getElementById("call-bar");
   var callStateLabel = document.getElementById("call-state");
@@ -46,6 +52,7 @@
   //: 网页判断**——半双工由 Python 的状态机决定，这里只显示。
   var callState = "";
   var callMuted = false;
+  var stickers = []; // [{name, uri}]，由 Python 推
   var active = null; // 正在流式写入的消息体
   var pending = null; // 待渲染的增量文本缓冲
 
@@ -124,6 +131,7 @@
       input.disabled = true;
       sendButton.disabled = true;
       micButton.disabled = true;
+      if (stickerButton) stickerButton.disabled = true;
       callButton.disabled = true;
       return;
     }
@@ -133,6 +141,7 @@
     // 麦克风跟着发送键一起禁：生成中她说不了话，而"识别完一句却发不出去"（`_on_submit`
     // 那一支直接 return）在界面上是一句人间蒸发的话。**不静默丢一次点击。**
     micButton.disabled = busy || personaPending || inCall;
+    if (stickerButton) stickerButton.disabled = busy || personaPending;
     callButton.disabled = personaPending;
     callButton.textContent = inCall ? "挂断" : "通话";
     callButton.title = inCall ? "结束通话" : "开始通话";
@@ -414,6 +423,12 @@
       scrollToBottom();
     },
 
+    /* 表情包目录。**每次整份替换**：Python 那边加了一张就重推一份，网页不猜增量。 */
+    setStickers: function (items) {
+      stickers = Array.isArray(items) ? items.slice() : [];
+      renderStickers();
+    },
+
     /* 主题。**明暗由 Python 说了算**，见 css/app.css 顶部那段说明：两侧各检测
        一次系统偏好，迟早会在某台机器上分成两半。主色只发 --accent——网页侧
        用得到用户主色的地方只有链接、输入框焦点边和发送键，其余颜色由
@@ -491,6 +506,44 @@
     },
   };
 
+  // ── 表情面板 ──────────────────────────────────────────────────────────────
+
+  function renderStickers() {
+    if (!stickerGrid) return;
+    stickerGrid.textContent = "";
+    stickers.forEach(function (item) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "sticker-item";
+      button.title = item.name || "";
+      var image = document.createElement("img");
+      image.src = item.uri || "";
+      image.alt = item.name || "表情包";
+      button.appendChild(image);
+      button.addEventListener("click", function () {
+        if (!bridge || busy || personaPending || channelDead) return;
+        hideStickerPanel();
+        bridge.send_sticker(item.name || "");
+      });
+      stickerGrid.appendChild(button);
+    });
+    if (stickerEmpty) stickerEmpty.hidden = stickers.length > 0;
+  }
+
+  function toggleStickerPanel() {
+    if (!stickerPanel) return;
+    if (stickerPanel.hidden) {
+      stickerPanel.hidden = false;
+      renderStickers();
+    } else {
+      hideStickerPanel();
+    }
+  }
+
+  function hideStickerPanel() {
+    if (stickerPanel) stickerPanel.hidden = true;
+  }
+
   // ── 输入 ──────────────────────────────────────────────────────────────────
 
   function submit() {
@@ -522,6 +575,33 @@
   micButton.addEventListener("click", function () {
     if (busy || personaPending || channelDead || !bridge || callState) return;
     bridge.voice_toggle();
+  });
+
+  // 表情面板：打开/收起。**发送按钮仍受忙与人设约束**；浏览不拦。
+  if (stickerButton) {
+    stickerButton.addEventListener("click", function () {
+      if (personaPending || channelDead) return;
+      toggleStickerPanel();
+    });
+  }
+  if (stickerAdd) {
+    stickerAdd.addEventListener("click", function () {
+      if (bridge) bridge.add_stickers();
+    });
+  }
+  if (stickerFolder) {
+    stickerFolder.addEventListener("click", function () {
+      if (bridge) bridge.open_stickers_folder();
+    });
+  }
+  document.addEventListener("click", function (event) {
+    if (!stickerPanel || stickerPanel.hidden) return;
+    var target = event.target;
+    if (stickerPanel.contains(target) || (stickerButton && stickerButton.contains(target))) return;
+    hideStickerPanel();
+  });
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") hideStickerPanel();
   });
 
   // 通话：开始/挂断、插话、静音。**挂断永远可用**（正忙也要能挂）。

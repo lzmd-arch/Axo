@@ -18,6 +18,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import shutil
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,9 +27,11 @@ from pathlib import Path
 __all__ = [
     "STICKER_SUFFIXES",
     "Sticker",
+    "add_stickers",
     "catalog_line",
     "find_in",
     "find_sticker",
+    "seed_default_stickers",
     "stickers_in",
 ]
 
@@ -116,3 +120,89 @@ def catalog_line(stickers: Sequence[Sticker]) -> str:
     在可读根为空时的姿态一致：没有能力的时候，那个工具就是不在表里）。
     """
     return "、".join(sticker.name for sticker in stickers)
+
+
+#: 内置表情包放在包的资产目录里，与开屏立绘同一个 ``assets/`` 树。
+DEFAULT_STICKERS_DIR = Path(__file__).with_name("ui") / "assets" / "stickers"
+"""**只读**的默认包。用户目录是 :func:`~axo.paths.stickers_dir`，两者不是一个地方。"""
+
+_DEFAULT_MARKER = ".defaults-v1"
+"""已经播过种的标记。**它不是图片**，扫描函数按后缀把它挡在外面。
+
+用标记而不是"每次补缺"：用户可能删掉一张默认表情——那是他的决定。每次启动都把
+删掉的补回来，会让"删除"这个动作看起来没生效。标记只在第一次（或换了新一版默认
+包）时写，之后目录归用户。
+"""
+
+
+def seed_default_stickers(dest: Path, source: Path | None = None) -> tuple[str, ...]:
+    """把内置表情包**复制到用户目录**，返回这次真正新增的文件名。
+
+    **不覆盖同名文件**：用户可能已经放了一张自己画的「开心」，那一张优先。复制
+    失败也不抛——表情包是装饰，启动不该因为它起不来；失败的那几张下次启动会再试。
+
+    只在标记不存在时播一次。标记写入失败同样不抛：最坏是下次启动再扫一遍，而
+    "再扫一遍"本身是幂等的（同名文件跳过）。
+    """
+    origin = DEFAULT_STICKERS_DIR if source is None else source
+    if not origin.is_dir():
+        return ()
+    marker = dest / _DEFAULT_MARKER
+    if marker.exists():
+        return ()
+    try:
+        dest.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return ()
+    added: list[str] = []
+    for child in sorted(origin.iterdir(), key=lambda path: path.name.casefold()):
+        if not child.is_file() or child.suffix.lower() not in STICKER_SUFFIXES:
+            continue
+        target = dest / child.name
+        if target.exists():
+            continue
+        try:
+            shutil.copy2(child, target)
+        except OSError:
+            continue
+        added.append(child.name)
+    with contextlib.suppress(OSError):
+        marker.write_text("1", encoding="utf-8")
+    return tuple(added)
+
+
+def add_stickers(dest: Path, sources: Sequence[Path]) -> tuple[str, ...]:
+    """把用户挑中的图片复制进表情包目录，返回**这次真的新增的**名字。
+
+    **重名不覆盖**，改成 ``名字-2.png``：用户可能已经有一张同名的，默默盖掉它
+    等于替用户做了一次删除。源文件本来就在目录里（用户又选了一次）时跳过，不
+    复制出 ``开心-2``。
+
+    非图片后缀与读不了的文件同样跳过——文件选择框已经过滤过一遍，但这里不依赖
+    调用方的过滤器（同 :func:`stickers_in` 只认一份判据）。
+    """
+    try:
+        dest.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return ()
+    added: list[str] = []
+    for raw in sources:
+        source = Path(raw)
+        if not source.is_file() or source.suffix.lower() not in STICKER_SUFFIXES:
+            continue
+        target = dest / source.name
+        index = 2
+        while target.exists():
+            if target.resolve() == source.resolve():
+                target = None  # type: ignore[assignment]
+                break
+            target = dest / f"{source.stem}-{index}{source.suffix}"
+            index += 1
+        if target is None:
+            continue
+        try:
+            shutil.copy2(source, target)
+        except OSError:
+            continue
+        added.append(target.stem)
+    return tuple(added)

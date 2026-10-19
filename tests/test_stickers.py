@@ -9,7 +9,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from axo.stickers import STICKER_SUFFIXES, Sticker, catalog_line, find_sticker, stickers_in
+from axo.stickers import (
+    STICKER_SUFFIXES,
+    Sticker,
+    add_stickers,
+    catalog_line,
+    find_sticker,
+    seed_default_stickers,
+    stickers_in,
+)
 
 
 def touch(folder: Path, name: str) -> Path:
@@ -166,3 +174,74 @@ def test_only_the_four_listed_suffix_families_are_recognised() -> None:
     """判据只有一处：``STICKER_SUFFIXES``。两处各写一份的话，"扫得到却找不到"会变成
     一种只有用户碰得上的怪事。"""
     assert STICKER_SUFFIXES == (".png", ".jpg", ".jpeg", ".gif", ".webp")
+
+
+# ── 内置包播种与用户添加 ────────────────────────────────────────────────────
+
+
+def test_seed_copies_the_builtin_pack_once(tmp_path: Path) -> None:
+    source = tmp_path / "builtin"
+    touch(source, "开心.png")
+    touch(source, "好奇.png")
+    touch(source, "说明.txt")
+    dest = tmp_path / "user"
+
+    added = seed_default_stickers(dest, source=source)
+
+    assert set(added) == {"开心.png", "好奇.png"}
+    assert [sticker.name for sticker in stickers_in(dest)] == ["好奇", "开心"] or [
+        sticker.name for sticker in stickers_in(dest)
+    ] == ["开心", "好奇"]
+
+
+def test_seed_never_overwrites_a_user_file(tmp_path: Path) -> None:
+    source = tmp_path / "builtin"
+    touch(source, "开心.png")
+    dest = tmp_path / "user"
+    dest.mkdir()
+    (dest / "开心.png").write_bytes("用户自己画的".encode())
+
+    seed_default_stickers(dest, source=source)
+
+    assert (dest / "开心.png").read_bytes() == "用户自己画的".encode()
+
+
+def test_seed_does_not_come_back_after_the_user_deletes_it(tmp_path: Path) -> None:
+    """删一张默认表情是用户的决定——下次启动不该又冒出来。"""
+    source = tmp_path / "builtin"
+    touch(source, "开心.png")
+    dest = tmp_path / "user"
+    seed_default_stickers(dest, source=source)
+    (dest / "开心.png").unlink()
+
+    again = seed_default_stickers(dest, source=source)
+
+    assert again == ()
+    assert stickers_in(dest) == ()
+
+
+def test_add_keeps_both_files_on_a_name_clash(tmp_path: Path) -> None:
+    """重名改成 ``名字-2.png``，不覆盖用户已有的那张。"""
+    dest = tmp_path / "stickers"
+    dest.mkdir()
+    (dest / "开心.png").write_bytes(b"old")
+    incoming = tmp_path / "开心.png"
+    incoming.write_bytes(b"new")
+
+    added = add_stickers(dest, [incoming])
+
+    assert added == ("开心-2",)
+    assert (dest / "开心.png").read_bytes() == b"old"
+    assert (dest / "开心-2.png").read_bytes() == b"new"
+
+
+def test_add_skips_non_images_and_the_file_already_there(tmp_path: Path) -> None:
+    dest = tmp_path / "stickers"
+    dest.mkdir()
+    inside = dest / "已有.png"
+    inside.write_bytes(b"x")
+    note = tmp_path / "说明.txt"
+    note.write_text("not an image", encoding="utf-8")
+
+    assert add_stickers(dest, [inside, note]) == ()
+    assert sorted(path.name for path in dest.iterdir()) == ["已有.png"]

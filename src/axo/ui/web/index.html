@@ -78,9 +78,19 @@
     <button id="call-hangup" type="button" title="挂断">挂断</button>
   </section>
 
+  <section id="sticker-panel" hidden aria-label="表情包">
+    <div id="sticker-grid"></div>
+    <p id="sticker-empty" hidden>还没有表情包。点「添加图片…」放一张进来。</p>
+    <div id="sticker-actions">
+      <button id="sticker-add" type="button">添加图片…</button>
+      <button id="sticker-folder" type="button">打开文件夹</button>
+    </div>
+  </section>
+
   <footer id="composer">
     <textarea id="input" rows="1" placeholder="说点什么…（Enter 发送，Shift+Enter 换行）"
               autocomplete="off" spellcheck="false"></textarea>
+    <button id="sticker" type="button" title="表情包">表情</button>
     <button id="call" type="button" title="开始通话">通话</button>
     <button id="mic" type="button" title="说一句（按一下开始，再按一下结束）">说话</button>
     <button id="send" type="button" title="发送">发送</button>

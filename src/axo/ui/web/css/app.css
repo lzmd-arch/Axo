@@ -360,6 +360,11 @@ body.has-wallpaper #scrim {
 .msg-user {
   display: flex;
   justify-content: flex-end;
+  /* **对齐到底边，不要 stretch。** flex 默认会把同一行的项目拉成等高：
+     文字气泡旁边放一张 512 的图时，那块小气泡会被拉成一张与图等高的深色
+     空板——看起来像一条坏掉的消息。 */
+  align-items: flex-end;
+  gap: 8px;
 }
 
 .msg-user .msg-body {
@@ -489,6 +494,10 @@ body.busy .msg-assistant:last-child .msg-body::after {
 }
 
 /* ── 消息内的 markdown 元素 ─────────────────────────────────────────────── */
+
+.msg-body:empty {
+  display: none;
+}
 
 .msg-body > *:first-child {
   margin-top: 0;
@@ -665,7 +674,8 @@ body.busy .msg-assistant:last-child .msg-body::after {
 /* 「说话」与「发送」同一族玻璃，但**不做成实心主色**：这一页的主行动键只有一个
    （发送），而麦克风是它旁边那个动作。"我在听"由描边换成强调色来说——同一条判断
    在 Qt 外壳那边是 `kind="primary"` 只给一个按钮。 */
-#mic {
+#mic,
+#sticker {
   flex: 0 0 auto;
   height: 44px;
   padding: 0 14px;
@@ -697,7 +707,8 @@ body.busy .msg-assistant:last-child .msg-body::after {
   color: var(--fg-muted);
 }
 
-#mic:disabled {
+#mic:disabled,
+#sticker:disabled {
   opacity: 0.45;
   cursor: default;
   -webkit-backdrop-filter: none;
@@ -742,6 +753,10 @@ body.busy .msg-assistant:last-child .msg-body::after {
    对话流挤成一列图片，而它本来只是随口贴的一张小玩意。 */
 .msg-image {
   display: block;
+  width: 168px;
+  height: 168px;
+  object-fit: contain;
+  border-radius: 12px;
   margin-top: 6px;
   max-width: 180px;
   max-height: 180px;
@@ -950,6 +965,7 @@ body::before {
 /* 按钮：悬停抬一点、按下缩一点，回弹曲线让它像有质量。 */
 #send,
 #mic,
+#sticker,
 #call,
 #call-bar button,
 .tool-actions button,
@@ -964,6 +980,7 @@ body::before {
 
 #send:not(:disabled):hover,
 #mic:not(:disabled):hover,
+#sticker:not(:disabled):hover,
 #call:not(:disabled):hover,
 #call-bar button:hover,
 .tool-actions button:hover:not(:disabled),
@@ -978,12 +995,102 @@ body::before {
 
 #send:not(:disabled):active,
 #mic:not(:disabled):active,
+#sticker:not(:disabled):active,
 #call:not(:disabled):active,
 #call-bar button:active,
 .tool-actions button:active:not(:disabled),
 #persona-save:active,
 #persona-skip:active {
   transform: scale(0.97);
+}
+
+
+/* ── 表情面板 ────────────────────────────────────────────────────────────── */
+
+/* 固定在输入条上方。**不做成输入条的子元素**：输入条是 flex 行，面板一旦进去就会
+   把那一行撑高，而且关闭时布局会跳一下。 */
+#sticker-panel {
+  position: fixed;
+  z-index: 40;
+  left: 50%;
+  bottom: 84px;
+  transform: translateX(-50%);
+  width: min(560px, calc(100% - 32px));
+  max-height: 46vh;
+  overflow-y: auto;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg-elevated) 92%, transparent);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  backdrop-filter: blur(20px) saturate(150%);
+  box-shadow:
+    inset 0 1px 0 var(--glass-hi),
+    0 18px 44px -24px var(--glass-shadow);
+}
+
+#sticker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+  gap: 8px;
+}
+
+.sticker-item {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  padding: 6px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-bubble-user) 55%, transparent);
+  cursor: pointer;
+  transition:
+    transform var(--motion-fast) var(--motion-spring),
+    border-color var(--motion-fast) ease,
+    background var(--motion-fast) ease;
+}
+
+.sticker-item:hover {
+  transform: translateY(-2px) scale(1.03);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.sticker-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+#sticker-empty {
+  margin: 10px 8px;
+  color: var(--fg-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+#sticker-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+#sticker-actions button {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+#sticker-actions button:hover {
+  color: var(--fg);
+  border-color: var(--accent);
 }
 
 /* 正在听：一圈缓慢呼吸的强调色，而不是一个不停转的圈。 */
