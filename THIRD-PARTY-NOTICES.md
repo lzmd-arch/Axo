@@ -31,6 +31,7 @@
 | anyio | 4.15.1 | MIT |
 | biosnn-bus | 0.1.0 | Apache-2.0 |
 | certifi | 2026.7.22 | MPL-2.0 |
+| cffi | 2.1.1 | MIT |
 | charset-normalizer | 3.5.2 | MIT |
 | colorama | 0.4.6 | BSD-3-Clause |
 | cryptography | 50.0.2 | Apache-2.0 OR BSD-3-Clause |
@@ -71,6 +72,10 @@
   `vosk.KaldiRecognizer` 两个类**，但"实际用没用到"不是这张表的判据，"被冻结了"才是
   （同下面 `pytest` 那一条）。上面那几行的许可见表；`vosk` 自己的 C 库与 GCC 运行库
   见第二节末尾。
+- **`cffi` 随产物发的是扩展模块，不是 Python 包。** `cryptography` 声明依赖它，产物
+  `_internal/` 根上有 `_cffi_backend.cp312-win_amd64.pyd`；`cffi/` 本身没有冻进 PYZ，
+  所以构建对账时它走 `_FROZEN_EXEMPT`。`pycparser` 只在 cffi 编译期用得到，**一个字
+  节都没进产物**，因此不在表里。
 - **`setuptools` 是打包器带进来的，不是应用依赖。** PyInstaller 给这个产物加了一个
   `pyi_rth_setuptools` 运行期钩子，它把 `setuptools` 整个收进 PYZ（含它 vendored 的
   `packaging` / `wheel` / `jaraco` 等）。应用代码一个字都没用到它。

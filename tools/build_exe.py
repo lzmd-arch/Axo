@@ -1164,12 +1164,17 @@ _FROZEN_MARKERS = ("<!-- frozen-set:begin -->", "<!-- frozen-set:end -->")
 """``NOTICES_NAME`` 里那张表的首尾标记。用 HTML 注释是因为它在渲染出来的页面上不可见，
 而这里要的是"人读的文档"和"机器读的表"是同一份东西——两份迟早会分叉。"""
 
-_FROZEN_EXEMPT = ("pyinstaller",)
+_FROZEN_EXEMPT = ("cffi", "pyinstaller")
 """在表里、但不以 Python 模块的形式出现在 PYZ 里的发行包。
 
 ``pyinstaller`` 进产物的是它的 **bootloader**（exe 头部那几 MB 的 C 代码），它自己的
 Python 包一个模块都没进去。表里列它的理由是"随产物分发"成立，与"它在 PYZ 里"无关
 ——所以对账时要豁免这一条，而不是把表改小。
+
+``cffi`` 是同一个形状的第二种：``cryptography`` 声明依赖它，产物里也确实带着它的
+``_cffi_backend.cp312-win_amd64.pyd``（在 ``_internal/`` 根上），但 **Python 包
+``cffi/`` 一个模块都没冻进 PYZ**——``cryptography`` 只用那个扩展模块。表里列它是
+因为"随产物分发"成立；PYZ 里找不到它是事实，不是表写错了。
 """
 
 _EXPECTED_WITHOUT_LICENSES = ("biosnn-bus", "vosk")
@@ -1418,11 +1423,20 @@ def _distribution_license_files(distribution: str) -> list[tuple[str, Path]]:
     except importlib.metadata.PackageNotFoundError:
         return []
     marker = ".dist-info/licenses/"
+    legacy = {"LICENSE", "COPYING"}
     found: list[tuple[str, Path]] = []
     for entry in dist.files or ():
         posix = str(entry).replace("\\", "/")
-        if marker not in posix or posix.endswith("/"):
+        if posix.endswith("/"):
             continue
+        if marker not in posix:
+            # 旧式 wheel 把正文直接摆在 ``.dist-info/`` 下面，没有 ``licenses/`` 这一层
+            # （qrcode 8.2 实测如此：``qrcode-8.2.dist-info/LICENSE``）。只认"紧挨着
+            # dist-info 的单个文件、名字是许可名"这一种形状，**不按目录放宽**——按目录
+            # 放宽会捞到代码（见上面那段）。
+            _before, _sep, after = posix.rpartition(".dist-info/")
+            if not _before or "/" in after or after.split(".")[0].upper() not in legacy:
+                continue
         found.append((posix, Path(dist.locate_file(entry))))
     return found
 
