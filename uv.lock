@@ -51,6 +51,9 @@ files = [
 llm = [
     { name = "httpx" },
 ]
+music = [
+    { name = "tinytag" },
+]
 pack = [
     { name = "pyinstaller" },
 ]
@@ -86,9 +89,10 @@ requires-dist = [
     { name = "pypdf", marker = "extra == 'files'", specifier = ">=5.1,<7" },
     { name = "pyside6", marker = "extra == 'app'", specifier = ">=6.7" },
     { name = "qrcode", marker = "extra == 'sync'", specifier = ">=7.4" },
+    { name = "tinytag", marker = "extra == 'music'", specifier = ">=2.3" },
     { name = "vosk", marker = "extra == 'voice'", specifier = ">=0.3.45" },
 ]
-provides-extras = ["app", "llm", "pack", "voice", "files", "sync"]
+provides-extras = ["app", "llm", "pack", "voice", "files", "sync", "music"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1369,6 +1373,15 @@ name = "srt"
 version = "3.5.3"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/66/b7/4a1bc231e0681ebf339337b0cd05b91dc6a0d701fa852bb812e244b7a030/srt-3.5.3.tar.gz", hash = "sha256:4884315043a4f0740fd1f878ed6caa376ac06d70e135f306a6dc44632eed0cc0", size = 28296, upload-time = "2023-03-28T02:35:44.007Z" }
+
+[[package]]
+name = "tinytag"
+version = "2.3.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/38/0f/fae085b7f19fe0c67b68e6d70098ac6cd046cc498f253f5ee56a3dd03bbc/tinytag-2.3.2.tar.gz", hash = "sha256:021d711cdbdbf840d3b67b976cb34dadc58d2fcfd490eb74ef9602b37b991414", size = 47353, upload-time = "2026-09-07T17:46:08.886Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6b/54/d378858d14e5c5c7b921cb9ffccf27be3d34f3d6d010c57404ddd634685d/tinytag-2.3.2-py3-none-any.whl", hash = "sha256:ebaf957915266b9c20414a10f8c5170a345aa039a794650d39d66e7d6b96199f", size = 37171, upload-time = "2026-09-07T17:46:07.434Z" },
+]
 
 [[package]]
 name = "tomli"

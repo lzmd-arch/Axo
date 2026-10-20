@@ -192,6 +192,8 @@ from .memory_worker import (
     MemorySyncWorker,
     render_recall_detail,
 )
+from .music_service import MusicService
+from .music_window import MusicWindow
 from .news_worker import NewsWorker
 from .onboarding import OnboardingWizard
 from .proactive_scheduler import ProactiveScheduler
@@ -204,6 +206,7 @@ from .settings_store import (
     PROVIDER_OLLAMA,
     BackendSettings,
     MemorySettings,
+    MusicSettings,
     ProactiveSettings,
     ReminderSettings,
     SettingsStore,
@@ -538,6 +541,43 @@ def _install_window_icon(window: QWidget) -> None:
     window.setWindowIcon(icon)
 
 
+class _MusicChannel:
+    """工具面看到的音乐服务。**只把会动播放器的调用搬回界面线程。**"""
+
+    def __init__(self, window: Any, service: MusicService) -> None:
+        self._window = window
+        self._service = service
+
+    @property
+    def available(self) -> bool:
+        return self._service.available
+
+    def search(self, query: str, *, limit: int = 20) -> Any:
+        return self._service.search(query, limit=limit)
+
+    def playlists(self) -> Any:
+        return self._service.playlists()
+
+    def lyrics_for(self, query: str = "") -> Any:
+        return self._service.lyrics_for(query)
+
+    def state(self) -> Any:
+        return self._service.state()
+
+    def play(self, **kwargs: Any) -> Any:
+        return self._checked(self._window._ui_call(lambda: self._service.play(**kwargs)))
+
+    def control(self, action: str, value: Any = None) -> Any:
+        return self._checked(self._window._ui_call(self._service.control, action, value))
+
+    @staticmethod
+    def _checked(value: Any) -> Any:
+        """``_ui_call`` 把界面线程里的异常收成一句字符串；这里把它还原成失败。"""
+        if isinstance(value, str) and value.startswith(("操作失败：", "界面没有响应")):
+            raise RuntimeError(value)
+        return value
+
+
 class MainWindow(QMainWindow):
     """记忆终端主窗口。"""
 
@@ -612,6 +652,10 @@ class MainWindow(QMainWindow):
         self._sync_approval_timer = QTimer(self)
         self._sync_approval_timer.setInterval(250)
         self._sync_approval_timer.timeout.connect(self._poll_sync_approval)
+        #: 本地音乐库。歌库根目录是用户选的**绝对路径**，不跟着数据根搬迁。
+        self._music_settings: MusicSettings = self._settings_store.load_music()
+        self._music_window: MusicWindow | None = None
+        self._music_service = MusicService(self._music_settings, parent=self)
         # **自启那条值的自愈。** 程序换过位置之后（用户把 exe 挪了、或者换了安装目录），
         # 注册表里那一行还指着旧路径，而症状是"登录时什么都没发生"——离改动已经过去
         # 几周。所以开着这一项就启动时对一次表。
@@ -980,6 +1024,7 @@ class MainWindow(QMainWindow):
         if self._consolidation_enabled:
             self._consolidation_scheduler.start()
         QTimer.singleShot(1500, self._apply_sync_settings)
+        QTimer.singleShot(1800, self._music_service.start)
 
         # **她开口的那一侧也要有人按一下启动。** 组件是独立进程（torch 不进本仓），
         # 这一句只是「替用户按一下」：先探端口、没在跑才拉，退出时只收自己拉的那个。
@@ -1026,6 +1071,9 @@ class MainWindow(QMainWindow):
         memory_window = getattr(self, "_memory_window", None)
         if memory_window is not None and hasattr(memory_window, "set_glass"):
             memory_window.set_glass(resolved.accent, motion=theme.motion)
+        music_window = getattr(self, "_music_window", None)
+        if music_window is not None and hasattr(music_window, "set_glass"):
+            music_window.set_glass(resolved.accent, motion=theme.motion)
         # 图标装在这里而不是 ``__init__`` 里单写一处：换主色（设置窗口的实时预览、
         # 系统明暗翻转）走的是同一个入口，装在这儿才不会有"托盘变了、标题栏还是旧
         # 色"的两处不一致。
@@ -1200,6 +1248,10 @@ class MainWindow(QMainWindow):
         self.stop_button = QPushButton("■ 停止", header)
         self.stop_button.setEnabled(False)
         row.addWidget(self.stop_button)
+
+        self.music_button = QPushButton("音乐", header)
+        self.music_button.setToolTip("打开音乐库：搜歌、歌单、歌词与播放控制。")
+        row.addWidget(self.music_button)
 
         self.memory_button = QPushButton("记忆", header)
         self.memory_button.setToolTip(
@@ -1385,6 +1437,7 @@ class MainWindow(QMainWindow):
         self.stop_button.clicked.connect(self._on_stop)
         self.ledger_button.toggled.connect(self._on_toggle_ledger)
         self.memory_button.clicked.connect(self._on_open_memory)
+        self.music_button.clicked.connect(self._on_open_music)
         self.settings_button.clicked.connect(self._on_open_settings)
         self.session_list.currentItemChanged.connect(self._on_session_selected)
         self.delete_session_button.clicked.connect(self._on_delete_session)
@@ -2092,6 +2145,9 @@ class MainWindow(QMainWindow):
             # **每轮现扫**：用户往 ``stickers/`` 里丢一张图，下一轮她就用得上。
             # 目录是空的就返回空元组，工具随之不登记。
             stickers=stickers_in(stickers_dir()),
+            music=(
+                self._music_channel() if callable(getattr(self, "_music_channel", None)) else None
+            ),
         )
         # 插件同理每轮现读（改一个插件不必重启），而 ``taken`` 把内置那些名字先占上：
         # **撞名的插件工具会被挡掉并记一条**——两个同名工具会让模型看到一份自相矛盾的
@@ -2463,6 +2519,9 @@ class MainWindow(QMainWindow):
             clipboard_read=lambda: self._ui_call(lambda: QApplication.clipboard().text()),
             clipboard_write=lambda text: self._ui_call(self._write_clipboard, text),
             notify=lambda title, body: self._ui_call(lambda: self._tray.show_message(title, body)),
+            music=(
+                self._music_channel() if callable(getattr(self, "_music_channel", None)) else None
+            ),
         )
         thread = QThread(self)
         worker = AgentWorker(
@@ -3902,6 +3961,52 @@ class MainWindow(QMainWindow):
         self._memory_window.raise_()
         self._memory_window.activateWindow()
 
+    # ── 音乐 ────────────────────────────────────────────────────────────────
+
+    @Slot()
+    def _on_open_music(self) -> None:
+        """打开音乐窗口。**播放器归服务，关窗不停止播放。**"""
+        if self._music_window is None:
+            window = MusicWindow(
+                self._music_service,
+                accent=self._resolved.accent,
+                motion=self._theme.motion,
+            )
+            window.volume_changed.connect(self._on_music_volume)
+            window.settings_requested.connect(self._on_open_settings)
+            self._music_window = window
+        self._music_window.refresh()
+        self._music_window.show()
+        self._music_window.raise_()
+        self._music_window.activateWindow()
+
+    def _music_channel(self) -> Any | None:
+        """给工具面的鸭子通道：读走内存索引，播放/控制回界面线程。"""
+        service = getattr(self, "_music_service", None)
+        if service is None:
+            return None
+        return _MusicChannel(self, service)
+
+    @Slot(object)
+    def _on_music_settings_changed(self, settings: MusicSettings) -> None:
+        self._music_settings = settings
+        self._settings_store.save_music(settings)
+        self._music_service.apply_settings(settings)
+        if self._music_window is not None:
+            self._music_window.refresh()
+
+    @Slot(int)
+    def _on_music_volume(self, volume: int) -> None:
+        settings = MusicSettings(
+            library_root=self._music_settings.library_root,
+            scan_on_start=self._music_settings.scan_on_start,
+            online_lyrics=self._music_settings.online_lyrics,
+            volume=max(0, min(100, int(volume))),
+        )
+        self._music_settings = settings
+        self._settings_store.save_music(settings)
+        self._music_service.apply_settings(settings)
+
     # ── 人设 ────────────────────────────────────────────────────────────────
     #
     # 库里两条，角色不同（见 memory/persona.py）：内置那条程序保证、不可改不可删；
@@ -4049,6 +4154,7 @@ class MainWindow(QMainWindow):
                     backend=self._backend_settings,
                     tools=self._current_tool_settings(),
                     voice=self._voice_settings,
+                    music=self._music_settings,
                     memory=MemorySettings(
                         task_memory=self._task_memory,
                         graph_channel=self._graph_enabled,
@@ -4069,6 +4175,7 @@ class MainWindow(QMainWindow):
                 dialog.web_approval_changed.connect(self._on_web_approval_changed)
                 dialog.commands_changed.connect(self._on_commands_changed)
                 dialog.voice_changed.connect(self._on_voice_settings_changed)
+                dialog.music_changed.connect(self._on_music_settings_changed)
                 dialog.memory_changed.connect(self._on_memory_changed)
                 dialog.reminders_changed.connect(self._on_reminders_changed)
                 dialog.proactive_changed.connect(self._on_proactive_settings_changed)
@@ -4097,6 +4204,7 @@ class MainWindow(QMainWindow):
                     self._backend_settings,
                     tools=self._current_tool_settings(),
                     voice=self._voice_settings,
+                    music=self._music_settings,
                     memory=MemorySettings(
                         task_memory=self._task_memory,
                         graph_channel=self._graph_enabled,
@@ -5228,6 +5336,13 @@ class MainWindow(QMainWindow):
         if self._speech_launcher is not None:
             self._speech_launcher.stop()
             self._speech_launcher = None
+        # **音乐：先关窗口，再停服务。**
+        if getattr(self, "_music_window", None) is not None:
+            self._music_window.close()
+            self._music_window = None
+        if getattr(self, "_music_service", None) is not None:
+            self._music_service.shutdown()
+
         # **摘掉托盘图标。** 留着的话，Windows 上那个死图标要等鼠标划过才消失——
         # 用户看到的是"我已经退出了，它还在那儿"。
         self._tray.hide()

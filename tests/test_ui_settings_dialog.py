@@ -47,6 +47,7 @@ from axo.ui import settings_dialog
 from axo.ui.settings_dialog import (
     AppearancePage,
     BackendPage,
+    MusicPage,
     ReminderPage,
     SettingsDialog,
     SpeechPage,
@@ -60,6 +61,7 @@ from axo.ui.settings_store import (
     PROVIDER_OLLAMA,
     BackendSettings,
     MemorySettings,
+    MusicSettings,
     ProactiveSettings,
     ReminderSettings,
     SpeechSettings,
@@ -968,6 +970,7 @@ def test_the_categories_line_up_with_the_pages(qapp, data_root) -> None:
         "提醒",
         "主动",
         "语音",
+        "音乐",
         "同步",
         "数据",
     ]
@@ -982,6 +985,7 @@ def test_the_categories_line_up_with_the_pages(qapp, data_root) -> None:
             dialog.reminders,
             dialog.proactive,
             dialog.speech,
+            dialog.music,
             dialog.sync,
             dialog.data,
         )
@@ -2034,3 +2038,43 @@ def test_sync_page_round_trips_non_secret_settings(qapp) -> None:
     assert current.server_name == "书房"
     page.enabled_box.setChecked(False)
     assert seen and seen[-1].enabled is False
+
+
+def test_the_music_page_states_what_is_stored_without_emitting(qapp: Any, tmp_path: Path) -> None:
+    page = MusicPage()
+    seen: list[Any] = []
+    page.changed.connect(seen.append)
+    root = tmp_path / "music"
+    page.set_state(
+        MusicSettings(library_root=root, scan_on_start=False, online_lyrics=True, volume=35)
+    )
+    assert page.settings() == MusicSettings(
+        library_root=root, scan_on_start=False, online_lyrics=True, volume=35
+    )
+    assert seen == [], "打开窗口时摆上当前值不算一次改动"
+
+
+def test_the_music_page_emits_on_a_change_and_reverts(qapp: Any, tmp_path: Path) -> None:
+    page = MusicPage()
+    page.set_state(MusicSettings(library_root=tmp_path, volume=80))
+    seen: list[Any] = []
+    page.changed.connect(seen.append)
+    page.scan_box.setChecked(False)
+    page.online_box.setChecked(True)
+    page.volume_box.setValue(20)
+    assert len(seen) == 3 and seen[-1].volume == 20
+
+    page.revert()
+    assert page.settings().scan_on_start is True
+    assert page.settings().online_lyrics is False
+    assert page.settings().volume == 80
+
+
+def test_the_music_page_clears_the_root(qapp: Any, tmp_path: Path) -> None:
+    page = MusicPage()
+    page.set_state(MusicSettings(library_root=tmp_path))
+    seen: list[Any] = []
+    page.changed.connect(seen.append)
+    page._on_clear()
+    assert page.settings().library_root is None
+    assert seen and seen[-1].library_root is None

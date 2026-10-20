@@ -121,6 +121,7 @@ _PURE_LAYERS = (
     "axo/bench",
     "axo/llm/base.py",
     "axo/memory",
+    "axo/music",
     # 密钥加解密（Windows DPAPI）。放进来是为了让「平台相关的代码集中在一个模块」
     # 是一条**可断言**的事实：它只 import ctypes/base64，不碰 Qt、也不碰 httpx。
     "axo/secrets.py",

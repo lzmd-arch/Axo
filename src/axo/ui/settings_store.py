@@ -41,6 +41,7 @@ from .theme import (
 __all__ = [
     "BackendSettings",
     "MemorySettings",
+    "MusicSettings",
     "ProactiveSettings",
     "ReminderSettings",
     "SETTINGS_APP",
@@ -113,6 +114,12 @@ _K_SYNC_TAILSCALE = "sync/tailscale_enabled"
 _K_SYNC_TAILSCALE_SAME_USER = "sync/tailscale_same_user_only"
 _K_SYNC_MAX_DEVICES = "sync/max_devices"
 _K_SYNC_SERVER_NAME = "sync/server_name"
+
+#: 本地音乐库：根目录是用户选的绝对路径；在线歌词只发曲目元数据。
+_K_MUSIC_ROOT = "music/root"
+_K_MUSIC_SCAN_ON_START = "music/scan_on_start"
+_K_MUSIC_ONLINE_LYRICS = "music/online_lyrics"
+_K_MUSIC_VOLUME = "music/volume"
 
 #: 键名与字段名**逐字对应**（``memory/task_memory`` 那一套）：读的人不必在脑子里做一次
 #: 映射，而测试那边的"两个键各跑一遍同一张表"也能靠 ``key.split("/")[-1]`` 拿到字段。
@@ -308,6 +315,26 @@ class SpeechSettings:
     launch_command: str = ""
     segmented: bool = False
     call_idle_hangup_s: int = 90
+
+
+@dataclass(frozen=True)
+class MusicSettings:
+    """本地音乐库。
+
+    Attributes:
+        library_root: 用户选的音乐文件夹（绝对路径）。``None`` = 还没选。
+            **它不在数据根底下**：搬数据根不该搬走几十 GB 的音乐，所以这里存的是
+            用户盘上的绝对路径。
+        scan_on_start: 启动时后台扫一遍。默认开——不扫的话打开的是一份空列表。
+        online_lyrics: 本地没有歌词时问 LRCLIB。默认关：那是一次出网请求，
+            只发曲名/艺术家/专辑/时长，但要不要发是用户的事。
+        volume: 0–100，应用级。
+    """
+
+    library_root: Path | None = None
+    scan_on_start: bool = True
+    online_lyrics: bool = False
+    volume: int = 80
 
 
 @dataclass(frozen=True)
@@ -618,6 +645,28 @@ class SettingsStore:
         self._backend.setValue(_K_SPEECH_COMMAND, settings.launch_command)
         self._backend.setValue(_K_SPEECH_SEGMENTED, bool(settings.segmented))
         self._backend.setValue(_K_SPEECH_CALL_IDLE, int(settings.call_idle_hangup_s))
+
+    # ── 音乐 ────────────────────────────────────────────────────────────────
+
+    def load_music(self) -> MusicSettings:
+        """读出音乐库设置。坏值一律回默认；根目录必须是绝对路径。"""
+        root_text = self._text(_K_MUSIC_ROOT).strip()
+        root = Path(root_text) if root_text and _is_absolute_anywhere(root_text) else None
+        volume = _as_int(self._backend.value(_K_MUSIC_VOLUME, 80), 80)
+        return MusicSettings(
+            library_root=root,
+            scan_on_start=_as_bool(self._backend.value(_K_MUSIC_SCAN_ON_START, True), True),
+            online_lyrics=_as_bool(self._backend.value(_K_MUSIC_ONLINE_LYRICS, False), False),
+            volume=max(0, min(100, volume)),
+        )
+
+    def save_music(self, settings: MusicSettings) -> None:
+        self._backend.setValue(
+            _K_MUSIC_ROOT, str(settings.library_root) if settings.library_root else ""
+        )
+        self._backend.setValue(_K_MUSIC_SCAN_ON_START, bool(settings.scan_on_start))
+        self._backend.setValue(_K_MUSIC_ONLINE_LYRICS, bool(settings.online_lyrics))
+        self._backend.setValue(_K_MUSIC_VOLUME, int(settings.volume))
 
     # ── 记忆 ────────────────────────────────────────────────────────────────
 

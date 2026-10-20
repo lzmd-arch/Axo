@@ -58,6 +58,9 @@ voice = ["vosk>=0.3.45"]
 files = ["pypdf>=5.1,<7"]
 # 记忆同步：自签证书 + 二维码。只在用户显式开启同步时才用。
 sync = ["cryptography>=42", "qrcode>=7.4"]
+music = [
+    "tinytag>=2.3",
+]
 
 [dependency-groups]
 dev = [
@@ -148,6 +151,9 @@ ignore = [
 # 改名成 ``_arguments`` 会让七个工具的实现看上去来自两套约定——那个不一致本身
 # 比 ARG002 更难读。上一段的 ``tools/*`` 里有同一条推理。
 "src/axo/agent/catalog.py" = ["ARG002"]
+# 音乐工具里有没有参数的两种形状；``run(self, arguments, ctx)`` 是派发处的统一签名，
+# 没参数的工具（playlists / status）用不上 ``arguments`` 是定义决定的，不是漏写。
+"src/axo/agent/music_tools.py" = ["ARG002"]
 # PTH111（"``os.path.expanduser`` 换成 ``Path.expanduser``"）在这一处**是错的建议**：
 # ``_as_path_list`` 要判的是"用户写下时可读目录是不是绝对路径"，而那必须判**原文**——
 # ``Path.expanduser()`` 会连分隔符一起归一化（Windows 上 ``Path("/home/notes")`` 变成

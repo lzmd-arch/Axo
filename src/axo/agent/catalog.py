@@ -72,6 +72,14 @@ from .fs import (
     search_text,
     write_text_atomic,
 )
+from .music_tools import (
+    MusicControlTool,
+    MusicLyricsTool,
+    MusicPlaylistsTool,
+    MusicPlayTool,
+    MusicSearchTool,
+    MusicStatusTool,
+)
 from .reminders import (
     REPEAT_DAILY,
     REPEAT_ONCE,
@@ -1604,6 +1612,7 @@ def default_tools(
     weather: Any | None = None,
     write_root: Sequence[Path] = (),
     allow_commands: bool = False,
+    music: Any | None = None,
 ) -> tuple[Tool, ...]:
     """十个工具。
 
@@ -1668,6 +1677,19 @@ def default_tools(
         *((LookAtScreenTool(),) if vision else ()),
         # 没有表情包就不登记它——同 ``read_file`` 与 ``look_at_screen`` 那条账。
         *((SendStickerTool(stickers),) if stickers else ()),
+        # 音乐同样按条件登记：没有歌库（或还没扫出曲目）时，这六个工具注定失败。
+        *(
+            (
+                MusicSearchTool(),
+                MusicPlaylistsTool(),
+                MusicLyricsTool(),
+                MusicStatusTool(),
+                MusicPlayTool(),
+                MusicControlTool(),
+            )
+            if music is not None and getattr(music, "available", False)
+            else ()
+        ),
         # **插件一律追加在最后。** 它们由 ``axo.plugins`` 从插件目录装上来，装不上
         # 的那些不在这里（各自记了一句人话，见 `MainWindow._tools`）。
         *plugins,

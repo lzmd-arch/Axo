@@ -28,6 +28,7 @@ from axo.ui import main_window as main_window_module
 from axo.ui.main_window import MainWindow
 from axo.ui.settings_store import (
     BackendSettings,
+    MusicSettings,
     ProactiveSettings,
     ReminderSettings,
     SpeechSettings,
@@ -75,6 +76,7 @@ def _window() -> SimpleNamespace:
         _weather_enabled=True,
         _allow_commands=False,
         _voice_settings=SpeechSettings(),
+        _music_settings=MusicSettings(),
         # 记忆页那一份：**任务记忆关着**，与一个刚装好的终端一模一样。
         _task_memory=False,
         # 记忆页的另一项：**联想通道也是关的**（它是量出来的负数，默认关）。
@@ -103,6 +105,7 @@ def _window() -> SimpleNamespace:
         _on_weather_changed=lambda *_args: None,
         _on_commands_changed=lambda *_args: None,
         _on_voice_settings_changed=lambda *_args: None,
+        _on_music_settings_changed=lambda *_args: None,
         _on_memory_changed=lambda *_args: None,
         _on_reminders_changed=lambda *_args: None,
         _on_proactive_settings_changed=lambda *_args: None,
@@ -154,6 +157,7 @@ def _consolidate_signals() -> SimpleNamespace:
         "weather_changed",
         "commands_changed",
         "voice_changed",
+        "music_changed",
         "graph_rebuild_requested",
         "consolidation_requested",
         "persona_save_requested",

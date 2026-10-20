@@ -38,6 +38,7 @@ __all__ = [
     "env_data_root",
     "graph_path",
     "memory_db_path",
+    "music_dir",
     "portable_data_root",
     "portable_pointer_path",
     "reminders_cancelled_path",
@@ -378,3 +379,13 @@ def voices_dir() -> Path:
     逐字稿（``ref.txt``）——引擎零样本克隆两样都要，见 :func:`axo.tts.voices_in`。
     """
     return data_dir() / "models" / "voices"
+
+
+def music_dir() -> Path:
+    """**音乐库的缓存**放在哪儿：`` music/`` 下的歌词缓存与最近播放。
+
+    与 :func:`stickers_dir` 同姿态：**在数据根底下**（跟着搬迁走）、**不创建**
+    （还没用过音乐功能是常态）。歌库本身是用户选的**绝对路径**，不在这里——
+    搬数据根不该搬走几十 GB 的音乐。
+    """
+    return data_dir() / "music"

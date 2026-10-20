@@ -1146,3 +1146,39 @@ def test_motion_is_on_by_default_and_roundtrips() -> None:
     assert store.load().motion is False
 
     assert SettingsStore(FakeBackend({"appearance/motion": "false"})).load().motion is False
+
+
+def test_music_settings_defaults_are_empty_and_online_off() -> None:
+    """音乐库默认：没选文件夹、启动扫描开、在线歌词关、音量 80。
+
+    在线歌词默认关是一次出网声明：只有用户勾上，曲目元数据才会发去 LRCLIB。
+    """
+    defaults = SettingsStore(FakeBackend()).load_music()
+    assert defaults.library_root is None
+    assert defaults.scan_on_start is True
+    assert defaults.online_lyrics is False
+    assert defaults.volume == 80
+
+
+def test_music_settings_roundtrip_clamp_and_relative_root_dropped() -> None:
+    """往返；音量夹回 0–100；相对路径不认（歌库根目录必须是绝对路径）。"""
+    from axo.ui.settings_store import MusicSettings
+
+    store = SettingsStore(FakeBackend())
+    original = MusicSettings(
+        library_root=Path("C:/music"), scan_on_start=False, online_lyrics=True, volume=35
+    )
+    store.save_music(original)
+    assert store.load_music() == original
+
+    assert SettingsStore(FakeBackend({"music/volume": 900})).load_music().volume == 100
+    assert SettingsStore(FakeBackend({"music/volume": -5})).load_music().volume == 0
+    assert SettingsStore(FakeBackend({"music/volume": "响"})).load_music().volume == 80
+    assert (
+        SettingsStore(FakeBackend({"music/root": "relative/music"})).load_music().library_root
+        is None
+    )
+    assert (
+        SettingsStore(FakeBackend({"music/scan_on_start": "false"})).load_music().scan_on_start
+        is False
+    )

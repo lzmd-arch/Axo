@@ -48,6 +48,7 @@
 | setuptools | 84.0.0 | MIT |
 | srt | 3.5.3 | MIT |
 | tqdm | 4.70.1 | MPL-2.0 AND MIT |
+| tinytag | 2.3.2 | MIT |
 | typing_extensions | 4.16.0 | PSF-2.0 |
 | urllib3 | 2.8.0 | MIT |
 | vosk | 0.3.45 | Apache-2.0 |

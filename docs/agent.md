@@ -1088,6 +1088,9 @@ L1 会在语音回合写一句事实："你收到的只有文字，原声没有�
 - 联网读：`web_search`、`fetch_url`（DeepSeek 原生 Search/Fetch，默认不登记）；
 - 有副作用：`write_file`、`edit_file`、`run_command`、`open_external`、
   `clipboard_read`、`clipboard_write`、`show_notification`——全部 `requires_approval`。
+- 音乐：只读的 `music_search` / `music_playlists` / `music_lyrics` / `music_status`；
+  副作用但**不过闸门**的 `music_play` / `music_control`（本地、可逆，用户拍板）。
+  它们只在「音乐」页选过文件夹且已扫出曲目时登记。
 - 写与执行限**同一组可读目录**；数据根永远拒绝。命令环境变量白名单，默认 30 秒、
   硬顶 120 秒，取消/超时杀整棵进程树。
 - 工具结果仍受两层上限：工具自己按字符裁（并明说），循环再按 token 裁。

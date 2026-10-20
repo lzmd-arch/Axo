@@ -157,6 +157,8 @@ class ToolContext:
     notify: Callable[[str, str], None] | None = None
     """发一条桌面通知。"""
     capture: Callable[[], Capture] | None = None
+    music: Any | None = None
+    """本地音乐服务（``MusicService`` 的鸭子类型）。``None`` = 不登记音乐工具。"""
 
 
 @dataclass(frozen=True)

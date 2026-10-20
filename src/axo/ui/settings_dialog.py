@@ -77,6 +77,7 @@ from .settings_store import (
     PROVIDER_OLLAMA,
     BackendSettings,
     MemorySettings,
+    MusicSettings,
     ProactiveSettings,
     ReminderSettings,
     SpeechSettings,
@@ -2325,6 +2326,114 @@ class SpeechPage(QWidget):
             self.changed.emit(self.settings())
 
 
+class MusicPage(QWidget):
+    """本地音乐库：文件夹、扫描、在线歌词与音量。**页面只发信号，不落盘。**"""
+
+    changed = Signal(object)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._snapshot = MusicSettings()
+        self._syncing = False
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(18, 16, 18, 16)
+        outer.setSpacing(10)
+
+        outer.addWidget(_section("音乐文件夹"))
+        row = QHBoxLayout()
+        self.root_edit = QLineEdit(self)
+        self.root_edit.setObjectName("musicRoot")
+        self.root_edit.setReadOnly(True)
+        self.root_edit.setPlaceholderText("还没有选择文件夹")
+        row.addWidget(self.root_edit, 1)
+        self.browse_button = QPushButton("选择…", self)
+        row.addWidget(self.browse_button)
+        self.clear_button = QPushButton("清除", self)
+        row.addWidget(self.clear_button)
+        outer.addLayout(row)
+        outer.addWidget(
+            _hint(
+                "递归扫描这个文件夹里的音频（MP3/FLAC/M4A/OGG/OPUS/WAV 等）。"
+                "歌库不放在数据目录里——搬数据根不会搬走音乐。"
+            )
+        )
+
+        self.scan_box = QCheckBox("启动时自动扫描", self)
+        self.scan_box.setObjectName("musicScanOnStart")
+        outer.addWidget(self.scan_box)
+        self.online_box = QCheckBox("本地没有歌词时问 LRCLIB", self)
+        self.online_box.setObjectName("musicOnlineLyrics")
+        outer.addWidget(self.online_box)
+        outer.addWidget(
+            _hint(
+                "只发送曲名、艺术家、专辑与时长，不发送文件、路径或整库清单。"
+                "默认关；关着时只读同目录 .lrc 与文件内嵌歌词。"
+            )
+        )
+
+        outer.addWidget(_section("音量"))
+        volume_row = QHBoxLayout()
+        self.volume_box = QSpinBox(self)
+        self.volume_box.setObjectName("musicVolume")
+        self.volume_box.setRange(0, 100)
+        self.volume_box.setSuffix(" %")
+        volume_row.addWidget(self.volume_box)
+        volume_row.addStretch(1)
+        outer.addLayout(volume_row)
+
+        self.note = _hint("")
+        self.note.setObjectName("musicNote")
+        outer.addWidget(self.note)
+        outer.addStretch(1)
+
+        self.browse_button.clicked.connect(self._on_browse)
+        self.clear_button.clicked.connect(self._on_clear)
+        self.scan_box.toggled.connect(self._on_toggled)
+        self.online_box.toggled.connect(self._on_toggled)
+        self.volume_box.valueChanged.connect(self._on_toggled)
+
+    def settings(self) -> MusicSettings:
+        text = self.root_edit.text().strip()
+        return MusicSettings(
+            library_root=Path(text) if text else None,
+            scan_on_start=self.scan_box.isChecked(),
+            online_lyrics=self.online_box.isChecked(),
+            volume=int(self.volume_box.value()),
+        )
+
+    def set_state(self, settings: MusicSettings) -> None:
+        self._snapshot = settings
+        self._syncing = True
+        self.root_edit.setText(str(settings.library_root) if settings.library_root else "")
+        self.scan_box.setChecked(settings.scan_on_start)
+        self.online_box.setChecked(settings.online_lyrics)
+        self.volume_box.setValue(int(settings.volume))
+        self._syncing = False
+        self.set_note("")
+
+    def revert(self) -> None:
+        self.set_state(self._snapshot)
+        self.changed.emit(self.settings())
+
+    def set_note(self, text: str) -> None:
+        self.note.setText(text)
+
+    def _on_toggled(self, *_args: object) -> None:
+        if not self._syncing:
+            self.changed.emit(self.settings())
+
+    def _on_browse(self) -> None:
+        start = self.root_edit.text().strip() or str(Path.home())
+        chosen = QFileDialog.getExistingDirectory(self, "选择音乐文件夹", start)
+        if chosen:
+            self.root_edit.setText(chosen)
+            self._on_toggled()
+
+    def _on_clear(self) -> None:
+        self.root_edit.setText("")
+        self._on_toggled()
+
+
 class SettingsDialog(QDialog):
     """设置窗口本体。非模态——改一下就要看一眼主窗口，模态会把这件事变成
     "关窗 → 看效果 → 再开窗"。"""
@@ -2338,6 +2447,7 @@ class SettingsDialog(QDialog):
     commands_changed = Signal(bool)
     vision_changed = Signal(bool)
     voice_changed = Signal(object)
+    music_changed = Signal(object)
     sync_changed = Signal(object)
     sync_pair_requested = Signal()
     sync_revoke_requested = Signal(str)
@@ -2376,6 +2486,7 @@ class SettingsDialog(QDialog):
         reminders: ReminderSettings | None = None,
         proactive: ProactiveSettings | None = None,
         voice: SpeechSettings | None = None,
+        music: MusicSettings | None = None,
         sync: SyncSettings | None = None,
     ) -> None:
         super().__init__(parent)
@@ -2424,6 +2535,7 @@ class SettingsDialog(QDialog):
             "提醒",
             "主动",
             "语音",
+            "音乐",
             "同步",
             "数据",
         ):
@@ -2443,6 +2555,7 @@ class SettingsDialog(QDialog):
         self.reminders = ReminderPage(self)
         self.proactive = ProactivePage(self)
         self.speech = SpeechPage(self)
+        self.music = MusicPage(self)
         self.sync = SyncPage(self)
         self.data = DataPage(self)
         self.pages.addWidget(self.appearance)
@@ -2453,6 +2566,7 @@ class SettingsDialog(QDialog):
         self.pages.addWidget(self.reminders)
         self.pages.addWidget(self.proactive)
         self.pages.addWidget(self.speech)
+        self.pages.addWidget(self.music)
         self.pages.addWidget(self.sync)
         self.pages.addWidget(self.data)
         # **页面放进滚动区**：窗口高度不再由最长的那一页决定。没有这一层时，
@@ -2499,6 +2613,8 @@ class SettingsDialog(QDialog):
         self.tools.audio_changed.connect(self.audio_changed)
         self.speech.changed.connect(self.voice_changed)
         self.speech.set_state(voice if voice is not None else SpeechSettings())
+        self.music.changed.connect(self.music_changed)
+        self.music.set_state(music if music is not None else MusicSettings())
         self.sync.changed.connect(self.sync_changed)
         self.sync.pair_requested.connect(self.sync_pair_requested)
         self.sync.revoke_requested.connect(self.sync_revoke_requested)
@@ -2535,6 +2651,7 @@ class SettingsDialog(QDialog):
             reminders=ReminderSettings() if reminders is None else reminders,
             proactive=ProactiveSettings() if proactive is None else proactive,
             voice=voice if voice is not None else SpeechSettings(),
+            music=music if music is not None else MusicSettings(),
             sync=sync if sync is not None else SyncSettings(),
         )
 
@@ -2571,6 +2688,7 @@ class SettingsDialog(QDialog):
         reminders: ReminderSettings,
         proactive: ProactiveSettings,
         voice: SpeechSettings,
+        music: MusicSettings | None = None,
         sync: SyncSettings | None = None,
     ) -> None:
         """**打开窗口时调。** 顺带把快照换成这一份——「撤销修改」回到的是**这一次**
@@ -2589,6 +2707,7 @@ class SettingsDialog(QDialog):
         self.reminders.set_state(reminders)
         self.proactive.set_state(proactive)
         self.speech.set_state(voice if voice is not None else SpeechSettings())
+        self.music.set_state(music if music is not None else MusicSettings())
         self.sync.set_state(sync if sync is not None else SyncSettings())
 
     def set_resolved(self, resolved: Resolved) -> None:
@@ -2661,6 +2780,7 @@ class SettingsDialog(QDialog):
         self.tools.revert()
         self.memory.revert()
         self.reminders.revert()
+        self.music.revert()
 
     # ── 连接测试 ────────────────────────────────────────────────────────────
 

@@ -346,6 +346,9 @@ def _command(*, name: str, console: bool, icon: Path | None, clean: bool) -> lis
         "qrcode",
         "--hidden-import",
         "qrcode.image.svg",
+        # 音乐标签是函数内 import 的（没装 music extra 也能启动主程序）。
+        "--hidden-import",
+        "tinytag",
     ]
     for source, target in DATAS:
         command += ["--add-data", f"{_ROOT / source}{os.pathsep}{target}"]
