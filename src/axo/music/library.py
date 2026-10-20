@@ -70,8 +70,13 @@ def track_from_path(path: Path | str) -> Track:
     """一条曲目。标签缺失时标题取文件名、专辑取父目录名。"""
     folder = Path(path)
     tag = _tag(folder)
-    title = str(getattr(tag, "title", "") or "").strip() or folder.stem
+    title = str(getattr(tag, "title", "") or "").strip()
     artist = str(getattr(tag, "artist", "") or "").strip()
+    if not title and not artist and " - " in folder.stem:
+        # 没有标签时认「艺术家 - 标题」这个常见命名；只认一次分隔符，标题里再有
+        # 「 - 」也留在标题里。
+        artist, title = (part.strip() for part in folder.stem.split(" - ", 1))
+    title = title or folder.stem
     album = str(getattr(tag, "album", "") or "").strip() or folder.parent.name
     try:
         duration = float(getattr(tag, "duration", 0.0) or 0.0)

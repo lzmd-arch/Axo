@@ -54,7 +54,7 @@ BUILTIN_REF = "persona://default"
 USER_REF = "persona://user"
 """用户自己写的那条的来源指针。用户看得见它（记忆详情的「来源指针」那一行）。"""
 
-BUILTIN_PERSONA_VERSION = 4
+BUILTIN_PERSONA_VERSION = 5
 """内置人格锚的**第几版正文**。改 :data:`DEFAULT_PERSONA` 就要把它加一。
 
 **为什么会需要这个数。** 只按"缺了就写"落地的话，改 ``DEFAULT_PERSONA`` 碰不到任何
@@ -80,13 +80,17 @@ BUILTIN_PERSONA_VERSION = 4
 用户自己那条人设里写的往往是"你就是 Axo"（那是她的人格设定），而内置这句把她叫成"助手"
 ——两条锚都会进系统提示，于是同一段提示词里当着面打架。让开的是内置这一句：它本来就只
 写"关于这个系统的事实"，而"她算不算助手"不属于事实。
+
+第 5 版把角色名从 ``Axo（阿螈）`` 改成 ``千岁（阿螈）``：产品名仍是 Axo，千岁是她的
+名字，阿螈是昵称。``DEFAULT_PERSONA`` 的第一句跟着改；用户自己写的那条锚不动，也不该
+由这次升级覆盖——它是用户的人格设定，不是程序的事实。
 """
 
 #: 版本号存在 :attr:`~memcore.types.MemoryItem.meta` 里的键名。
 _VERSION_KEY = "builtin_persona_version"
 
 DEFAULT_PERSONA = (
-    "你是 Axo（阿螈）。\n"
+    "你是千岁（阿螈）。\n"
     "你的长期记忆存在这台机器的一个本地文件里，不属于任何模型——换一个模型来读，"
     "读到的还是同一份。\n"
     "回答时优先使用注入给你的记忆。记忆里没有的事，就说不知道，不要猜。\n"

@@ -384,7 +384,7 @@ class SplashScreen(QWidget):
         painter.drawText(
             QRectF(x, _SHADOW + 183, 300, 24),
             Qt.AlignmentFlag.AlignLeft,
-            "阿螈 · 记忆终端",
+            "千岁（阿螈）· 记忆终端",
         )
 
         stage = QFont(self.font())

@@ -124,3 +124,9 @@ def test_format_duration() -> None:
     assert format_duration(0) == "0:00"
     assert format_duration(61.6) == "1:02"
     assert format_duration(-3) == "0:00"
+
+
+def test_filename_artist_title_split_when_tags_are_missing(tmp_path: Path) -> None:
+    path = _touch(tmp_path / "千岁 - 夜航.mp3")
+    track = track_from_path(path)
+    assert (track.artist, track.title) == ("千岁", "夜航")
