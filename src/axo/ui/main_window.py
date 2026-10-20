@@ -160,12 +160,14 @@ from ..paths import (
     stickers_dir,
 )
 from ..plugins import PluginIssue, load_plugins
+from ..secrets import protect, unprotect
 from ..session.assemble import Assembly, stored_rows
 from ..session.budget import TokenBudget, TokenMeter, reserve_for
 from ..session.environment import build_environment
 from ..session.indicator import ContextState, context_state, format_context
 from ..session.store import Message, Session, SessionStore, new_session_id
 from ..stickers import Sticker, add_stickers, find_in, stickers_in
+from ..sync.controller import SyncController, SyncControllerConfig
 from ..tts import SpeechReceipt
 from ..weather import OpenMeteoWeather
 from ..weather_watch import WeatherBaseline, material_text
@@ -205,12 +207,14 @@ from .settings_store import (
     ProactiveSettings,
     ReminderSettings,
     SettingsStore,
+    SyncSettings,
     ToolSettings,
     wallpaper_file,
 )
 from .speech_pipeline import SpeechPipeline
 from .speech_player import SpeechPlayer, TtsWorker
 from .speech_process import SpeechLauncher
+from .sync_dialog import PairApprovalBroker, SyncPairingDialog
 from .theme import Resolved, Theme, resolve
 from .theme_qt import QSettingsBackend, apply_theme, os_color_scheme
 from .thread_tracking import track, wait_for_all
@@ -601,6 +605,13 @@ class MainWindow(QMainWindow):
         #: 而调度器（与它的那三本账）压根不该知道"用户想不想被打扰"。
         self._reminder_settings: ReminderSettings = self._settings_store.load_reminders()
         self._proactive_settings: ProactiveSettings = self._settings_store.load_proactive()
+        self._sync_settings: SyncSettings = self._settings_store.load_sync()
+        self._sync_controller: SyncController | None = None
+        self._sync_broker = PairApprovalBroker()
+        self._sync_dialog: SyncPairingDialog | None = None
+        self._sync_approval_timer = QTimer(self)
+        self._sync_approval_timer.setInterval(250)
+        self._sync_approval_timer.timeout.connect(self._poll_sync_approval)
         # **自启那条值的自愈。** 程序换过位置之后（用户把 exe 挪了、或者换了安装目录），
         # 注册表里那一行还指着旧路径，而症状是"登录时什么都没发生"——离改动已经过去
         # 几周。所以开着这一项就启动时对一次表。
@@ -968,6 +979,7 @@ class MainWindow(QMainWindow):
         # :meth:`_shutdown`。
         if self._consolidation_enabled:
             self._consolidation_scheduler.start()
+        QTimer.singleShot(1500, self._apply_sync_settings)
 
         # **她开口的那一侧也要有人按一下启动。** 组件是独立进程（torch 不进本仓），
         # 这一句只是「替用户按一下」：先探端口、没在跑才拉，退出时只收自己拉的那个。
@@ -4045,6 +4057,7 @@ class MainWindow(QMainWindow):
                     ),
                     reminders=self._reminder_settings,
                     proactive=self._proactive_settings,
+                    sync=getattr(self, "_sync_settings", SyncSettings()),
                 )
                 dialog.theme_changed.connect(self._on_theme_changed)
                 dialog.backend_changed.connect(self._on_backend_changed)
@@ -4059,6 +4072,10 @@ class MainWindow(QMainWindow):
                 dialog.memory_changed.connect(self._on_memory_changed)
                 dialog.reminders_changed.connect(self._on_reminders_changed)
                 dialog.proactive_changed.connect(self._on_proactive_settings_changed)
+                if hasattr(dialog, "sync_changed"):
+                    dialog.sync_changed.connect(self._on_sync_changed)
+                    dialog.sync_pair_requested.connect(self._on_sync_pair_requested)
+                    dialog.sync_revoke_requested.connect(self._on_sync_revoke)
                 dialog.graph_rebuild_requested.connect(self._on_rebuild_graph)
                 # 「立即巩固」直接走**与定时那条路同一个入口**：区分自动/手动的地方
                 # 只有一处（`force`），而托盘那一项连的是同一个槽。
@@ -4088,10 +4105,14 @@ class MainWindow(QMainWindow):
                     ),
                     reminders=self._reminder_settings,
                     proactive=self._proactive_settings,
+                    sync=getattr(self, "_sync_settings", SyncSettings()),
                 )
             # 图状态那一行**每次打开都重新对齐**（同人设页的道理，也是同一种真源：
             # 图是在这个窗口存在的时候才建的）。不回填的话，用户在设置页看着"还没建"
             # 而记忆窗口里邻居面板已经列出来了——同一件事在两处说两样话。
+            refresh_sync = getattr(self, "_refresh_sync_status", None)
+            if callable(refresh_sync):
+                refresh_sync()
             self._settings_dialog.set_graph_note(self._graph_note)
             # 巩固那一行同理，只是**真源不同**：它的"上次什么时候跑的"在
             # ``last.json`` 里（跨进程），不在这个对象的某个字段上，所以每次打开
@@ -5008,6 +5029,122 @@ class MainWindow(QMainWindow):
                 "这期间她的话只出字，不会没声没息。",
             )
 
+    # ── 同步（MemoryBridge） ────────────────────────────────────────────────
+
+    def _apply_sync_settings(self) -> None:
+        if not self._sync_settings.enabled:
+            self._stop_sync()
+            self._refresh_sync_status()
+            return
+        self._stop_sync()
+        try:
+            config = SyncControllerConfig(
+                server_name=(
+                    self._sync_settings.server_name
+                    or __import__("os").environ.get("COMPUTERNAME", "Axo")
+                ),
+                port=self._sync_settings.port,
+                max_devices=self._sync_settings.max_devices,
+                lan_enabled=self._sync_settings.lan_enabled,
+                tailscale_enabled=self._sync_settings.tailscale_enabled,
+                tailscale_same_user_only=self._sync_settings.tailscale_same_user_only,
+            )
+            controller = SyncController(
+                self._memory,
+                self._writer,
+                data_dir(),
+                config=config,
+                protect=protect,
+                unprotect=unprotect,
+                pair_approver=self._sync_broker.ask,
+            )
+            controller.start()
+            self._sync_controller = controller
+            self._sync_approval_timer.start()
+        except Exception as exc:  # noqa: BLE001
+            self._sync_controller = None
+            self._sync_approval_timer.stop()
+            QMessageBox.warning(
+                self,
+                "同步没有启动",
+                f"{exc}\n\n端口可能被占用，或系统防火墙拦住了入站。"
+                "本程序不会修改系统防火墙；局域网请自行放行或改用 Tailscale。",
+            )
+        self._refresh_sync_status()
+
+    def _stop_sync(self) -> None:
+        self._sync_approval_timer.stop()
+        if self._sync_dialog is not None:
+            self._sync_dialog.close()
+            self._sync_dialog = None
+        if self._sync_controller is not None:
+            self._sync_controller.stop()
+            self._sync_controller = None
+
+    def _refresh_sync_status(self) -> None:
+        if self._settings_dialog is None:
+            return
+        page = getattr(self._settings_dialog, "sync", None)
+        if page is None:
+            return
+        controller = getattr(self, "_sync_controller", None)
+        if controller is None:
+            text = "未启动。"
+            devices: object = ()
+        else:
+            status = controller.status()
+            hosts = " / ".join(status.get("hosts", ())) or "127.0.0.1"
+            text = (
+                f"正在监听 {hosts}:{status.get('port')} · "
+                f"{status.get('devices', 0)} 台设备 · {status.get('count', 0)} 条记忆"
+            )
+            devices = controller.devices()
+        page.set_state(
+            getattr(self, "_sync_settings", SyncSettings()), status=text, devices=devices
+        )
+
+    def _on_sync_changed(self, settings: SyncSettings) -> None:
+        self._sync_settings = settings
+        self._settings_store.save_sync(settings)
+        self._apply_sync_settings()
+
+    def _on_sync_pair_requested(self) -> None:
+        if self._sync_controller is None:
+            QMessageBox.information(self, "同步没有启动", "先勾选「启用 MemoryBridge」并保存。")
+            return
+        try:
+            dialog = SyncPairingDialog(self, controller=self._sync_controller, theme=self._theme)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "打不开配对窗口", str(exc))
+            return
+        self._sync_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _on_sync_revoke(self, device_id: str) -> None:
+        if self._sync_controller is not None:
+            self._sync_controller.revoke(device_id)
+        self._refresh_sync_status()
+
+    def _poll_sync_approval(self) -> None:
+        box = self._sync_broker.pop_pending()
+        if box is None:
+            return
+        request = box.get("request") or {}
+        name = str(request.get("device_name") or "新设备")
+        ip = str(request.get("source_ip") or "")
+        answer = QMessageBox.question(
+            self,
+            "手机请求配对",
+            f"「{name}」（{ip}）请求与这台电脑配对。\n\n"
+            "配对后它能读取全部记忆，并只能新增；不能改写已有记忆。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        self._sync_broker.resolve(box, answer == QMessageBox.StandardButton.Yes)
+        self._refresh_sync_status()
+
     def _shutdown(self) -> None:
         """**唯一的退出路径。** 幂等。
 
@@ -5026,6 +5163,7 @@ class MainWindow(QMainWindow):
         if self._shutting_down:
             return
         self._shutting_down = True
+        self._stop_sync()
         # **先关麦，再等线程。** 录音那一半在界面线程（`QAudioSource`），而解码线程要
         # 有人叫停才会退出——两件都在 `_end_voice(discard=True)` 里（收尾时那一遍
         # 本来也不要了）。

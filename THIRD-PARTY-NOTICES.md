@@ -33,6 +33,8 @@
 | certifi | 2026.7.22 | MPL-2.0 |
 | charset-normalizer | 3.5.2 | MIT |
 | colorama | 0.4.6 | BSD-3-Clause |
+| cryptography | 50.0.2 | Apache-2.0 OR BSD-3-Clause |
+| qrcode | 8.2 | BSD-3-Clause |
 | h11 | 0.16.0 | MIT |
 | httpcore | 1.0.9 | BSD-3-Clause |
 | httpx | 0.28.1 | BSD-3-Clause |

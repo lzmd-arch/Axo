@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "axo"
-version = "0.9.1"
+version = "0.10.0"
 description = "Axo：把长期记忆与性格放在终端侧，独立于所调用的大模型"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -56,6 +56,8 @@ voice = ["vosk>=0.3.45"]
 # 与 torch 那一族不同，它进得了产物（`axo/attachments.py` 里是**函数内 import**，
 # 所以没装这个 extra 的环境照样 import 得了那个模块，只是 PDF 那一条会说读不了）。
 files = ["pypdf>=5.1,<7"]
+# 记忆同步：自签证书 + 二维码。只在用户显式开启同步时才用。
+sync = ["cryptography>=42", "qrcode>=7.4"]
 
 [dependency-groups]
 dev = [
@@ -73,6 +75,8 @@ dev = [
   # 只在函数内 import 它——装不装都不影响那几条测试（它们塞的是假件），但本机开发
   # 与打包自检都要有它。
   "vosk>=0.3.45",
+  "cryptography>=42",
+  "qrcode>=7.4",
 ]
 
 [project.urls]

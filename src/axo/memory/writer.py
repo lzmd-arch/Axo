@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from typing import Any
 
 from memcore import MemoryItem, Tier, now_ts
@@ -88,7 +89,46 @@ class MemoryWriter:
         item = self._build(draft, session_id=session_id, source_ref=source_ref)
         return None if item is None else self._store.add(item)
 
-    def _build(self, draft: MemoryDraft, *, session_id: str, source_ref: str) -> MemoryItem | None:
+    def record_if_absent(
+        self,
+        draft: MemoryDraft,
+        *,
+        session_id: str,
+        source_ref: str,
+        memory_id: str | None = None,
+        created_at: float | None = None,
+    ) -> tuple[MemoryItem | None, bool]:
+        """同步写入：**只在 id 不存在时插入**，返回 ``(条目, 是否新建)``。
+
+        这是手机 append 唯一允许走的写入口。它仍然借 ``_build``，所以 ULID/SDR/
+        ``SDRCapacityError`` 的兜底只有一份；区别只在最后调用 ``add_if_absent``。
+        传 ``memory_id`` 是为了让手机本地那条与桌面端保持同一个 id（无需改写）。
+        ``created_at`` 是记忆真正写下的时刻；``last_access_ts`` / ``last_decay_ts``
+        强制取现在，否则导入一条旧记忆会立刻触发一大笔惰性衰减。
+        """
+        item = self._build(
+            draft,
+            session_id=session_id,
+            source_ref=source_ref,
+            memory_id=memory_id,
+            created_at=created_at,
+        )
+        if item is None:
+            return None, False
+        if created_at is not None:
+            now = self._clock()
+            item = replace(item, last_access_ts=now, last_decay_ts=now)
+        return self._store.add_if_absent(item)
+
+    def _build(
+        self,
+        draft: MemoryDraft,
+        *,
+        session_id: str,
+        source_ref: str,
+        memory_id: str | None = None,
+        created_at: float | None = None,
+    ) -> MemoryItem | None:
         try:
             lex = encode_lexical(draft.content)
         except SDRCapacityError:
@@ -101,12 +141,12 @@ class MemoryWriter:
             return None
 
         return MemoryItem(
-            memory_id=new_ulid(),
+            memory_id=memory_id or new_ulid(),
             kind=draft.kind,
             tier=Tier.WORKING,
             content=draft.content,
             taint=draft.taint,
-            created_at=self._clock(),
+            created_at=self._clock() if created_at is None else float(created_at),
             weight=draft.weight,
             lex_sdr=lex,
             # ``assoc_sdr`` 留空：**消费者已经存在**（P4a 的关联图 A 与神经元级基质

@@ -35,6 +35,7 @@ import json
 import sqlite3
 import threading
 from collections.abc import Callable, Iterator, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -45,7 +46,7 @@ from .lexindex import LexicalIndex
 from .spaces import Space, SpaceRegistry
 from .types import SDR, MemoryItem, MemoryKind, MemorySummary, Taint, Tier, now_ts
 
-__all__ = ["MemoryStore"]
+__all__ = ["ChangeRecord", "MemoryStore"]
 
 _SCHEMA_VERSION = 1
 
@@ -107,6 +108,59 @@ _MAX_META_BYTES = 256 * 1024
 #: 记忆都重建，50k 库的每一轮对话都要付一次；delta 把这个成本摊到每 512 条。
 #: 512 条 delta 的 CSR 重建是 512×573 个位，毫秒级；再大就该做一次全量合并。
 _LEX_DELTA_MAX = 512
+
+#: 同步用的变更账。**只在同步服务器启动时懒建**，所以未启用同步的库逐字节不变。
+#: 触发器只记「新增 / 删除 / tier、pinned 变化 / 正文变化」；权重与访问计数的
+#: 衰减每轮都在写，记进来只会把事件流淹没。
+_CHANGE_LOG_SQL = """
+CREATE TABLE IF NOT EXISTS memory_changes (
+    seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+    memory_id  TEXT NOT NULL,
+    op         TEXT NOT NULL,
+    changed_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_memory_changes_mid ON memory_changes(memory_id);
+
+CREATE TRIGGER IF NOT EXISTS trg_memory_changes_insert
+AFTER INSERT ON memories
+BEGIN
+    INSERT INTO memory_changes(memory_id, op, changed_at)
+    VALUES (new.memory_id, 'insert', CAST(strftime('%s','now') AS REAL));
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_memory_changes_delete
+AFTER DELETE ON memories
+BEGIN
+    INSERT INTO memory_changes(memory_id, op, changed_at)
+    VALUES (old.memory_id, 'delete', CAST(strftime('%s','now') AS REAL));
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_memory_changes_bookkeeping
+AFTER UPDATE OF tier, pinned ON memories
+WHEN old.tier IS NOT new.tier OR old.pinned IS NOT new.pinned
+BEGIN
+    INSERT INTO memory_changes(memory_id, op, changed_at)
+    VALUES (new.memory_id, 'update', CAST(strftime('%s','now') AS REAL));
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_memory_changes_content
+AFTER UPDATE OF content ON memories
+WHEN old.content IS NOT new.content
+BEGIN
+    INSERT INTO memory_changes(memory_id, op, changed_at)
+    VALUES (new.memory_id, 'content_edited', CAST(strftime('%s','now') AS REAL));
+END;
+"""
+
+
+@dataclass(frozen=True)
+class ChangeRecord:
+    """一条同步变更记录。``content_edited`` 只用于审计，**不用于覆盖远端正文**。"""
+
+    seq: int
+    memory_id: str
+    op: str
+    changed_at: float
 
 
 class MemoryStore:
@@ -283,6 +337,162 @@ class MemoryStore:
             self._revision += 1
             self._update_lex_index_after_add(item)
         return item
+
+    def add_if_absent(self, item: MemoryItem) -> tuple[MemoryItem, bool]:
+        """**只在 id 不存在时插入**，返回 ``(库里的条目, 是否新建)``。
+
+        这是同步写入唯一允许走的路。与 :meth:`add` 的区别不是风格：
+        ``add`` 是 UPSERT，手机传一个已存在的 id 就会静默改掉桌面已有记忆的正文、
+        权重与分层。``ON CONFLICT DO NOTHING`` 把"改"这个动作从 SQL 层面拿掉；
+        已存在时原样返回既有行，调用方拿它做内容哈希对比。
+
+        Raises:
+            StoreError: ``meta`` 非法，或冲突后读不到既有行（并发删除）。
+        """
+        payload = self._item_to_row(item)
+        with self._lock:
+            cursor = self._connection.execute(
+                """
+                INSERT INTO memories (
+                    memory_id, kind, tier, content, taint, created_at, last_access_ts,
+                    last_decay_ts, access_count, reinforce_count, weight, pinned,
+                    space_id, session_id, source_ref, meta_json,
+                    lex_idx, lex_w, lex_width
+                ) VALUES (
+                    :memory_id, :kind, :tier, :content, :taint, :created_at, :last_access_ts,
+                    :last_decay_ts, :access_count, :reinforce_count, :weight, :pinned,
+                    :space_id, :session_id, :source_ref, :meta_json,
+                    :lex_idx, :lex_w, :lex_width
+                )
+                ON CONFLICT(memory_id) DO NOTHING
+                """,
+                payload,
+            )
+            inserted = cursor.rowcount > 0
+            self._connection.commit()
+            if inserted:
+                self._revision += 1
+                self._update_lex_index_after_add(item)
+                return item, True
+            existing = self.get(item.memory_id)
+            if existing is None:
+                raise StoreError(
+                    f"记忆 {item.memory_id!r} 插入冲突，但随后又读不到它——并发删除或库已损坏。"
+                )
+            return existing, False
+
+    def apply_authority(self, item: MemoryItem) -> tuple[MemoryItem, bool]:
+        """应用**桌面权威**发来的整条内容；不存在则插入。
+
+        **这不是手机端可用的写入口。** 只有同步客户端在解开桌面事件后调用它；
+        桌面 MemoryBridge 永远不调用。它更新正文/kind/tier/taint/created_at/
+        source_ref/session_id/meta/pinned，但**保留本机的权重、访问计数与加固计数**
+        ——那些是每台设备自己的记账，不是记忆正文的一部分。
+        """
+        payload = self._item_to_row(item)
+        with self._lock:
+            cursor = self._connection.execute(
+                """
+                INSERT INTO memories (
+                    memory_id, kind, tier, content, taint, created_at, last_access_ts,
+                    last_decay_ts, access_count, reinforce_count, weight, pinned,
+                    space_id, session_id, source_ref, meta_json,
+                    lex_idx, lex_w, lex_width
+                ) VALUES (
+                    :memory_id, :kind, :tier, :content, :taint, :created_at, :last_access_ts,
+                    :last_decay_ts, :access_count, :reinforce_count, :weight, :pinned,
+                    :space_id, :session_id, :source_ref, :meta_json,
+                    :lex_idx, :lex_w, :lex_width
+                )
+                ON CONFLICT(memory_id) DO UPDATE SET
+                    kind=excluded.kind, tier=excluded.tier, content=excluded.content,
+                    taint=excluded.taint, created_at=excluded.created_at,
+                    source_ref=excluded.source_ref, session_id=excluded.session_id,
+                    meta_json=excluded.meta_json, pinned=excluded.pinned,
+                    lex_idx=excluded.lex_idx, lex_w=excluded.lex_w,
+                    lex_width=excluded.lex_width
+                """,
+                payload,
+            )
+            self._connection.commit()
+            self._revision += 1
+            existing = self.get(item.memory_id)
+            if existing is None:
+                raise StoreError(f"记忆 {item.memory_id!r} 应用权威变更后读不到")
+            # 内容可能变了，词法索引必须重建。
+            self._lex_index = None
+            self._lex_index_revision = -1
+            return existing, cursor.rowcount > 0
+
+    def update_bookkeeping(
+        self,
+        memory_id: str,
+        *,
+        tier: Tier | None = None,
+        pinned: bool | None = None,
+    ) -> bool:
+        """只改 ``tier`` / ``pinned``，**SQL 列清单里没有 content**。
+
+        手机端应用桌面变更时用这个；它在构造上就不可能碰正文。返回是否真的改了。
+        """
+        sets: list[str] = []
+        params: list[Any] = []
+        if tier is not None:
+            if not isinstance(tier, Tier):
+                raise ValueError(f"tier 必须是 Tier，收到 {type(tier).__name__}")
+            sets.append("tier = ?")
+            params.append(str(tier))
+        if pinned is not None:
+            sets.append("pinned = ?")
+            params.append(1 if pinned else 0)
+        if not sets:
+            return False
+        params.append(memory_id)
+        with self._lock:
+            cursor = self._connection.execute(
+                f"UPDATE memories SET {', '.join(sets)} WHERE memory_id = ?", params
+            )
+            self._connection.commit()
+            if cursor.rowcount > 0:
+                self._revision += 1
+                return True
+            return False
+
+    def install_change_log(self) -> None:
+        """懒建同步变更账与触发器。幂等；未启用同步的库不会调用它。"""
+        with self._lock:
+            self._connection.executescript(_CHANGE_LOG_SQL)
+            self._connection.commit()
+
+    def change_head(self) -> int:
+        """当前变更账的最大 seq；表还没建时返回 0。"""
+        with self._lock:
+            try:
+                row = self._connection.execute(
+                    "SELECT MAX(seq) AS seq FROM memory_changes"
+                ).fetchone()
+            except sqlite3.OperationalError:
+                return 0
+        return int(row["seq"] or 0) if row is not None else 0
+
+    def changes_since(self, seq: int, limit: int = 500) -> list[ChangeRecord]:
+        """按 ``seq`` 升序取变更。``limit`` 是硬上限，防止一次拉爆。"""
+        limit = max(1, min(1000, int(limit)))
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT seq, memory_id, op, changed_at FROM memory_changes "
+                "WHERE seq > ? ORDER BY seq ASC LIMIT ?",
+                (int(seq), limit),
+            ).fetchall()
+        return [
+            ChangeRecord(
+                seq=int(row["seq"]),
+                memory_id=str(row["memory_id"]),
+                op=str(row["op"]),
+                changed_at=float(row["changed_at"]),
+            )
+            for row in rows
+        ]
 
     def _update_lex_index_after_add(self, item: MemoryItem) -> None:
         """把新增条目接进当前索引；接不了就让索引失效，等下一次全量重建。
@@ -487,6 +697,40 @@ class MemoryStore:
     def load_all(self) -> list[MemoryItem]:
         """把全库读进内存。基准脚本与跨模型一致性测试用，召回路径不要用它。"""
         return list(self.iter_items())
+
+    def items_page(
+        self,
+        *,
+        after_id: str = "",
+        limit: int = 200,
+        descending: bool = True,
+        exclude_persona: bool = True,
+    ) -> tuple[list[MemoryItem], str]:
+        """按 ``memory_id`` 游标取一整页完整条目。
+
+        同步快照用它：``summaries`` 不含 meta/taint，而完整复制需要这些字段。
+        ULID 单调，所以 ``memory_id`` 既是排序键也是游标。返回
+        ``(条目, 下一页游标)``；游标取**原始行**的最后一条（即使它被 persona
+        过滤掉），否则翻页会跳过记录。
+        """
+        limit = max(1, min(1000, int(limit)))
+        direction = "DESC" if descending else "ASC"
+        where = ""
+        params: list[Any] = []
+        if after_id:
+            where = "WHERE memory_id < ?" if descending else "WHERE memory_id > ?"
+            params.append(str(after_id))
+        params.append(limit)
+        with self._lock:
+            rows = self._connection.execute(
+                f"SELECT * FROM memories {where} ORDER BY memory_id {direction} LIMIT ?",
+                params,
+            ).fetchall()
+        items = [self._row_to_item(row) for row in rows]
+        if exclude_persona:
+            items = [item for item in items if item.kind is not MemoryKind.PERSONA_ANCHOR]
+        next_id = str(rows[-1]["memory_id"]) if rows else ""
+        return items, next_id
 
     def summaries(
         self,

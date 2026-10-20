@@ -338,6 +338,15 @@ def _command(*, name: str, console: bool, icon: Path | None, clean: bool) -> lis
         command.append("--clean")
     # 见上面那段：vosk 的 C 库靠一个运行时拼出来的路径加载，静态分析找不到它。
     command += ["--collect-binaries", "vosk"]
+    # 同步是懒 import 的（没装 sync extra 也能启动主程序），静态分析看不到它们。
+    command += [
+        "--hidden-import",
+        "cryptography",
+        "--hidden-import",
+        "qrcode",
+        "--hidden-import",
+        "qrcode.image.svg",
+    ]
     for source, target in DATAS:
         command += ["--add-data", f"{_ROOT / source}{os.pathsep}{target}"]
     if icon is not None:

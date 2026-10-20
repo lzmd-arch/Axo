@@ -80,6 +80,7 @@ from .settings_store import (
     ProactiveSettings,
     ReminderSettings,
     SpeechSettings,
+    SyncSettings,
     ToolSettings,
     wallpaper_file,
 )
@@ -1872,6 +1873,153 @@ class ProactivePage(QWidget):
         self.changed.emit(self.current())
 
 
+class SyncPage(QWidget):
+    """同步页：**在用户显式打开之后才监听**，且只监听应用层白名单里的来源。
+
+    这一页不碰证书/设备 token/记忆密钥；它只改非机密参数，并发出"开始配对"与
+    "吊销这台设备"两个动作。真正起停服务器由主窗口做。
+    """
+
+    changed = Signal(object)
+    pair_requested = Signal()
+    revoke_requested = Signal(str)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._loading = False
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(16, 16, 16, 16)
+        outer.setSpacing(10)
+
+        outer.addWidget(_section("记忆同步（桌面是权威）"))
+        outer.addWidget(
+            _hint(
+                "打开后，这台机器会监听一个加密端口，只接受已配对设备。"
+                "手机只能读取和追加；**没有任何接口能改写已有记忆的正文**。"
+                "停止同步不会删除任何记忆。"
+            )
+        )
+        self.enabled_box = QCheckBox("启用 MemoryBridge", self)
+        outer.addWidget(self.enabled_box)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("这台设备的名字："))
+        self.name_edit = QLineEdit(self)
+        self.name_edit.setPlaceholderText("例如：书房台式机")
+        row.addWidget(self.name_edit, 1)
+        outer.addLayout(row)
+
+        port_row = QHBoxLayout()
+        port_row.addWidget(QLabel("端口："))
+        self.port_spin = QSpinBox(self)
+        self.port_spin.setRange(1024, 65_535)
+        port_row.addWidget(self.port_spin)
+        port_row.addSpacing(16)
+        port_row.addWidget(QLabel("最多配对设备："))
+        self.max_devices_spin = QSpinBox(self)
+        self.max_devices_spin.setRange(1, 16)
+        port_row.addWidget(self.max_devices_spin)
+        port_row.addStretch(1)
+        outer.addLayout(port_row)
+
+        self.lan_box = QCheckBox("允许局域网直连（只接受本机私网 /24）", self)
+        self.tailscale_box = QCheckBox("允许 Tailscale 网段", self)
+        self.same_user_box = QCheckBox("Tailscale 只接受同一 tailnet 用户", self)
+        outer.addWidget(self.lan_box)
+        outer.addWidget(self.tailscale_box)
+        outer.addWidget(self.same_user_box)
+        outer.addWidget(
+            _hint(
+                "外网不要做端口转发。两台设备都装 Tailscale，在同一个 tailnet 里；"
+                "本程序不会改你的 tailnet ACL，也不会开 Funnel/Serve。"
+            )
+        )
+
+        actions = QHBoxLayout()
+        self.pair_button = QPushButton("添加手机…", self)
+        self.pair_button.setProperty("kind", "primary")
+        actions.addWidget(self.pair_button)
+        actions.addStretch(1)
+        outer.addLayout(actions)
+
+        outer.addWidget(_section("已配对设备"))
+        self.device_list = QListWidget(self)
+        self.device_list.setMinimumHeight(120)
+        outer.addWidget(self.device_list)
+        self.revoke_button = QPushButton("吊销选中的设备", self)
+        self.revoke_button.setEnabled(False)
+        outer.addWidget(self.revoke_button, 0, Qt.AlignmentFlag.AlignLeft)
+
+        self.status_label = _hint("未启动。")
+        outer.addWidget(self.status_label)
+        outer.addStretch(1)
+
+        self.enabled_box.toggled.connect(self._emit)
+        self.name_edit.editingFinished.connect(self._emit)
+        self.port_spin.valueChanged.connect(self._emit)
+        self.max_devices_spin.valueChanged.connect(self._emit)
+        self.lan_box.toggled.connect(self._emit)
+        self.tailscale_box.toggled.connect(self._emit)
+        self.same_user_box.toggled.connect(self._emit)
+        self.tailscale_box.toggled.connect(self.same_user_box.setEnabled)
+        self.pair_button.clicked.connect(self.pair_requested)
+        self.device_list.itemSelectionChanged.connect(self._on_selection)
+        self.revoke_button.clicked.connect(self._on_revoke)
+
+    def settings(self) -> SyncSettings:
+        return SyncSettings(
+            enabled=self.enabled_box.isChecked(),
+            port=int(self.port_spin.value()),
+            lan_enabled=self.lan_box.isChecked(),
+            lan_cidrs=(),
+            tailscale_enabled=self.tailscale_box.isChecked(),
+            tailscale_same_user_only=self.same_user_box.isChecked(),
+            max_devices=int(self.max_devices_spin.value()),
+            server_name=self.name_edit.text().strip(),
+        )
+
+    def set_state(self, settings: SyncSettings, *, status: str = "", devices: object = ()) -> None:
+        self._loading = True
+        self.enabled_box.setChecked(settings.enabled)
+        self.name_edit.setText(settings.server_name)
+        self.port_spin.setValue(int(settings.port))
+        self.max_devices_spin.setValue(int(settings.max_devices))
+        self.lan_box.setChecked(settings.lan_enabled)
+        self.tailscale_box.setChecked(settings.tailscale_enabled)
+        self.same_user_box.setChecked(settings.tailscale_same_user_only)
+        self.same_user_box.setEnabled(settings.tailscale_enabled)
+        self._loading = False
+        self.set_status(status)
+        self._set_devices(devices)
+
+    def set_status(self, text: str) -> None:
+        self.status_label.setText(text or "未启动。")
+
+    def _set_devices(self, devices: object) -> None:
+        self.device_list.clear()
+        for record in devices or ():  # type: ignore[union-attr]
+            label = f"{record.name} · {'已吊销' if record.revoked else '有效'}"
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, record.device_id)
+            self.device_list.addItem(item)
+        self.revoke_button.setEnabled(False)
+
+    def _on_selection(self) -> None:
+        self.revoke_button.setEnabled(bool(self.device_list.selectedItems()))
+
+    def _on_revoke(self) -> None:
+        selected = self.device_list.selectedItems()
+        if not selected:
+            return
+        device_id = selected[0].data(Qt.ItemDataRole.UserRole)
+        if device_id:
+            self.revoke_requested.emit(str(device_id))
+
+    def _emit(self) -> None:
+        if not self._loading:
+            self.changed.emit(self.settings())
+
+
 class DataPage(QWidget):
     """数据页：**记忆与数据放在哪个文件夹**，以及重新看一遍新手引导。
 
@@ -2190,6 +2338,9 @@ class SettingsDialog(QDialog):
     commands_changed = Signal(bool)
     vision_changed = Signal(bool)
     voice_changed = Signal(object)
+    sync_changed = Signal(object)
+    sync_pair_requested = Signal()
+    sync_revoke_requested = Signal(str)
     audio_changed = Signal(bool)
     """语音输出那一页变了（出声/音量/音色/组件地址），由 :class:`SpeechPage` 转发。"""
     """「当前模型看得见图」变了。由工具页转发（见 :class:`ToolPage`）。"""
@@ -2225,6 +2376,7 @@ class SettingsDialog(QDialog):
         reminders: ReminderSettings | None = None,
         proactive: ProactiveSettings | None = None,
         voice: SpeechSettings | None = None,
+        sync: SyncSettings | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("设置")
@@ -2263,7 +2415,18 @@ class SettingsDialog(QDialog):
         # 行距却只有 16 像素"的画面（一条蓝条压住左右邻居的字），而那种错看起来像字体坏了。
         # QSS 那份只留横向内边距（文字离左边框多远），纵向高度由这里的 sizeHint 说了算。
         item_height = self.categories.fontMetrics().height() + 2 * _CATEGORY_PAD_Y
-        for label in ("外观", "人设", "后端 / API", "工具", "记忆", "提醒", "主动", "语音", "数据"):
+        for label in (
+            "外观",
+            "人设",
+            "后端 / API",
+            "工具",
+            "记忆",
+            "提醒",
+            "主动",
+            "语音",
+            "同步",
+            "数据",
+        ):
             item = QListWidgetItem(label)
             item.setSizeHint(QSize(0, item_height))
             self.categories.addItem(item)
@@ -2280,6 +2443,7 @@ class SettingsDialog(QDialog):
         self.reminders = ReminderPage(self)
         self.proactive = ProactivePage(self)
         self.speech = SpeechPage(self)
+        self.sync = SyncPage(self)
         self.data = DataPage(self)
         self.pages.addWidget(self.appearance)
         self.pages.addWidget(self.persona)
@@ -2289,6 +2453,7 @@ class SettingsDialog(QDialog):
         self.pages.addWidget(self.reminders)
         self.pages.addWidget(self.proactive)
         self.pages.addWidget(self.speech)
+        self.pages.addWidget(self.sync)
         self.pages.addWidget(self.data)
         # **页面放进滚动区**：窗口高度不再由最长的那一页决定。没有这一层时，
         # 内容更高的页面会把 QDialog 一路撑高，在 1080p 屏上接近满高。
@@ -2334,6 +2499,9 @@ class SettingsDialog(QDialog):
         self.tools.audio_changed.connect(self.audio_changed)
         self.speech.changed.connect(self.voice_changed)
         self.speech.set_state(voice if voice is not None else SpeechSettings())
+        self.sync.changed.connect(self.sync_changed)
+        self.sync.pair_requested.connect(self.sync_pair_requested)
+        self.sync.revoke_requested.connect(self.sync_revoke_requested)
         # 记忆页也是"边改边生效"：一个勾选框，勾上就是下一次写入生效。
         self.memory.changed.connect(self.memory_changed)
         # 提醒页同形（也是一个勾选框，勾上就是下一次到点生效）。
@@ -2367,6 +2535,7 @@ class SettingsDialog(QDialog):
             reminders=ReminderSettings() if reminders is None else reminders,
             proactive=ProactiveSettings() if proactive is None else proactive,
             voice=voice if voice is not None else SpeechSettings(),
+            sync=sync if sync is not None else SyncSettings(),
         )
 
     # ── 状态进出 ────────────────────────────────────────────────────────────
@@ -2402,6 +2571,7 @@ class SettingsDialog(QDialog):
         reminders: ReminderSettings,
         proactive: ProactiveSettings,
         voice: SpeechSettings,
+        sync: SyncSettings | None = None,
     ) -> None:
         """**打开窗口时调。** 顺带把快照换成这一份——「撤销修改」回到的是**这一次**
         打开时的样子，而不是上一次的。
@@ -2419,6 +2589,7 @@ class SettingsDialog(QDialog):
         self.reminders.set_state(reminders)
         self.proactive.set_state(proactive)
         self.speech.set_state(voice if voice is not None else SpeechSettings())
+        self.sync.set_state(sync if sync is not None else SyncSettings())
 
     def set_resolved(self, resolved: Resolved) -> None:
         self.appearance.set_resolved(resolved)

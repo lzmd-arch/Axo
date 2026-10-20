@@ -50,6 +50,7 @@ from axo.ui.settings_dialog import (
     ReminderPage,
     SettingsDialog,
     SpeechPage,
+    SyncPage,
     ToolPage,
 )
 from axo.ui.settings_store import (
@@ -62,6 +63,7 @@ from axo.ui.settings_store import (
     ProactiveSettings,
     ReminderSettings,
     SpeechSettings,
+    SyncSettings,
     ToolSettings,
 )
 from axo.ui.theme import (
@@ -957,7 +959,18 @@ def test_the_categories_line_up_with_the_pages(qapp, data_root) -> None:
     dialog = _dialog()
     labels = [dialog.categories.item(i).text() for i in range(dialog.categories.count())]
 
-    assert labels == ["外观", "人设", "后端 / API", "工具", "记忆", "提醒", "主动", "语音", "数据"]
+    assert labels == [
+        "外观",
+        "人设",
+        "后端 / API",
+        "工具",
+        "记忆",
+        "提醒",
+        "主动",
+        "语音",
+        "同步",
+        "数据",
+    ]
     assert dialog.pages.count() == len(labels)
     for row, page in enumerate(
         (
@@ -969,6 +982,7 @@ def test_the_categories_line_up_with_the_pages(qapp, data_root) -> None:
             dialog.reminders,
             dialog.proactive,
             dialog.speech,
+            dialog.sync,
             dialog.data,
         )
     ):
@@ -1993,3 +2007,30 @@ def test_the_motion_switch_turns_off_the_animations(qapp, data_root) -> None:
 
     dialog.appearance._replace(motion=True)  # noqa: SLF001 — 测试直接走同一个入口
     assert seen[-1].motion is True
+
+
+def test_sync_page_round_trips_non_secret_settings(qapp) -> None:
+    page = SyncPage()
+    seen: list[SyncSettings] = []
+    page.changed.connect(seen.append)
+    page.set_state(
+        SyncSettings(
+            enabled=True,
+            port=49001,
+            lan_enabled=False,
+            tailscale_enabled=True,
+            tailscale_same_user_only=False,
+            max_devices=2,
+            server_name="书房",
+        )
+    )
+    current = page.settings()
+    assert current.enabled is True
+    assert current.port == 49001
+    assert current.lan_enabled is False
+    assert current.tailscale_enabled is True
+    assert current.tailscale_same_user_only is False
+    assert current.max_devices == 2
+    assert current.server_name == "书房"
+    page.enabled_box.setChecked(False)
+    assert seen and seen[-1].enabled is False

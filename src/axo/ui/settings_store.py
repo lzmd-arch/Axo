@@ -47,6 +47,7 @@ __all__ = [
     "SETTINGS_ORG",
     "SettingsBackend",
     "SettingsStore",
+    "SyncSettings",
     "ToolSettings",
     "wallpaper_file",
 ]
@@ -102,6 +103,16 @@ _K_TASK_MEMORY = "memory/task_memory"
 _K_GRAPH_CHANNEL = "memory/graph_channel"
 _K_CONSOLIDATION_ENABLED = "memory/consolidation_enabled"
 _K_CONSOLIDATION_INTERVAL_S = "memory/consolidation_interval_s"
+
+#: 同步：只存非机密配置。证书私钥口令、设备 token、记忆专用密钥都不在这里。
+_K_SYNC_ENABLED = "sync/enabled"
+_K_SYNC_PORT = "sync/port"
+_K_SYNC_LAN_ENABLED = "sync/lan_enabled"
+_K_SYNC_LAN_CIDRS = "sync/lan_cidrs"
+_K_SYNC_TAILSCALE = "sync/tailscale_enabled"
+_K_SYNC_TAILSCALE_SAME_USER = "sync/tailscale_same_user_only"
+_K_SYNC_MAX_DEVICES = "sync/max_devices"
+_K_SYNC_SERVER_NAME = "sync/server_name"
 
 #: 键名与字段名**逐字对应**（``memory/task_memory`` 那一套）：读的人不必在脑子里做一次
 #: 映射，而测试那边的"两个键各跑一遍同一张表"也能靠 ``key.split("/")[-1]`` 拿到字段。
@@ -348,6 +359,25 @@ class MemorySettings:
     graph_channel: bool = False
     consolidation_enabled: bool = True
     consolidation_interval_s: int = 86_400
+
+
+@dataclass(frozen=True)
+class SyncSettings:
+    """桌面 MemoryBridge 的非机密配置。
+
+    **默认关闭。** 开启 = 在用户机器上起一个监听端口，只能由用户显式要求。
+    证书、设备 token、记忆专用密钥都不在这里；它们分别由 DPAPI 与
+    ``sync/authority.sqlite3`` 管。
+    """
+
+    enabled: bool = False
+    port: int = 47_831
+    lan_enabled: bool = True
+    lan_cidrs: tuple[str, ...] = ()
+    tailscale_enabled: bool = False
+    tailscale_same_user_only: bool = True
+    max_devices: int = 4
+    server_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -617,6 +647,35 @@ class SettingsStore:
         self._backend.setValue(_K_CONSOLIDATION_ENABLED, bool(settings.consolidation_enabled))
         self._backend.setValue(_K_CONSOLIDATION_INTERVAL_S, int(settings.consolidation_interval_s))
 
+    # ── 同步 ────────────────────────────────────────────────────────────────
+
+    def load_sync(self) -> SyncSettings:
+        port = _as_int(self._backend.value(_K_SYNC_PORT, 47_831), 47_831)
+        devices = _as_int(self._backend.value(_K_SYNC_MAX_DEVICES, 4), 4)
+        name = self._backend.value(_K_SYNC_SERVER_NAME, "")
+        return SyncSettings(
+            enabled=_as_bool(self._backend.value(_K_SYNC_ENABLED, False), False),
+            port=max(1024, min(65_535, port)),
+            lan_enabled=_as_bool(self._backend.value(_K_SYNC_LAN_ENABLED, True), True),
+            lan_cidrs=_as_str_tuple(self._backend.value(_K_SYNC_LAN_CIDRS, [])),
+            tailscale_enabled=_as_bool(self._backend.value(_K_SYNC_TAILSCALE, False), False),
+            tailscale_same_user_only=_as_bool(
+                self._backend.value(_K_SYNC_TAILSCALE_SAME_USER, True), True
+            ),
+            max_devices=max(1, min(16, devices)),
+            server_name=str(name or "").strip()[:64],
+        )
+
+    def save_sync(self, settings: SyncSettings) -> None:
+        self._backend.setValue(_K_SYNC_ENABLED, bool(settings.enabled))
+        self._backend.setValue(_K_SYNC_PORT, int(settings.port))
+        self._backend.setValue(_K_SYNC_LAN_ENABLED, bool(settings.lan_enabled))
+        self._backend.setValue(_K_SYNC_LAN_CIDRS, list(settings.lan_cidrs))
+        self._backend.setValue(_K_SYNC_TAILSCALE, bool(settings.tailscale_enabled))
+        self._backend.setValue(_K_SYNC_TAILSCALE_SAME_USER, bool(settings.tailscale_same_user_only))
+        self._backend.setValue(_K_SYNC_MAX_DEVICES, int(settings.max_devices))
+        self._backend.setValue(_K_SYNC_SERVER_NAME, settings.server_name)
+
     # ── 提醒 ────────────────────────────────────────────────────────────────
 
     def load_reminders(self) -> ReminderSettings:
@@ -736,6 +795,22 @@ def _as_bool(value: object, default: bool = False) -> bool:
     if isinstance(value, (int, float)):
         return bool(value)
     return default
+
+
+def _as_str_tuple(value: object) -> tuple[str, ...]:
+    """把读回来的一格收成字符串元组；单元素字符串当一项，不是逐字符。"""
+    if isinstance(value, str):
+        raw: list[object] = [value]
+    elif isinstance(value, (list, tuple)):
+        raw = list(value)
+    else:
+        return ()
+    found: list[str] = []
+    for item in raw:
+        text = str(item).strip()
+        if text and text not in found:
+            found.append(text)
+    return tuple(found[:16])
 
 
 def _as_int(value: object, default: int) -> int:
