@@ -30,7 +30,7 @@
 | Pygments | 2.21.0 | BSD-2-Clause |
 | anyio | 4.15.1 | MIT |
 | biosnn-bus | 0.1.0 | Apache-2.0 |
-| certifi | 2026.7.22 | MPL-2.0 |
+| certifi | 2026.10.19 | MPL-2.0 |
 | cffi | 2.1.1 | MIT |
 | charset-normalizer | 3.5.2 | MIT |
 | colorama | 0.4.6 | BSD-3-Clause |
@@ -40,12 +40,12 @@
 | httpcore | 1.0.9 | BSD-3-Clause |
 | httpx | 0.28.1 | BSD-3-Clause |
 | idna | 3.20 | BSD-3-Clause |
-| numpy | 2.5.3 | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 |
+| numpy | 2.5.4 | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 |
 | packaging | 26.3 | Apache-2.0 OR BSD-2-Clause |
-| pypdf | 6.20.1 | BSD-3-Clause |
+| pypdf | 6.21.2 | BSD-3-Clause |
 | pytest | 9.1.1 | MIT |
 | requests | 2.34.2 | Apache-2.0 |
-| setuptools | 84.0.0 | MIT |
+| setuptools | 84.2.1 | MIT |
 | srt | 3.5.3 | MIT |
 | tqdm | 4.70.1 | MPL-2.0 AND MIT |
 | tinytag | 2.3.2 | MIT |
