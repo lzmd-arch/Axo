@@ -918,10 +918,30 @@ class MemoryStore:
             ).fetchall()
         return {str(row["memory_id"]) for row in rows}
 
+    def ids_created_between(self, since: float, until: float) -> list[str]:
+        """按 ``created_at`` 取一段时间里的条目 id（升序，半开区间 ``[since, until)``）。
+
+        **与 :meth:`items_created_between` 分开，是因为召回只需要 id。** 时间窗的
+        候选子集由 id 决定，之后 ``_scan`` 会按 id 批量取条目；用整行版本会先把
+        窗内每条记忆的正文与 SDR 解码一遍，然后在下一段再解码一次。宽窗口（比如
+        「上个月」）上这是白付的一份全量物化。
+
+        语义与整行版本完全一致：半开区间、不按 tier/taint/pinned 过滤、按
+        ``created_at, memory_id`` 升序。
+        """
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT memory_id FROM memories WHERE created_at >= ? AND created_at < ?"
+                " ORDER BY created_at, memory_id",
+                (float(since), float(until)),
+            ).fetchall()
+        return [str(row["memory_id"]) for row in rows]
+
     def items_created_between(self, since: float, until: float) -> list[MemoryItem]:
         """按 ``created_at`` 取一段时间里的条目（升序，半开区间 ``[since, until)``）。
 
-        时间窗召回要用它——「昨天我说了什么」的检索键是时间，不是词面。
+        需要正文与 SDR 的调用方（主动搭话等）用它；召回只需要 id，走
+        :meth:`ids_created_between`，别为了拿 id 把整行解码一遍。
 
         **不做任何语义过滤**：``tier`` / ``taint`` / ``pinned`` 一律不看。「这段时间
         里有什么」是存储层的事实，「哪些该进上下文」是召回层的判断；混在一起之后

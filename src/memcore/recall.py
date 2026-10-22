@@ -296,7 +296,7 @@ def recall(
     window_ids: set[str] | None = None
     if window is not None:
         since, until = window
-        window_ids = {item.memory_id for item in store.items_created_between(since, until)}
+        window_ids = set(store.ids_created_between(since, until))
         notes.append(
             f"时间窗 {format_when(since)} – {format_when(until)}（窗内 {len(window_ids)} 条）"
         )

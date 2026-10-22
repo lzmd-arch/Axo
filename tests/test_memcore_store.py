@@ -450,3 +450,6 @@ def test_items_created_between_is_half_open_and_unfiltered(store: MemoryStore) -
 
     assert [item.content for item in hits] == ["早的。", "已经忘了的。"]
     assert edge.memory_id not in {item.memory_id for item in hits}, "until 是开区间"
+    # id 版本与整行版本必须同序同集合；召回只走 id 版本。
+    assert store.ids_created_between(100.0, 200.0) == [item.memory_id for item in hits]
+    assert store.ids_created_between(201.0, 250.0) == []
