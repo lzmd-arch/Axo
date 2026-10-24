@@ -923,3 +923,20 @@ def test_every_screen_marker_really_lands_in_the_task_register() -> None:
     for marker in SCREEN_MARKERS:
         routed = route_turn(f"{marker}现在是什么", RegisterState())
         assert routed.uses_tools is True, f"「{marker}」现在判不成 task 了"
+
+
+def test_direct_web_commands_are_recognised() -> None:
+    """``/search`` 与 ``/fetch`` 是**动作**，不是语域切换：不带 forced、不保持。"""
+    search = parse_slash("/search 量子计算")
+    assert search.command is SlashCommand.SEARCH
+    assert search.text == "量子计算"
+    assert search.is_direct_web and search.forced is None and not search.sticky
+
+    fetch = parse_slash("/fetch https://example.com/a")
+    assert fetch.command is SlashCommand.FETCH
+    assert fetch.text == "https://example.com/a"
+    assert fetch.is_direct_web and fetch.forced is None
+
+
+def test_a_longer_word_starting_with_search_is_not_a_command() -> None:
+    assert parse_slash("/searchx 什么").command is None

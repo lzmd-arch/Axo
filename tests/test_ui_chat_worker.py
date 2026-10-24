@@ -28,6 +28,7 @@ from fakes import ScriptedBackend, text_chunk, tool_chunk
 
 from axo.llm.base import (
     ChatBackendError,
+    ChatChunk,
     ChatMessage,
     ChatRequest,
     ToolCall,
@@ -174,6 +175,19 @@ def test_tool_calls_after_some_text_still_fail_loudly(qapp: Any) -> None:
     assert chunks == ["我查一下"]
     assert finished == []
     assert "write_memory" in failed[0]
+
+
+def test_response_meta_rides_along_in_the_finished_stats(qapp: Any) -> None:
+    """收尾片里的版本元数据要原样进 ``finished`` 的统计——主窗口据此写运行日志。"""
+    done = ChatChunk(
+        done=True,
+        raw={"meta": {"model": "kimi-k2", "system_fingerprint": "fp_x"}},
+    )
+    worker = ChatWorker(ScriptedBackend([[done]]), _request())
+
+    _chunks, finished, _failed = _run(worker)
+
+    assert finished[0][1]["response_meta"]["system_fingerprint"] == "fp_x"
 
 
 def test_backend_error_still_reported_as_before(qapp: Any) -> None:

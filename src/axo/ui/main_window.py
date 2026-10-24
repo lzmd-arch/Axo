@@ -103,12 +103,14 @@ from ..agent.router import (
     Register,
     RegisterState,
     RoutedTurn,
+    SlashCommand,
     route_turn,
 )
 from ..agent.runlog import RunLog
 from ..agent.tools import Capture, ToolContext, ToolRegistry
 from ..asr import Transcription
 from ..attachments import Attachment, attachment_for, body_of
+from ..busd.launcher import launch_blocked_reason, spawn_daemon, stop_daemon
 from ..llm.base import ChatBackendError, ChatRequest
 from ..llm.ollama import (
     MODEL_ID_PREFIX as OLLAMA_MODEL_ID_PREFIX,
@@ -129,6 +131,7 @@ from ..llm.openai_compat import (
     supports_audio_input,
 )
 from ..llm.speech import RemoteSpeech
+from ..llm_meta import append_response_meta
 from ..memory import (
     BUILTIN_PERSONA_VERSION,
     DEFAULT_PERSONA,
@@ -146,11 +149,13 @@ from ..memory import (
 )
 from ..memory.browse import format_ts
 from ..memory.consolidation import ConsolidationRun, last_run, summary_line
-from ..net import DeepSeekWeb
+from ..net import MAX_FETCH_CHARS, DeepSeekWeb, WebError
 from ..paths import (
     data_dir,
     data_root_source,
     default_data_dir,
+    fetch_cache_dir,
+    llm_meta_path,
     memory_db_path,
     plugins_dir,
     reminders_cancelled_path,
@@ -171,8 +176,10 @@ from ..sync.controller import SyncController, SyncControllerConfig
 from ..tts import SpeechReceipt
 from ..weather import OpenMeteoWeather
 from ..weather_watch import WeatherBaseline, material_text
+from ..web_cache import FetchCache
 from .agent_worker import AgentWorker
 from .app import make_settings
+from .bus_events import BusEventPoller
 from .call import CallController
 from .chat_view import ChatView
 from .chat_worker import ChatWorker, ModelListWorker
@@ -541,6 +548,29 @@ def _install_window_icon(window: QWidget) -> None:
     window.setWindowIcon(icon)
 
 
+def _record_response_meta(statistics: dict[str, Any], backend: Any, chat_view: Any) -> None:
+    """把响应里的版本元数据写进运行日志。**没有就什么都不写。**
+
+    云端模型名是滚动别名，同一别名在不同日期背后可能是不同构建；响应里的
+    ``system_fingerprint`` / ``build`` 是事后唯一能指回"谁答的"的东西。写失败
+    要说出来——静默丢一行正是这条日志最不该有的失效方式。
+
+    **做成模块级函数而不是方法**：``_on_reply_finished`` 在若干测试里被绑到一个
+    只带必要字段的替身上跑，多一个 ``self.`` 方法就多一个替身必须实现的形状。
+    """
+    meta = statistics.get("response_meta")
+    if not isinstance(meta, dict) or not meta:
+        return
+    try:
+        append_response_meta(
+            llm_meta_path(),
+            model_ref=getattr(backend, "model_id", "") if backend else "",
+            meta=meta,
+        )
+    except OSError as exc:
+        chat_view.append_message("system", f"响应的版本元数据没写进日志：{exc}")
+
+
 class _MusicChannel:
     """工具面看到的音乐服务。**只把会动播放器的调用搬回界面线程。**"""
 
@@ -805,6 +835,13 @@ class MainWindow(QMainWindow):
         #: :meth:`_on_proactive_tick` 与纯层（见 ``ui/proactive_scheduler.py`` 的模块文档：
         #: 为什么是固定 60 秒而不是"睡到下一个时刻"）。
         self._proactive = ProactiveScheduler(parent=self)
+        #: 常驻总线 daemon 的子进程句柄与事件轮询器（见 ``axo/busd``）。
+        #: **UI 只拿到句柄、只读事件文件**——不 import 那个进程里的任何运行时东西。
+        self._bus_proc: Any = None
+        self._bus_poller: BusEventPoller | None = None
+        #: daemon 最近一次"值得开口"的建议。**不立刻说话**：什么时候说仍然归
+        #: :meth:`_on_proactive_tick` 的那几道闸，这里只是多一条候选话头。
+        self._bus_suggestion: dict[str, Any] | None = None
         self._proactive.tick.connect(self._on_proactive_tick)
 
         #: 「到点由她开口」那一轮。**它是一次请求，但不是一轮对话**：没有 user 行、
@@ -1013,6 +1050,7 @@ class MainWindow(QMainWindow):
         # 主动搭话那块表排在它后面：它的 tick 不同步发信号（那边 ``start()`` 会同步
         # 把错过的收掉，所以有那个顺序约束），这里没有。
         self._proactive.start()
+        self._start_bus_daemon()
 
         # **接管周期巩固。** 排在这里没有提醒那条的时序约束（``start()`` 不同步发
         # 信号），所以它其实可以更早；放在一起是让"这个程序里有两块表"这件事只有
@@ -1869,6 +1907,76 @@ class MainWindow(QMainWindow):
         """
         return route_turn(text, self._router_state)
 
+    def _run_direct_web(self, parsed: Any) -> None:
+        """L1：用户显式触发的联网读。**不经过模型判断，也不发请求。**
+
+        与 L2（模型自主调 ``web_search`` / ``fetch_url``）共用同一个通道与同一份缓存；
+        区别只在触发者和闸门：``web_enabled`` 管"她能不能自己出网"，用户敲命令不受它
+        约束。
+
+        结果只显示在对话里，**没有进入模型上下文**——要她就这些结果继续回答，用户得
+        接着问。这句话要明说，不然用户会以为她已经看过了。
+        """
+        command = parsed.command
+        body = str(parsed.text).strip()
+        if not body:
+            usage = "/search 关键词" if command is SlashCommand.SEARCH else "/fetch https://…"
+            self.chat_view.append_message("system", f"用法：{usage}")
+            return
+        web = self._direct_web()
+        if web is None:
+            self.chat_view.append_message(
+                "system",
+                "联网读需要云端后端 + DeepSeek key（官方端点）。当前配置没有，或者端点不是"
+                " api.deepseek.com。",
+            )
+            return
+        try:
+            if command is SlashCommand.SEARCH:
+                shown = self._direct_search(web, body)
+            else:
+                shown = self._direct_fetch(web, body)
+        except WebError as exc:
+            self.chat_view.append_message("system", f"联网读失败：{exc}")
+            return
+        self.chat_view.append_message("system", shown)
+
+    def _direct_search(self, web: DeepSeekWeb, query: str) -> str:
+        hits = web.search(query)
+        if not hits:
+            return f"搜索「{query}」没有返回结果。"
+        lines = [f"联网搜索（你直接触发）：{query}", ""]
+        for index, hit in enumerate(hits, start=1):
+            summary = hit.summary or hit.snippet
+            lines.append(f"{index}. {hit.title}\n   {hit.url}\n   {summary}")
+        try:
+            entry = FetchCache(fetch_cache_dir()).record_search(query=query, hits=hits)
+        except OSError as exc:
+            lines += ["", f"（搜索记录没写进缓存：{exc}）"]
+        else:
+            lines += ["", f"搜索记录已缓存：sha256 {entry.sha256[:12]}…"]
+        lines += ["", "（这条结果只显示在这里，没有进入模型上下文。）"]
+        return "\n".join(lines)
+
+    def _direct_fetch(self, web: DeepSeekWeb, url: str) -> str:
+        title, content = web.fetch(url)
+        clipped = content[:MAX_FETCH_CHARS]
+        head = f"{title}\n{url}\n\n" if title else f"{url}\n\n"
+        note = "" if len(content) <= MAX_FETCH_CHARS else "\n\n（正文已截断）"
+        try:
+            entry = FetchCache(fetch_cache_dir()).record_fetch(
+                url=url, title=title, content=content
+            )
+        except OSError as exc:
+            footer = f"\n\n—\n（原文没写进缓存：{exc}）"
+        else:
+            same = "（与已有缓存相同）" if entry.deduped else ""
+            footer = f"\n\n—\n原文已缓存：sha256 {entry.sha256[:12]}…{same}"
+        return (
+            f"联网抓取（你直接触发）\n{head}{clipped}{note}{footer}"
+            "\n\n（这条结果只显示在这里，没有进入模型上下文。）"
+        )
+
     def _on_submit(
         self,
         text: str,
@@ -1924,6 +2032,9 @@ class MainWindow(QMainWindow):
             self.chat_view.append_message(
                 "system", f"已切到{'任务' if parsed.forced is Register.TASK else '闲聊'}语域。"
             )
+            return
+        if parsed.is_direct_web:
+            self._run_direct_web(parsed)
             return
         # ``/task 正文`` 只影响这一轮（``sticky`` 为假），所以 ``advance`` 拿到的
         # 就是"仅此一轮"的结论，状态机那边不会被改写。
@@ -2200,14 +2311,12 @@ class MainWindow(QMainWindow):
         QApplication.clipboard().setText(text)
         return ""
 
-    def _web_backend(self) -> DeepSeekWeb | None:
-        """联网读的通道。**默认没有**：开关关着、没 key、或端点不是官方地址。
+    def _direct_web(self) -> DeepSeekWeb | None:
+        """联网读的通道本体：**只看 key 与官方端点**。
 
-        用 DeepSeek 官方 Search/Fetch 而不是自己抓网页（见 ``agent/net.py``）：
+        用 DeepSeek 官方 Search/Fetch 而不是自己抓网页（见 ``axo/net.py``）：
         同一把 key、失败不计费，而且网页抓取的安全边界由官方那侧承担。
         """
-        if not getattr(self, "_web_enabled", False):
-            return None
         backend = self._backend_settings
         if not backend.is_cloud or not backend.api_key.strip():
             return None
@@ -2215,6 +2324,16 @@ class MainWindow(QMainWindow):
             # 自建网关不一定代理了这两个端点；静默登记会让模型拿到一串 404。
             return None
         return DeepSeekWeb(backend.api_key)
+
+    def _web_backend(self) -> DeepSeekWeb | None:
+        """**模型自主调用**联网工具的通道：在 :meth:`_direct_web` 之上多一道总开关。
+
+        总开关是"允不允许她在没被要求时出网"；用户自己敲 ``/search`` 属于显式命令，
+        不受它约束（见 :meth:`_run_direct_web`）。
+        """
+        if not getattr(self, "_web_enabled", False):
+            return None
+        return self._direct_web()
 
     def _report_plugin_issues(self, issues: Sequence[PluginIssue]) -> None:
         """插件装不上时**说一句**（每个会话只说一次）。
@@ -2514,6 +2633,7 @@ class MainWindow(QMainWindow):
             allow_commands=self._allow_commands,
             cancel=self._agent_cancel,
             net=self._web_backend(),
+            web_cache=FetchCache(fetch_cache_dir()),
             weather=OpenMeteoWeather() if getattr(self, "_weather_enabled", True) else None,
             open_external=lambda target, kind: self._ui_call(self._open_external, target, kind),
             clipboard_read=lambda: self._ui_call(lambda: QApplication.clipboard().text()),
@@ -2880,6 +3000,7 @@ class MainWindow(QMainWindow):
                 + "\n\n"
                 + "这一轮已按转写文字回答；「当前模型听得见原声」那格已替你关掉，想再试就重新勾。",
             )
+        _record_response_meta(statistics, self._backend, self.chat_view)
         self._remember(text, interrupted=interrupted, tool_trace=statistics.get("tool_trace", ()))
         self._reset_generation_state()
         # **回执在这一刻才算送达**：请求真的跑完了（哪怕空回复），下一轮才该
@@ -3244,8 +3365,71 @@ class MainWindow(QMainWindow):
             return
         self._start_material_source(now)
 
+    # ── 常驻总线 daemon ─────────────────────────────────────────────────────
+
+    def _start_bus_daemon(self) -> None:
+        """拉起独立进程 + 开始读它写的事件。
+
+        打包版没有可用的解释器，:func:`~axo.busd.launcher.launch_blocked_reason` 会
+        给出理由；那时仍然**启动轮询器**——用户可能自己开着 daemon，事件文件照样能读。
+        """
+        settings = self._settings_store.load_bus()
+        if not settings.enabled:
+            return
+        blocked = launch_blocked_reason()
+        if blocked is None and self._bus_proc is None:
+            self._bus_proc = spawn_daemon(
+                db_path=memory_db_path(),
+                data_dir=data_dir(),
+                interval_s=int(settings.interval_s),
+                log_path=data_dir() / "bus" / "daemon.log",
+            )
+        self._bus_poller = BusEventPoller(parent=self)
+        self._bus_poller.event.connect(self._on_bus_event)
+        self._bus_poller.start()
+        if blocked is not None:
+            self.chat_view.set_status(f"总线 daemon 未启动：{blocked}（事件轮询仍在）")
+
+    def _stop_bus_daemon(self) -> None:
+        if self._bus_poller is not None:
+            self._bus_poller.stop()
+            self._bus_poller = None
+        if self._bus_proc is not None:
+            stop_daemon(self._bus_proc)
+            self._bus_proc = None
+
+    @Slot(object)
+    def _on_bus_event(self, event: Any) -> None:
+        """只接"该开口了"那一种；其余事件（做梦报告、启停）留给日志。"""
+        if getattr(event, "kind", "") == "greeting_suggestion":
+            payload = getattr(event, "payload", None)
+            if isinstance(payload, dict):
+                self._bus_suggestion = dict(payload)
+
+    def _take_bus_material(self) -> Material | None:
+        """把总线建议换成一个话头。**取走即清**，同一条建议不会说两次。"""
+        payload, self._bus_suggestion = getattr(self, "_bus_suggestion", None), None
+        ids = list((payload or {}).get("memories") or [])
+        memory = getattr(self, "_memory", None)
+        if not ids or memory is None:
+            return None
+        for memory_id in reversed(ids):
+            item = memory.get(str(memory_id))
+            if item is not None and item.content.strip():
+                return Material(
+                    memory_id=item.memory_id,
+                    content=item.content,
+                    created_at=item.created_at,
+                    kind="memory",
+                )
+        return None
+
     def _start_material_source(self, now: datetime) -> None:
-        """按设置选话头：热点新闻，或者最近记忆。"""
+        """按设置选话头：总线建议 → 热点新闻 → 最近记忆。"""
+        material = self._take_bus_material()
+        if material is not None:
+            self._start_proactive_speech(material)
+            return
         if self._proactive_settings.source == "news":
             self._start_proactive_news(now)
             return
@@ -3454,6 +3638,7 @@ class MainWindow(QMainWindow):
                 write_root=self._read_roots,
                 data_root=data_dir(),
                 net=self._web_backend(),
+                web_cache=FetchCache(fetch_cache_dir()),
                 weather=OpenMeteoWeather() if getattr(self, "_weather_enabled", True) else None,
                 cancel=threading.Event(),
             )
@@ -5323,6 +5508,8 @@ class MainWindow(QMainWindow):
         self._scheduler.stop()
         # **停主动那块表。** 同一条理由，而且它比另外两块都轻：停了就只是不再问。
         self._proactive.stop()
+        # **停总线 daemon。** 子进程不会跟着父进程退出，不显式收就会攒下多个。
+        self._stop_bus_daemon()
         # **停第二块表。** 与上面同一条理由：收尾之后才响的一枪没有东西接得住，而
         # 它（比提醒那条更坏）会去起一个**写库**的线程——那个线程在解释器收尾时
         # 还在跑，就是下一次 ``0xC0000409``。

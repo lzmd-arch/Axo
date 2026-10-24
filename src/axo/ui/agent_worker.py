@@ -98,6 +98,9 @@ __all__ = ["AgentWorker"]
 _EMPTY_STATISTICS: dict[str, Any] = {
     "prompt_tokens": None,
     "completion_tokens": None,
+    # 工具循环这一版不上报响应元数据（与 token 同一条边界，见 agent/loop.py）。
+    # 键存在是为了两条路径的统计形状一致；**值恒为空**，别把它当成"端点没给"。
+    "response_meta": {},
     "interrupted": False,
     "rounds": 0,
     "tool_calls": 0,

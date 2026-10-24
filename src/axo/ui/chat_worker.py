@@ -85,6 +85,7 @@ class ChatWorker(QObject):
         parts: list[str] = []
         prompt_tokens: int | None = None
         completion_tokens: int | None = None
+        response_meta: dict[str, Any] = {}
         interrupted = False
 
         try:
@@ -114,6 +115,9 @@ class ChatWorker(QObject):
                 if piece.done:
                     prompt_tokens = piece.prompt_tokens
                     completion_tokens = piece.completion_tokens
+                    meta = piece.raw.get("meta")
+                    if isinstance(meta, dict):
+                        response_meta = dict(meta)
                 if self._stop_requested:
                     interrupted = True
                     break
@@ -134,6 +138,7 @@ class ChatWorker(QObject):
                 {
                     "prompt_tokens": prompt_tokens,
                     "completion_tokens": completion_tokens,
+                    "response_meta": response_meta,
                     "interrupted": interrupted,
                 },
             )

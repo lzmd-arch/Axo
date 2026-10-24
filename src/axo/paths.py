@@ -389,3 +389,23 @@ def music_dir() -> Path:
     搬数据根不该搬走几十 GB 的音乐。
     """
     return data_dir() / "music"
+
+
+def llm_meta_path() -> Path:
+    """云端响应的**版本元数据**日志：``<数据根>/llm-meta.jsonl``。
+
+    为什么单独一份而不是塞进会话：会话是用户会删的东西，而这里记的是"这个别名
+    那天背后是谁"——它要能在会话删掉之后仍然回答"那条回复出自哪个构建"。
+    **不创建**（还没用过云端就没有）。
+    """
+    return data_dir() / "llm-meta.jsonl"
+
+
+def fetch_cache_dir() -> Path:
+    """联网抓取的**原文缓存**：``<数据根>/fetch-cache/``。
+
+    按纪要的分工：记忆层只存摘要 + URL + 时间戳 + 哈希，原文留在这里，两不相混。
+    与 :func:`stickers_dir` 同姿态：**在数据根底下**（跟着搬迁走）、**不创建**
+    （没用过联网就是没有）。
+    """
+    return data_dir() / "fetch-cache"

@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -67,6 +68,7 @@ from axo.llm.base import ToolCall, ToolSpec
 from axo.memory.forget import FORGET_KEY
 from axo.memory.writer import MemoryWriter
 from axo.stickers import stickers_in
+from axo.web_cache import FetchCache
 from memcore.ids import new_ulid
 from memcore.sdr import encode_lexical
 from memcore.store import MemoryStore
@@ -1215,6 +1217,50 @@ def test_fetch_url_returns_title_and_body() -> None:
     outcome = FetchUrlTool().run({"url": "https://example.com"}, context)
 
     assert outcome.ok and "标题" in outcome.content and "正文" in outcome.content
+
+
+def test_fetch_url_records_the_raw_text_and_says_so(tmp_path: Path) -> None:
+    """抓取结果落缓存 + 台账；回灌里要说清"原文去哪了、记忆不归工具管"。"""
+    cache = FetchCache(tmp_path / "fetch-cache")
+    context = ToolContext(store=MemoryStore(":memory:"), net=FakeNet(), web_cache=cache)
+
+    outcome = FetchUrlTool().run({"url": "https://example.com"}, context)
+
+    assert outcome.ok
+    assert "原文已缓存" in outcome.content
+    assert "daemon" in outcome.content
+    lines = (tmp_path / "fetch-cache" / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    entry = json.loads(lines[0])
+    assert entry["kind"] == "fetch" and entry["url"] == "https://example.com"
+    assert cache.read(entry["sha256"]) == "正文"
+
+
+def test_fetching_the_same_text_twice_is_deduped(tmp_path: Path) -> None:
+    cache = FetchCache(tmp_path / "fetch-cache")
+    context = ToolContext(store=MemoryStore(":memory:"), net=FakeNet(), web_cache=cache)
+
+    FetchUrlTool().run({"url": "https://example.com/a"}, context)
+    second = FetchUrlTool().run({"url": "https://example.com/b"}, context)
+
+    assert "与已有缓存相同" in second.content
+    objects = list((tmp_path / "fetch-cache" / "objects").glob("*.txt"))
+    assert len(objects) == 1
+    lines = (tmp_path / "fetch-cache" / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+    assert json.loads(lines[1])["deduped"] is True
+
+
+def test_web_search_records_the_query_and_hits(tmp_path: Path) -> None:
+    cache = FetchCache(tmp_path / "fetch-cache")
+    context = ToolContext(store=MemoryStore(":memory:"), net=FakeNet(), web_cache=cache)
+
+    outcome = WebSearchTool().run({"query": "最近的新闻"}, context)
+
+    assert outcome.ok and "搜索记录已缓存" in outcome.content
+    entry = json.loads(
+        (tmp_path / "fetch-cache" / "ledger.jsonl").read_text(encoding="utf-8").splitlines()[0]
+    )
+    assert entry["kind"] == "search" and entry["query"] == "最近的新闻"
 
 
 def test_web_tools_fail_cleanly_without_a_channel() -> None:

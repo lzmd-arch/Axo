@@ -1207,6 +1207,16 @@ class WebSearchTool:
         for index, hit in enumerate(hits, start=1):
             summary = hit.summary or hit.snippet
             lines.append(f"{index}. {hit.title}\n   {hit.url}\n   {summary}")
+        if ctx.web_cache is not None:
+            try:
+                entry = ctx.web_cache.record_search(query=query, hits=hits)
+            except OSError as exc:
+                lines.append(f"\n—\n（搜索记录没写进缓存：{exc}）")
+            else:
+                lines.append(
+                    f"\n—\n搜索记录已缓存：sha256 {entry.sha256[:12]}…"
+                    "（原文在 fetch-cache；记忆由 daemon 的巩固路径写入）"
+                )
         return ToolOutcome.success("\n".join(lines), replayable=False)
 
 
@@ -1239,7 +1249,19 @@ class FetchUrlTool:
         except WebError as exc:
             return ToolOutcome.failure(str(exc))
         head = f"{title}\n{url}\n\n" if title else f"{url}\n\n"
-        return ToolOutcome.success(head + content, replayable=False)
+        footer = ""
+        if ctx.web_cache is not None:
+            try:
+                entry = ctx.web_cache.record_fetch(url=url, title=title, content=content)
+            except OSError as exc:
+                footer = f"\n\n—\n（原文没写进缓存：{exc}）"
+            else:
+                note = "（与已有缓存相同）" if entry.deduped else ""
+                footer = (
+                    f"\n\n—\n原文已缓存：sha256 {entry.sha256[:12]}…{note}"
+                    "（工具不写记忆；入库走 daemon 的巩固路径）"
+                )
+        return ToolOutcome.success(head + content + footer, replayable=False)
 
 
 class UpdatePlanTool:

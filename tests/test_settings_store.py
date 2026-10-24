@@ -19,6 +19,8 @@ import pytest
 from axo import paths
 from axo.llm.ollama import DEFAULT_OLLAMA_HOST
 from axo.ui.settings_store import (
+    CLOUD_PRESET_CUSTOM,
+    CLOUD_PRESETS,
     DEFAULT_CLOUD_BASE_URL,
     DEFAULT_HOST,
     PROVIDER_CLOUD,
@@ -29,6 +31,7 @@ from axo.ui.settings_store import (
     ReminderSettings,
     SettingsStore,
     ToolSettings,
+    cloud_preset_for_url,
     wallpaper_file,
 )
 from axo.ui.theme import (
@@ -1182,3 +1185,49 @@ def test_music_settings_roundtrip_clamp_and_relative_root_dropped() -> None:
         SettingsStore(FakeBackend({"music/scan_on_start": "false"})).load_music().scan_on_start
         is False
     )
+
+
+# ── 云端预设 ────────────────────────────────────────────────────────────────
+
+
+def test_default_cloud_preset_is_the_first_listed() -> None:
+    assert SettingsStore(FakeBackend()).load_backend().cloud_preset == CLOUD_PRESETS[0].key
+
+
+def test_cloud_preset_roundtrip() -> None:
+    kimi = next(p for p in CLOUD_PRESETS if p.key == "kimi")
+    store = SettingsStore(FakeBackend())
+    store.save_backend(
+        BackendSettings(
+            provider=PROVIDER_CLOUD,
+            cloud_base_url=kimi.base_url,
+            cloud_preset=kimi.key,
+            api_key="sk-x",
+        )
+    )
+    loaded = store.load_backend()
+    assert loaded.cloud_preset == "kimi"
+    assert loaded.cloud_base_url == kimi.base_url
+
+
+def test_old_settings_without_preset_infer_it_from_the_url() -> None:
+    """升级前盘上只有地址——按地址认，不把所有人都降级成自定义。"""
+    kimi = next(p for p in CLOUD_PRESETS if p.key == "kimi")
+    store = SettingsStore(FakeBackend({"backend/cloud_base_url": kimi.base_url}))
+    assert store.load_backend().cloud_preset == "kimi"
+
+
+def test_unknown_preset_key_falls_back_to_the_url() -> None:
+    kimi = next(p for p in CLOUD_PRESETS if p.key == "kimi")
+    store = SettingsStore(
+        FakeBackend(
+            {"backend/cloud_base_url": kimi.base_url, "backend/cloud_preset": "from-the-future"}
+        )
+    )
+    assert store.load_backend().cloud_preset == "kimi"
+
+
+def test_custom_url_is_custom() -> None:
+    store = SettingsStore(FakeBackend({"backend/cloud_base_url": "https://example.test/v1"}))
+    assert store.load_backend().cloud_preset == CLOUD_PRESET_CUSTOM
+    assert cloud_preset_for_url("https://example.test/v1") == CLOUD_PRESET_CUSTOM

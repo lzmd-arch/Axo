@@ -74,6 +74,7 @@ _K_BACKEND_HOST = "backend/host"
 _K_ALLOW_REMOTE = "backend/allow_remote"
 _K_PROVIDER = "backend/provider"
 _K_CLOUD_BASE_URL = "backend/cloud_base_url"
+_K_CLOUD_PRESET = "backend/cloud_preset"
 #: **盘上存的是密文**（Windows DPAPI 的 base64），不是 key 本身。见
 #: :mod:`axo.secrets` 与下面 :meth:`SettingsStore.load_backend`。
 _K_API_KEY = "backend/api_key"
@@ -106,6 +107,8 @@ _K_CONSOLIDATION_ENABLED = "memory/consolidation_enabled"
 _K_CONSOLIDATION_INTERVAL_S = "memory/consolidation_interval_s"
 
 #: 同步：只存非机密配置。证书私钥口令、设备 token、记忆专用密钥都不在这里。
+_K_BUS_ENABLED = "bus/enabled"
+_K_BUS_INTERVAL = "bus/interval_s"
 _K_SYNC_ENABLED = "sync/enabled"
 _K_SYNC_PORT = "sync/port"
 _K_SYNC_LAN_ENABLED = "sync/lan_enabled"
@@ -171,6 +174,69 @@ PROVIDER_CLOUD = "cloud"
 _PROVIDERS = (PROVIDER_OLLAMA, PROVIDER_CLOUD)
 
 
+@dataclass(frozen=True)
+class CloudPreset:
+    """一个**具名的**云端服务商预设。
+
+    存在的理由不是省一次复制粘贴，而是把"换引擎"变成用户能看见的一个开关：
+    :class:`BackendSettings` 的 ``cloud_preset`` 记住用户选的是哪一家，界面据此
+    显示名字；URL 只是它的一个属性。自定义地址仍允许——那是 ``custom`` 这一档，
+    预设列表之外的东西不该被堵死。
+
+    Attributes:
+        key: 落进设置的稳定标识（**不是下标**，顺序会变）。
+        label: 设置页里显示的名字。
+        base_url: OpenAI 兼容端点的根，**带 ``/v1``**。
+        note: 一句话说明这一家的定位，显示在预设下面。
+    """
+
+    key: str
+    label: str
+    base_url: str
+    note: str = ""
+
+
+#: 具名预设。**顺序即显示顺序，第一项是默认。**
+CLOUD_PRESETS: tuple[CloudPreset, ...] = (
+    CloudPreset(
+        "deepseek",
+        "DeepSeek（默认）",
+        DEFAULT_CLOUD_BASE_URL,
+        "日常对话与联网搜索/Fetch；同一把 key 可调官方 Search/Fetch 端点。",
+    ),
+    CloudPreset(
+        "kimi",
+        "Kimi（Moonshot，长上下文备用）",
+        "https://api.moonshot.cn/v1",
+        "长上下文记忆回放备用；换引擎不换库——记忆与嵌入都留在本机。",
+    ),
+)
+
+#: 用户手填地址的那一档。不是预设，但要是 ``cloud_preset`` 的一个合法取值。
+CLOUD_PRESET_CUSTOM = "custom"
+
+
+def cloud_preset_by_key(key: str) -> CloudPreset | None:
+    """按 key 取预设；``custom`` 或不认识的 key 返回 ``None``。"""
+    for preset in CLOUD_PRESETS:
+        if preset.key == key:
+            return preset
+    return None
+
+
+def cloud_preset_for_url(base_url: str) -> str:
+    """按地址反推预设 key；对不上任何预设时返回 :data:`CLOUD_PRESET_CUSTOM`。
+
+    用于读旧设置：``cloud_preset`` 这个键是后加的，升级前用户手里只有地址。
+    按地址认出来比把所有人都降级成 ``custom`` 更接近事实。
+    """
+    normalized = base_url.strip().rstrip("/")
+    for preset in CLOUD_PRESETS:
+        if preset.base_url.rstrip("/") == normalized:
+            return preset.key
+    return CLOUD_PRESET_CUSTOM
+
+
 class SettingsBackend(Protocol):
     """``QSettings`` 用得到的那两个方法。**故意只要两个。**"""
 
@@ -210,6 +276,12 @@ class BackendSettings:
     host: str = DEFAULT_HOST
     allow_remote: bool = False
     cloud_base_url: str = DEFAULT_CLOUD_BASE_URL
+    cloud_preset: str = CLOUD_PRESETS[0].key
+    """用户选的是哪一家（:data:`CLOUD_PRESETS` 的 key 或 :data:`CLOUD_PRESET_CUSTOM`）。
+
+    **它是"选的是谁"，不是"地址是什么"**：地址可以被手改，预设名不该因此丢失。
+    读旧设置时这个键不存在，按地址反推（:func:`preset_for_url`）。
+    """
     api_key: str = ""
 
     @property
@@ -335,6 +407,20 @@ class MusicSettings:
     scan_on_start: bool = True
     online_lyrics: bool = False
     volume: int = 80
+
+
+@dataclass(frozen=True)
+class BusSettings:
+    """常驻总线 daemon。
+
+    Attributes:
+        enabled: 启动时拉起 ``python -m axo.busd``。默认开——总线要一直醒着才有意义；
+            打包版没有解释器可跑 ``-m``，那条路会明确不启动并在状态里说原因。
+        interval_s: daemon 醒一次的间隔。改它要重启 daemon 才生效。
+    """
+
+    enabled: bool = True
+    interval_s: int = 60
 
 
 @dataclass(frozen=True)
@@ -551,11 +637,16 @@ class SettingsStore:
         启动路径上，这里抛一次程序就打不开了，用户连重填的界面都进不去。
         """
         provider = self._text(_K_PROVIDER).strip()
+        cloud_base_url = self._text(_K_CLOUD_BASE_URL).strip() or DEFAULT_CLOUD_BASE_URL
+        preset = self._text(_K_CLOUD_PRESET).strip() or cloud_preset_for_url(cloud_base_url)
+        if preset != CLOUD_PRESET_CUSTOM and cloud_preset_by_key(preset) is None:
+            preset = cloud_preset_for_url(cloud_base_url)
         return BackendSettings(
             provider=provider if provider in _PROVIDERS else PROVIDER_OLLAMA,
             host=self._text(_K_BACKEND_HOST).strip() or DEFAULT_HOST,
             allow_remote=_as_bool(self._backend.value(_K_ALLOW_REMOTE, False)),
-            cloud_base_url=self._text(_K_CLOUD_BASE_URL).strip() or DEFAULT_CLOUD_BASE_URL,
+            cloud_base_url=cloud_base_url,
+            cloud_preset=preset,
             api_key=unprotect(self._text(_K_API_KEY)),
         )
 
@@ -566,6 +657,7 @@ class SettingsStore:
         # 存得住 bool，但别的平台/别的版本不一定，读取侧不该依赖写入侧的类型。
         self._backend.setValue(_K_ALLOW_REMOTE, bool(settings.allow_remote))
         self._backend.setValue(_K_CLOUD_BASE_URL, settings.cloud_base_url)
+        self._backend.setValue(_K_CLOUD_PRESET, settings.cloud_preset)
         # **key 加密后再落盘。** 空串原样存空串（``protect`` 自己会短路），于是
         # "没配 key"与"配了又清掉"在盘上是同一个状态——这正是我们想要的。
         self._backend.setValue(_K_API_KEY, protect(settings.api_key))
@@ -667,6 +759,19 @@ class SettingsStore:
         self._backend.setValue(_K_MUSIC_SCAN_ON_START, bool(settings.scan_on_start))
         self._backend.setValue(_K_MUSIC_ONLINE_LYRICS, bool(settings.online_lyrics))
         self._backend.setValue(_K_MUSIC_VOLUME, int(settings.volume))
+
+    # ── 总线 daemon ─────────────────────────────────────────────────────────
+    def load_bus(self) -> BusSettings:
+        """读总线设置。坏值回默认；间隔夹在 5–3600 秒。"""
+        interval = _as_int(self._backend.value(_K_BUS_INTERVAL, 60), 60)
+        return BusSettings(
+            enabled=_as_bool(self._backend.value(_K_BUS_ENABLED, True), True),
+            interval_s=max(5, min(3600, interval)),
+        )
+
+    def save_bus(self, settings: BusSettings) -> None:
+        self._backend.setValue(_K_BUS_ENABLED, bool(settings.enabled))
+        self._backend.setValue(_K_BUS_INTERVAL, int(settings.interval_s))
 
     # ── 记忆 ────────────────────────────────────────────────────────────────
 

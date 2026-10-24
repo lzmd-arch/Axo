@@ -55,6 +55,8 @@ from axo.ui.settings_dialog import (
     ToolPage,
 )
 from axo.ui.settings_store import (
+    CLOUD_PRESET_CUSTOM,
+    CLOUD_PRESETS,
     DEFAULT_CLOUD_BASE_URL,
     DEFAULT_HOST,
     PROVIDER_CLOUD,
@@ -497,6 +499,42 @@ def test_the_host_is_stripped(qapp, data_root) -> None:
     page = BackendPage()
     page.host_edit.setText("  http://192.168.1.9:11434 \n")
     assert page.current().host == "http://192.168.1.9:11434"
+
+
+def test_cloud_preset_fills_the_url_and_emits_it(qapp, data_root) -> None:
+    """选预设 = 地址被填好、并且这一次选择作为完整设置发出去。"""
+    page = BackendPage()
+    seen = []
+    page.apply_requested.connect(seen.append)
+    page.provider_combo.setCurrentIndex(page.provider_combo.findData(PROVIDER_CLOUD))
+    kimi = next(p for p in CLOUD_PRESETS if p.key == "kimi")
+    page.preset_combo.setCurrentIndex(page.preset_combo.findData(kimi.key))
+    assert page.cloud_url_edit.text() == kimi.base_url
+    assert seen[-1].cloud_preset == "kimi"
+    assert seen[-1].cloud_base_url == kimi.base_url
+
+
+def test_editing_the_url_falls_back_to_custom(qapp, data_root) -> None:
+    """手改地址之后，预设名不能还挂着上一家——否则界面在说谎。"""
+    page = BackendPage()
+    assert page.current().cloud_preset == CLOUD_PRESETS[0].key
+    page.cloud_url_edit.setText("https://example.test/v1")
+    page._on_cloud_url_edited("https://example.test/v1")
+    assert page.current().cloud_preset == CLOUD_PRESET_CUSTOM
+
+
+def test_set_state_restores_the_preset(qapp, data_root) -> None:
+    page = BackendPage()
+    kimi = next(p for p in CLOUD_PRESETS if p.key == "kimi")
+    page.set_state(
+        BackendSettings(
+            provider=PROVIDER_CLOUD,
+            cloud_base_url=kimi.base_url,
+            cloud_preset=kimi.key,
+        )
+    )
+    assert page.current().cloud_preset == "kimi"
+    assert page.cloud_url_edit.text() == kimi.base_url
 
 
 def test_arming_remote_changes_the_property(qapp, data_root) -> None:

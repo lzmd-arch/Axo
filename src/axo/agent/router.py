@@ -125,6 +125,8 @@ class SlashCommand(str, Enum):
     TASK = "/task"
     CHAT = "/chat"
     HELP = "/help"
+    SEARCH = "/search"
+    FETCH = "/fetch"
 
     def __str__(self) -> str:
         return self.value
@@ -137,6 +139,8 @@ HELP_TEXT = """\
   /chat <正文>   这一轮按闲聊处理，不调用工具
   /task          不带正文：切入任务语域，并保持到下次切换
   /chat          不带正文：切回闲聊语域，并保持到下次切换
+  /search <词>   用户直接联网搜索（不经过模型判断，也不需要打开工具开关）
+  /fetch <url>   用户直接抓一页正文；原文进 fetch-cache，摘要入库走 daemon
   /help          显示这份说明
 
 不带斜杠时，语域由系统自动判断。
@@ -180,6 +184,15 @@ class ParsedTurn:
         return self.command is SlashCommand.HELP
 
     @property
+    def is_direct_web(self) -> bool:
+        """``/search`` 或 ``/fetch``：用户**显式**发起的一次联网读。
+
+        与模型自主调工具是同一条通道、不同的触发者。命令本身不经过模型判断，
+        也不受 ``web_enabled``（那是给模型自主调用的闸）约束——用户已经开口了。
+        """
+        return self.command in (SlashCommand.SEARCH, SlashCommand.FETCH)
+
+    @property
     def is_bare_switch(self) -> bool:
         """裸 ``/task`` 或 ``/chat``：只切语域，**这一轮没有正文可送**。
 
@@ -204,7 +217,7 @@ def parse_slash(raw: str) -> ParsedTurn:
       因为输入框里手滑敲个空格太常见了。
     * 命令词大小写不敏感（``/TASK`` 认）。中文输入法下大小写是随机的噪声，
       为一个字母让用户重打一遍没有道理。
-    * 只认 :class:`SlashCommand` 里的三个词。**其余斜杠一律原样返回**——见
+    * 只认 :class:`SlashCommand` 表里的词。**其余斜杠一律原样返回**——见
       :class:`SlashCommand` 的说明。
     * 普通输入**逐字返回，不做任何规整**。这不是偷懒：逐字稿里存的应当就是用户
       打的字，而"顺手 strip 一下"会让某天有人对着逐字稿排查"为什么这段显示不一样"
@@ -222,12 +235,16 @@ def parse_slash(raw: str) -> ParsedTurn:
     word = parts[0].lower()
     body = parts[1].strip() if len(parts) > 1 else ""
 
-    if word not in _SWITCHES and word != SlashCommand.HELP.value:
+    direct = (SlashCommand.SEARCH.value, SlashCommand.FETCH.value, SlashCommand.HELP.value)
+    if word not in _SWITCHES and word not in direct:
         # 认不出来 → 这句话是普通输入。**原样**返回 raw，连前导空白都不动：
         # 不然 "/路径 里有啥" 这种话会悄悄变形。
         return ParsedTurn(command=None, text=raw)
 
     command = SlashCommand(word)
+    if command in (SlashCommand.SEARCH, SlashCommand.FETCH):
+        # 直接动作：不带语域、不保持——它是一件事，不是一次模式切换。
+        return ParsedTurn(command=command, text=body)
     if command is SlashCommand.HELP:
         # /help 后面写了东西也当没写——它不是一条能带正文的命令，而"报错说 /help
         # 不接受参数"是让用户为一个无关紧要的笔误再跑一趟。

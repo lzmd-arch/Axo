@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 
 from axo.llm.base import ChatBackendError, ChatMessage, ChatRequest
-from axo.llm.openai_compat import _as_arguments, _iter_sse_chunks
+from axo.llm.openai_compat import _as_arguments, _iter_sse_chunks, response_metadata
 
 
 class _FakeResponse:
@@ -421,3 +421,44 @@ def test_other_errors_never_trigger_the_resend(monkeypatch: pytest.MonkeyPatch) 
 
     assert len(client.payloads) == 1, "别的错误不该重发"
     assert backend.degraded_audio is False
+
+
+# ── 响应元数据：版本戳 ──────────────────────────────────────────────────────
+
+
+def test_metadata_is_captured_on_the_final_chunk() -> None:
+    """响应里的 ``model`` / ``system_fingerprint`` 要跟着收尾片出去。
+
+    别名会滚——同一条 ``deepseek-flash`` 在不同日期背后可能是不同构建。这一片是
+    事后唯一能指回"谁答的"的东西。
+    """
+    chunks = _chunks(
+        {
+            "id": "chatcmpl-1",
+            "model": "kimi-k2",
+            "created": 123,
+            "system_fingerprint": "fp_abc",
+            "choices": [{"index": 0, "delta": {"content": "hi"}}],
+        },
+        {"usage": {"prompt_tokens": 3, "completion_tokens": 2}},
+        "[DONE]",
+    )
+    final = chunks[-1]
+    assert final.done
+    assert final.raw["meta"]["model"] == "kimi-k2"
+    assert final.raw["meta"]["system_fingerprint"] == "fp_abc"
+    assert final.prompt_tokens == 3
+
+
+def test_nested_build_metadata_is_flattened() -> None:
+    """有些网关把 ``build`` / ``version`` 塞进 ``metadata``——一起收，标出来源。"""
+    meta = response_metadata({"model": "m", "metadata": {"build": "b-42", "model": "nested"}})
+    assert meta["model"] == "m"
+    assert meta["metadata.build"] == "b-42"
+    assert "metadata.model" not in meta
+
+
+def test_no_metadata_means_no_meta_key() -> None:
+    """没有就不写——不编一个空壳，也不把 ``model`` 当版本号。"""
+    chunks = _chunks(_delta(content="x"), "[DONE]")
+    assert "meta" not in chunks[-1].raw

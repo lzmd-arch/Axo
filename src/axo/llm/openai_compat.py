@@ -61,6 +61,7 @@ __all__ = [
     "pick_cloud_chat_model",
     "probe",
     "query_context_window",
+    "response_metadata",
     "supports_audio_input",
 ]
 
@@ -792,6 +793,42 @@ def _build_message(message: ChatMessage) -> dict[str, Any]:
 # ── SSE 流 ──────────────────────────────────────────────────────────────────
 
 
+_META_KEYS = (
+    "model",
+    "id",
+    "created",
+    "system_fingerprint",
+    "service_tier",
+    "build",
+    "version",
+    "revision",
+)
+"""响应里可能出现的元数据字段。
+
+**这不是"版本号一定在"**：OpenAI 兼容协议只保证 ``id`` / ``model`` / ``created``，
+``system_fingerprint`` 是 OpenAI 侧的字段，``build`` / ``version`` 是某些自建网关
+额外塞的。没有就不写——见 :func:`response_metadata`。
+"""
+
+
+def response_metadata(event: dict[str, Any]) -> dict[str, Any]:
+    """从一片 SSE 事件里取响应级元数据。**纯函数，不碰网络。**
+
+    同时看顶层与 ``metadata`` / ``meta`` / ``system`` 三个常见容器；同名字段以顶层
+    为准，容器里的写成 ``容器.字段``。**不把 ``model`` 当构建号**——它是别名，
+    别名会滚，那正是要记 ``system_fingerprint`` / ``build`` 的原因。
+    """
+    meta: dict[str, Any] = {key: event[key] for key in _META_KEYS if key in event}
+    for container in ("metadata", "meta", "system"):
+        nested = event.get(container)
+        if not isinstance(nested, dict):
+            continue
+        for key in _META_KEYS:
+            if key in nested and key not in meta:
+                meta[f"{container}.{key}"] = nested[key]
+    return meta
+
+
 def _sse_data(line: bytes) -> bytes | None:
     """从一行 SSE 里取出 ``data:`` 后面的内容；不是数据行就返回 ``None``。
 
@@ -823,14 +860,18 @@ def _iter_sse_chunks(response: httpx.Response) -> Iterator[ChatChunk]:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     last_usage: dict[str, Any] = {}
+    last_meta: dict[str, Any] = {}
 
     def _finalize() -> ChatChunk:
+        raw = dict(last_usage)
+        if last_meta:
+            raw["meta"] = dict(last_meta)
         return ChatChunk(
             done=True,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             tool_calls=accumulator.build(),
-            raw=dict(last_usage),
+            raw=raw,
         )
 
     for raw in response.iter_bytes():
@@ -848,6 +889,8 @@ def _iter_sse_chunks(response: httpx.Response) -> Iterator[ChatChunk]:
                 continue
             if error := _stream_error(event):
                 raise ChatBackendError(error)
+            for key, value in response_metadata(event).items():
+                last_meta.setdefault(key, value)
             usage = event.get("usage")
             if isinstance(usage, dict):
                 last_usage = usage

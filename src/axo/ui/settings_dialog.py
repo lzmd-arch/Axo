@@ -71,6 +71,8 @@ from .color import parse_hex, readable_foreground
 from .data_root import data_root_description
 from .glass import GlassHost, fade_page, fade_window
 from .settings_store import (
+    CLOUD_PRESET_CUSTOM,
+    CLOUD_PRESETS,
     DEFAULT_CLOUD_BASE_URL,
     DEFAULT_HOST,
     PROVIDER_CLOUD,
@@ -83,6 +85,7 @@ from .settings_store import (
     SpeechSettings,
     SyncSettings,
     ToolSettings,
+    cloud_preset_by_key,
     wallpaper_file,
 )
 from .theme import (
@@ -644,7 +647,15 @@ class BackendPage(QWidget):
         box.addWidget(_section("云端端点"))
         form = QFormLayout()
         form.setSpacing(8)
+        self.preset_combo = QComboBox(group)
+        for preset in CLOUD_PRESETS:
+            self.preset_combo.addItem(preset.label, preset.key)
+        self.preset_combo.addItem("自定义…", CLOUD_PRESET_CUSTOM)
+        self.preset_combo.currentIndexChanged.connect(self._on_preset_changed)
+        form.addRow("服务商", self.preset_combo)
+
         self.cloud_url_edit = QLineEdit(group)
+        self.cloud_url_edit.textEdited.connect(self._on_cloud_url_edited)
         self.cloud_url_edit.setPlaceholderText(DEFAULT_CLOUD_BASE_URL)
         form.addRow("服务地址", self.cloud_url_edit)
 
@@ -686,6 +697,12 @@ class BackendPage(QWidget):
 
         self.host_edit.setText(backend.host)
         self.allow_remote_box.setChecked(backend.allow_remote)
+        preset_index = self.preset_combo.findData(backend.cloud_preset)
+        if preset_index < 0:
+            preset_index = self.preset_combo.findData(CLOUD_PRESET_CUSTOM)
+        self.preset_combo.blockSignals(True)
+        self.preset_combo.setCurrentIndex(max(0, preset_index))
+        self.preset_combo.blockSignals(False)
         self.cloud_url_edit.setText(backend.cloud_base_url)
         self.api_key_edit.setText(backend.api_key)
         self.set_note(note)
@@ -707,6 +724,7 @@ class BackendPage(QWidget):
             host=self.host_edit.text().strip() or DEFAULT_HOST,
             allow_remote=self.allow_remote_box.isChecked(),
             cloud_base_url=self.cloud_url_edit.text().strip() or DEFAULT_CLOUD_BASE_URL,
+            cloud_preset=str(self.preset_combo.currentData() or CLOUD_PRESET_CUSTOM),
             api_key=self.api_key_edit.text().strip(),
         )
 
@@ -720,6 +738,34 @@ class BackendPage(QWidget):
         """
         self._sync_groups()
         self._emit()
+
+    def _on_preset_changed(self, _index: int) -> None:
+        """选预设 = 把地址填进去并当场生效。
+
+        **自定义那一档不动地址**：用户选它就是要自己填，替他把地址清空或保留上一次
+        预设的 URL 都会误导。地址应用仍然走"应用设置"。
+        """
+        preset = cloud_preset_by_key(str(self.preset_combo.currentData() or CLOUD_PRESET_CUSTOM))
+        if preset is None:
+            return
+        self.cloud_url_edit.blockSignals(True)
+        self.cloud_url_edit.setText(preset.base_url)
+        self.cloud_url_edit.blockSignals(False)
+        self._emit()
+
+    def _on_cloud_url_edited(self, _text: str) -> None:
+        """手改地址 → 预设自动落到"自定义"。
+
+        不这样做的话，界面会显示"DeepSeek"而地址早已不是 DeepSeek——用户下一次
+        打开设置会以为预设还在生效。**不 emit**：地址本来就要按"应用设置"才生效。
+        """
+        if self.preset_combo.currentData() == CLOUD_PRESET_CUSTOM:
+            return
+        index = self.preset_combo.findData(CLOUD_PRESET_CUSTOM)
+        if index >= 0:
+            self.preset_combo.blockSignals(True)
+            self.preset_combo.setCurrentIndex(index)
+            self.preset_combo.blockSignals(False)
 
     def _on_allow_remote_toggled(self, _checked: bool) -> None:
         self._sync_warning()

@@ -317,6 +317,7 @@ class Stub(QObject):
     _pick_material = MainWindow._pick_material
     _start_proactive_speech = MainWindow._start_proactive_speech
     _start_material_source = MainWindow._start_material_source
+    _take_bus_material = MainWindow._take_bus_material
     _start_proactive_weather = MainWindow._start_proactive_weather
     _on_weather_watch = MainWindow._on_weather_watch
     _on_weather_watch_failed = MainWindow._on_weather_watch_failed

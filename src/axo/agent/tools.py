@@ -146,6 +146,11 @@ class ToolContext:
     """取消信号（``threading.Event``）。**只给会阻塞的工具**（命令执行）用。"""
     net: Any = None
     """:mod:`axo.net` 的实例（联网搜索/抓取）。``None`` = 不登记那两个工具。"""
+    web_cache: Any = None
+    """原文缓存 + 台账（:class:`axo.web_cache.FetchCache`）。``None`` = 只回灌、不落盘。
+
+    **工具只往里追加，不读记忆库、也不写记忆库**——入库是 daemon 巩固路径的事。
+    """
     weather: Any = None
     """天气客户端（:class:`axo.weather.OpenMeteoWeather`）。``None`` = 不登记天气工具。"""
     open_external: Callable[[str, str], str] | None = None
