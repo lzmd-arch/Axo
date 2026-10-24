@@ -84,8 +84,15 @@ MODEL_ID_PREFIX = "openai-compat"
 FALLBACK_CLOUD_MODELS: tuple[str, ...] = (
     "deepseek-flash",
     "deepseek-v4-pro",
-    "deepseek-chat",
 )
+
+#: 已退役的端点名（2026-07-24）：**不再出现在兜底清单里**，但已存配置仍可能带着它们，
+#: 所以下面的窗口表保留映射（服务端目前仍会转发）。
+#:
+#: 为什么删：退役名摆在选择器里，等于让用户显式地挑一个"不知道还能活多久"的名字。
+#: 当前名 ``deepseek-flash`` 是滚动别名，2026-10-17 的 V4.1-Flash-1017 是**同一别名下的
+#: 权重刷新**——所以"显式化"是写别名，而不是把日期编进模型名。
+_RETIRED_CLOUD_MODELS: tuple[str, ...] = ("deepseek-chat", "deepseek-reasoner")
 
 #: 端点不报上下文窗口时的兜底值（token），128K。
 #:

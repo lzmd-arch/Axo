@@ -246,3 +246,16 @@ def test_deepseek_models_do_not_accept_audio() -> None:
     assert supports_audio_input("deepseek-chat") is False
     assert supports_audio_input("gpt-4o-audio-preview") is True
     assert supports_audio_input("qwen2-audio") is True
+
+
+def test_fallback_list_carries_no_retired_names() -> None:
+    """退役的端点名（2026-07-24）不许再出现在选择器里。
+
+    选择器里出现一个退役名，等于让用户显式挑一个"不知道还能活多久"的名字；已存配置
+    仍可能带着它们，所以窗口表保留映射，但**兜底清单**只放当前名。
+    """
+    from axo.llm.openai_compat import _RETIRED_CLOUD_MODELS
+
+    assert _RETIRED_CLOUD_MODELS, "退役名单不该是空的——空了这条测试就永远绿"
+    assert not (set(FALLBACK_CLOUD_MODELS) & set(_RETIRED_CLOUD_MODELS))
+    assert "deepseek-flash" in FALLBACK_CLOUD_MODELS

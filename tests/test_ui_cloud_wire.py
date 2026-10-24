@@ -381,11 +381,12 @@ def test_a_failed_cloud_list_still_offers_something_to_pick(
 
     made[0].failed.emit("连不上 https://api.deepseek.com/v1（超时）")
 
-    assert [data for _label, data in window.model_combo.items] == [
-        "deepseek-flash",
-        "deepseek-v4-pro",
-        "deepseek-chat",
-    ]
+    names = [data for _label, data in window.model_combo.items]
+    # 清单只有一个家：常量。这里取真值，再额外钉住"退役名不在里面"这条意图。
+    from axo.llm.openai_compat import FALLBACK_CLOUD_MODELS
+
+    assert names == list(FALLBACK_CLOUD_MODELS)
+    assert "deepseek-chat" not in names, "退役名（2026-07-24）不该出现在兜底清单里"
     assert window.down == ["连不上 https://api.deepseek.com/v1（超时）"]
 
 
