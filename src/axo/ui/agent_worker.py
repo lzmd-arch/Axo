@@ -98,8 +98,8 @@ __all__ = ["AgentWorker"]
 _EMPTY_STATISTICS: dict[str, Any] = {
     "prompt_tokens": None,
     "completion_tokens": None,
-    # 工具循环这一版不上报响应元数据（与 token 同一条边界，见 agent/loop.py）。
-    # 键存在是为了两条路径的统计形状一致；**值恒为空**，别把它当成"端点没给"。
+    # 正常收尾时由 ``LoopDone.response_meta`` 填；被用户中断时保持空（那一轮没有
+    # 收尾片）。键始终存在，是为了与 ``ChatWorker`` 的统计形状一致。
     "response_meta": {},
     "interrupted": False,
     "rounds": 0,
@@ -399,6 +399,7 @@ class AgentWorker(QObject):
                         unexecuted=event.unexecuted,
                         stop_reason=event.stop_reason,
                         stop_detail=event.detail,
+                        response_meta=dict(event.response_meta),
                     )
 
                 # 停止的判据在**处理完之后**，而且**跳过 ``ToolFinished``**（理由见

@@ -40,7 +40,7 @@ from fakes import ScriptedBackend, text_chunk, tool_chunk
 
 from axo.agent.catalog import LookAtScreenTool
 from axo.agent.tools import Capture, ToolContext, ToolOutcome, ToolRegistry
-from axo.llm.base import ChatMessage, ChatRequest, ToolCall, ToolSpec
+from axo.llm.base import ChatChunk, ChatMessage, ChatRequest, ToolCall, ToolSpec
 from axo.session.budget import TokenBudget, TokenMeter
 from axo.ui.agent_worker import AgentWorker
 from axo.ui.chat_worker import ChatWorker
@@ -738,3 +738,11 @@ def test_the_process_exits_cleanly_when_shutdown_happens_during_approval(tmp_pat
     )
     assert "RAN=0" in result.stdout, f"没人同意过的动作被执行了：{result.stdout}"
     assert "STRAGGLERS=0" in result.stdout, f"收尾没等到那个线程：{result.stdout}"
+
+
+def test_agent_path_reports_response_meta(qapp: Any, store: MemoryStore) -> None:
+    """工具循环那条路径也要把版本元数据交出去（与 ChatWorker 同一个键）。"""
+    done = ChatChunk(text="好", done=True, raw={"meta": {"build": "b-42"}})
+    result = run(build(ScriptedBackend([[done]]), ToolRegistry([]), store))
+
+    assert result.finished[0][1]["response_meta"] == {"build": "b-42"}

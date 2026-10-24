@@ -248,6 +248,12 @@ class LoopDone:
     stop_reason: str = "final"
     """``final`` / ``fuse`` / ``context_full`` / ``no_progress``。"""
     detail: str = ""
+    response_meta: dict[str, Any] = field(default_factory=dict)
+    """最后一轮响应的版本元数据（``model`` / ``system_fingerprint`` / ``build`` …）。
+
+    **只取最后一次**：用户看到的是最后那个回答，指回"谁答的"要指它。没有就为空——
+    与 ``ChatWorker`` 的 ``response_meta`` 同一个含义。
+    """
 
 
 Event = (
@@ -463,6 +469,7 @@ def run_agent_loop(
     rounds = 0
     total_calls = 0
     final_text = ""
+    response_meta: dict[str, Any] = {}
     unexecuted: tuple[str, ...] = ()
     wrapped_up = False
     fuse = limits.fuse_rounds if limits.max_rounds is None else limits.max_rounds
@@ -513,6 +520,9 @@ def run_agent_loop(
             # "一个调用分了两片"这种在本项目里不存在的情形。
             if piece.tool_calls:
                 calls = piece.tool_calls
+            meta = piece.raw.get("meta")
+            if isinstance(meta, dict) and meta:
+                response_meta = dict(meta)
         text = "".join(parts)
 
         if not calls:
@@ -661,4 +671,5 @@ def run_agent_loop(
         unexecuted=unexecuted,
         stop_reason=stop_reason or "final",
         detail=stop_detail,
+        response_meta=response_meta,
     )

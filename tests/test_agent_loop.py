@@ -1066,3 +1066,11 @@ def test_the_loop_refreshes_the_time_line_each_round(store: MemoryStore) -> None
     assert "2026-01-01 星期四 23:59" in first
     assert "2026-01-02 星期五 00:01" in second
     assert "别的" in second, "换时间不能把同一段 system 的其余内容吃掉"
+
+
+def test_response_meta_rides_on_loop_done(store: MemoryStore) -> None:
+    """最后一轮响应的版本元数据要随 ``LoopDone`` 出去——主窗口据此写运行日志。"""
+    done = ChatChunk(text="好", done=True, raw={"meta": {"model": "kimi-k2", "build": "b"}})
+    _events, last = drive(ScriptedBackend([[done]]), ToolRegistry(()), store)
+
+    assert last.response_meta == {"model": "kimi-k2", "build": "b"}
