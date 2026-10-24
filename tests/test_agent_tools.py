@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import base64
 import json
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,7 @@ import pytest
 
 from axo.agent.catalog import (
     MAX_REMINDER_CHARS,
+    MAX_SOURCE_SUMMARY_CHARS,
     MAX_WRITE_CHARS,
     ClipboardReadTool,
     ClipboardWriteTool,
@@ -1505,3 +1507,83 @@ def test_weather_tool_is_registered_only_when_a_client_is_given(tmp_path: Path) 
 
     assert "get_weather" not in without
     assert "get_weather" in with_weather
+
+
+# ── 来源记忆的纯净度 ────────────────────────────────────────────────────────
+
+
+def _fetched_context(write_ctx: ToolContext, tmp_path: Path) -> tuple[ToolContext, FetchCache, Any]:
+    cache = FetchCache(tmp_path / "fetch-cache")
+    entry = cache.record_fetch(
+        url="https://example.com/a", title="标题", content="原文" * 50, at=1.0
+    )
+    return replace(write_ctx, web_cache=cache), cache, entry
+
+
+def test_source_memory_records_url_hash_and_fetch_time(
+    store: MemoryStore, write_ctx: ToolContext, tmp_path: Path
+) -> None:
+    """来源记忆进库的只有**摘要 + 三项溯源**，原文留在 fetch-cache。"""
+    ctx, _cache, entry = _fetched_context(write_ctx, tmp_path)
+
+    outcome = ToolRegistry([WriteMemoryTool()]).dispatch(
+        call("write_memory", content="这一页讲了 A 和 B。", source_url="https://example.com/a"),
+        ctx,
+    )
+
+    assert outcome.ok is True
+    item = store.load_all()[0]
+    assert item.content == "这一页讲了 A 和 B。"
+    assert item.meta["url"] == "https://example.com/a"
+    assert item.meta["sha256"] == entry.sha256
+    assert item.meta["fetched_at"] == 1.0
+    assert "原文" not in item.content, "库里不能出现原文"
+
+
+def test_source_memory_without_a_fetch_record_is_refused(
+    store: MemoryStore, write_ctx: ToolContext, tmp_path: Path
+) -> None:
+    """没有台账记录 = 回溯不到来源，**不写**。"""
+    ctx = replace(write_ctx, web_cache=FetchCache(tmp_path / "fetch-cache"))
+
+    outcome = ToolRegistry([WriteMemoryTool()]).dispatch(
+        call("write_memory", content="摘要", source_url="https://example.com/never-fetched"),
+        ctx,
+    )
+
+    assert outcome.ok is False
+    assert store.load_all() == []
+
+
+def test_the_same_page_is_not_stored_twice(
+    store: MemoryStore, write_ctx: ToolContext, tmp_path: Path
+) -> None:
+    ctx, _cache, _entry = _fetched_context(write_ctx, tmp_path)
+    registry = ToolRegistry([WriteMemoryTool()])
+    first = registry.dispatch(
+        call("write_memory", content="摘要一", source_url="https://example.com/a"), ctx
+    )
+    second = registry.dispatch(
+        call("write_memory", content="摘要二", source_url="https://example.com/a"), ctx
+    )
+
+    assert first.ok and second.ok
+    assert "已经记过" in second.content
+    assert len(store.load_all()) == 1, "同一页只留一条，重复的交给巩固去强化"
+
+
+def test_a_page_dump_is_refused(store: MemoryStore, write_ctx: ToolContext, tmp_path: Path) -> None:
+    ctx, _cache, _entry = _fetched_context(write_ctx, tmp_path)
+
+    outcome = ToolRegistry([WriteMemoryTool()]).dispatch(
+        call(
+            "write_memory",
+            content="长" * (MAX_SOURCE_SUMMARY_CHARS + 1),
+            source_url="https://example.com/a",
+        ),
+        ctx,
+    )
+
+    assert outcome.ok is False
+    assert "摘要" in outcome.content
+    assert store.load_all() == []

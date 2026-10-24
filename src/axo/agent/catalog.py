@@ -146,6 +146,11 @@ _ITEM_PREVIEW_CHARS = 160
 _MEMORY_BODY_CHARS = 4000
 
 MAX_WRITE_CHARS = 2000
+
+#: 带 ``source_url`` 的记忆只收**摘要**，上限比普通写入更紧。
+#: 来源记忆若允许贴整页，记忆库就不再是索引而是语料库——原文的位置在
+#: ``fetch-cache`` 与台账里，不在库里。
+MAX_SOURCE_SUMMARY_CHARS = 1200
 """一条工具写入的记忆最长多少字。**超了就拒绝，不截断。**
 
 **先验值**（同 ``SEARCH_BUDGET_TOKENS``），但它挡的是一个具体的坏形态：模型把整段
@@ -462,6 +467,15 @@ class WriteMemoryTool:
                         "不要用「这个」「那个」指代对话里的东西，也不要把整段对话抄进来。"
                     ),
                 },
+                "source_url": {
+                    "type": "string",
+                    "description": (
+                        "可选。如果这条来自 fetch_url 抓到的一页，填那页的 URL。"
+                        "填了之后 content 必须是**摘要**（最多 "
+                        f"{MAX_SOURCE_SUMMARY_CHARS} 字），不要贴原文；"
+                        "记忆库只收回溯得到的摘要，原文留在 fetch-cache。"
+                    ),
+                },
             },
             "required": ["content"],
         },
@@ -495,11 +509,45 @@ class WriteMemoryTool:
                 "这次运行没有配置记忆写入器，写不了。请告诉用户这一条**没有**记下来。"
             )
 
+        meta: dict[str, Any] = {"via": "write_memory", "call_id": ctx.call_id}
+        source_url = str(arguments.get("source_url") or "").strip()
+        if source_url:
+            # **来源记忆的纯净度由三道门看着**：抓取记录必须在台账里、原文必须还在
+            # 缓存里、内容必须短到是摘要。任何一道不过就不写——宁可让模型重来一次，
+            # 也不让一条无法回溯或整页粘贴的东西进库。
+            if ctx.web_cache is None:
+                return ToolOutcome.failure("这次运行没有联网缓存，无法核对来源，未写入。")
+            record = ctx.web_cache.latest_for_url(source_url)
+            if not isinstance(record, dict) or not record.get("sha256"):
+                return ToolOutcome.failure("这页没有抓取记录（先 fetch_url 再记），未写入。")
+            sha256 = str(record["sha256"])
+            try:
+                ctx.web_cache.read(sha256)
+            except OSError:
+                return ToolOutcome.failure("缓存里找不到这页的原文，未写入。")
+            if len(content) > MAX_SOURCE_SUMMARY_CHARS:
+                return ToolOutcome.failure(
+                    f"来源记忆只收摘要（最多 {MAX_SOURCE_SUMMARY_CHARS} 字），"
+                    f"收到 {len(content)} 字。请把这一页压缩成一两句，不要贴原文。"
+                )
+            existing = next(
+                (item for item in ctx.store.load_all() if item.meta.get("sha256") == sha256),
+                None,
+            )
+            if existing is not None:
+                return ToolOutcome.success(
+                    f"这页已经记过（[{existing.memory_id}]），没有重复写入。",
+                    detail=f"source_ref={existing.source_ref} sha256={sha256}",
+                )
+            meta["url"] = source_url
+            meta["sha256"] = sha256
+            meta["fetched_at"] = record.get("at")
+
         draft = MemoryDraft(
             content=content,
             kind=MemoryKind.FACT,
             taint=Taint.MODEL,
-            meta={"via": "write_memory", "call_id": ctx.call_id},
+            meta=meta,
         )
         item = ctx.writer.record_direct(
             draft, session_id=ctx.session_id, source_ref=_tool_source_ref(ctx)

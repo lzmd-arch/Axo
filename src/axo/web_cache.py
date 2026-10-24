@@ -146,6 +146,28 @@ class FetchCache:
             fh.write(json.dumps(line, ensure_ascii=False) + "\n")
         return CacheEntry(sha256=digest, path=path, at=moment, deduped=deduped)
 
+    def latest_for_url(self, url: str) -> dict[str, Any] | None:
+        """这个 URL 最近一次抓取的台账行；没有就返回 ``None``。
+
+        **只认 fetch**：搜索结果（``kind="search"``）不产生可入库的原文。坏行跳过，
+        与事件通道同一条纪律——一行坏了不该让整个台账读不出来。
+        """
+        target = url.strip()
+        if not target or not self.ledger_path.is_file():
+            return None
+        latest: dict[str, Any] | None = None
+        with self.ledger_path.open(encoding="utf-8") as fh:
+            for raw in fh:
+                try:
+                    line = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(line, dict):
+                    continue
+                if line.get("kind") == "fetch" and str(line.get("url", "")).strip() == target:
+                    latest = line
+        return latest
+
     # ------------------------------------------------------------ 读取
 
     def read(self, sha256: str) -> str:
