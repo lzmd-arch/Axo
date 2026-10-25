@@ -27,7 +27,7 @@ classifiers = [
 dependencies = [
   # 骨架库走 PyPI 而非 workspace 路径。本仓是仓库外独立包（见计划书与 ADR-0011
   # 的先例），semver 是唯一的兼容性保护；骨架库当前 0.x，钉住 <0.2。
-  "biosnn-bus>=0.3.0,<0.4",
+  "biosnn-bus>=0.4.0,<0.5",
   "numpy>=1.24",
 ]
 
