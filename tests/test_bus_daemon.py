@@ -16,7 +16,8 @@ import numpy as np
 import pytest
 
 from axo.busd.config import BusDaemonConfig
-from axo.busd.daemon import BusDaemon
+from axo.busd.curiosity import RetrievalIntent
+from axo.busd.daemon import BusDaemon, TickResult
 from axo.busd.events import append_event, read_new_events
 from axo.busd.plugin import MemorySpikePlugin
 from axo.busd.state import read_state, write_state
@@ -44,11 +45,19 @@ def store(tmp_path: Path):
         yield opened
 
 
-def make_daemon(store: MemoryStore, tmp_path: Path, **overrides: object) -> BusDaemon:
+def make_daemon(
+    store: MemoryStore,
+    tmp_path: Path,
+    *,
+    curiosity: object = None,
+    **overrides: object,
+) -> BusDaemon:
     kwargs: dict[str, object] = {"dream_enabled": False}  # 默认关：tick 的测试不该真跑巩固
     kwargs.update(overrides)
     config = BusDaemonConfig(**kwargs)  # type: ignore[arg-type]
-    return BusDaemon(store, tmp_path / "data", config=config, clock=lambda: 1000.0)
+    return BusDaemon(
+        store, tmp_path / "data", config=config, clock=lambda: 1000.0, curiosity=curiosity
+    )
 
 
 # ── 插件契约 ────────────────────────────────────────────────────────────────
@@ -297,3 +306,71 @@ def test_the_daemon_does_not_import_qt() -> None:
     assert "axo.ui" not in {
         node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module
     }
+
+
+# ── L3：涌现触发的接口桩 ────────────────────────────────────────────────────
+
+
+class _Proposer:
+    def __init__(self, intent: RetrievalIntent | None) -> None:
+        self.intent = intent
+        self.calls: list[tuple[float, float, tuple[str, ...]]] = []
+
+    def propose(
+        self, *, novelty: float, activity: float, memories: tuple[str, ...]
+    ) -> RetrievalIntent | None:
+        self.calls.append((novelty, activity, memories))
+        return self.intent
+
+
+def _emerged_tick(store: MemoryStore, tmp_path: Path, **kwargs: object) -> TickResult:
+    store.add(make_item("关于潮汐的第一条记忆"))
+    daemon = make_daemon(store, tmp_path, emergence_novelty=0.0, emergence_floor=0.0, **kwargs)
+    daemon.tick()
+    store.add(make_item("完全不同的：今天修好了吉他音箱"))
+    return daemon.tick()
+
+
+def test_curiosity_is_off_by_default(store: MemoryStore, tmp_path: Path) -> None:
+    result = _emerged_tick(store, tmp_path)
+
+    assert result.emerged is True
+    assert result.intent == ""
+    events, _ = read_new_events(tmp_path / "data" / "bus" / "events.jsonl")
+    assert [event.kind for event in events] == ["greeting_suggestion"]
+
+
+def test_enabled_curiosity_records_an_intent_without_touching_memory(
+    store: MemoryStore, tmp_path: Path
+) -> None:
+    proposer = _Proposer(RetrievalIntent(query="查一下潮汐周期", reason="涌现"))
+    before = len(store.load_all())
+
+    result = _emerged_tick(store, tmp_path, curiosity_enabled=True, curiosity=proposer)
+
+    assert result.intent == "查一下潮汐周期"
+    events, _ = read_new_events(tmp_path / "data" / "bus" / "events.jsonl")
+    assert [event.kind for event in events] == ["greeting_suggestion", "retrieval_intent"]
+    intent = events[1].payload
+    assert intent["query"] == "查一下潮汐周期" and intent["memories"]
+    assert len(store.load_all()) == before + 2, "测试加的两条之外，daemon 不许写库"
+    assert proposer.calls, "开启后必须真的调用 proposer"
+
+
+def test_a_proposer_that_declines_adds_no_event(store: MemoryStore, tmp_path: Path) -> None:
+    result = _emerged_tick(store, tmp_path, curiosity_enabled=True, curiosity=_Proposer(None))
+
+    assert result.intent == ""
+    events, _ = read_new_events(tmp_path / "data" / "bus" / "events.jsonl")
+    assert [event.kind for event in events] == ["greeting_suggestion"]
+
+
+def test_enabling_curiosity_without_a_proposer_is_rejected(
+    store: MemoryStore, tmp_path: Path
+) -> None:
+    with pytest.raises(ValueError, match="EmergentRetrieval"):
+        BusDaemon(
+            store,
+            tmp_path / "data",
+            config=BusDaemonConfig(curiosity_enabled=True, dream_enabled=False),
+        )

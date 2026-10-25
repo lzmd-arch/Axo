@@ -17,7 +17,14 @@ from typing import Any
 
 __all__ = ["BusEvent", "append_event", "read_new_events"]
 
-EVENT_KINDS = ("greeting_suggestion", "dream_done", "daemon_start", "daemon_stop", "error")
+EVENT_KINDS = (
+    "greeting_suggestion",
+    "retrieval_intent",
+    "dream_done",
+    "daemon_start",
+    "daemon_stop",
+    "error",
+)
 
 
 @dataclass(frozen=True)

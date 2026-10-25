@@ -32,13 +32,27 @@ SNN daemon（独立进程）
 `mean(|rates|) ≥ floor`。第一次跑没有基线，`novelty` 记 0 且不触发。
 **两个阈值是初值，没有标定过**（`emergence_novelty=0.35`、`emergence_floor=0.0`）。
 
+## L3 涌现触发（接口桩，默认关闭）
+
+`axo.busd.curiosity` 定义 `EmergentRetrieval.propose(...) -> RetrievalIntent | None`。
+**默认关闭**（`BusDaemonConfig.curiosity_enabled=False`）；打开时必须注入一个 proposer，
+否则构造就报错。daemon 只把意图写进 `bus/events.jsonl`（kind=`retrieval_intent`）：
+**不抓取、不写记忆、不调用任何工具**。
+
+边界与下一步：
+
+- 这是「机制化主动，涌现待验」的挂点，**不是**"她已经有好奇心"的证据；
+- 将来的执行器（agent 的工具面）读这个事件 → Search/Fetch → 原文进 `fetch-cache`、
+  摘要经 daemon 的巩固路径入库；写入仍只过一个门；
+- 当前默认关，所以正常运行时不会出现 `retrieval_intent` 事件。
+
 ## 文件
 
 | 路径 | 内容 |
 | --- | --- |
 | `bus/state.json` | 游标、计数、上次输出形状/活动量/新颖度、上次错误 |
 | `bus/provenance.jsonl` | 每轮一行，可复现（种子 + 输入哈希） |
-| `bus/events.jsonl` | 给 UI 的事件（`greeting_suggestion` / `dream_done` / 启停） |
+| `bus/events.jsonl` | 给 UI 的事件（`greeting_suggestion` / `retrieval_intent` / `dream_done` / 启停） |
 | `bus/last_rates.npy` | 上一次的 `(bus_dim,)` 发放向量，算 novelty 用 |
 
 ## 启停

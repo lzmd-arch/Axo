@@ -29,6 +29,8 @@ class BusDaemonConfig:
         emergence_novelty / emergence_floor: 涌现判定的两个阈值，见
             :meth:`~axo.busd.daemon.BusDaemon._novelty`。**这两个数没有实验依据**，
             是"先让它可观测"的初值，不要当成标定过的结论。
+        curiosity_enabled: L3「涌现触发」的接口桩开关。**默认关**；打开后 daemon 只把
+            proposer 的意图写进事件，不抓取、不写记忆（见 :mod:`axo.busd.curiosity`）。
     """
 
     bus_dim: int = 128
@@ -42,3 +44,4 @@ class BusDaemonConfig:
     dream_interval_s: float = 24 * 3600.0
     emergence_novelty: float = 0.35
     emergence_floor: float = 0.0
+    curiosity_enabled: bool = False

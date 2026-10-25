@@ -31,6 +31,7 @@ from memcore.sdr import encode_assoc
 from memcore.store import MemoryStore
 
 from .config import BusDaemonConfig
+from .curiosity import EmergentRetrieval
 from .events import append_event
 from .plugin import MemorySpikePlugin
 from .state import BusState, read_state, write_state
@@ -53,6 +54,8 @@ class TickResult:
     emerged: bool
     error: str = ""
     dream: dict[str, Any] | None = None
+    intent: str = ""
+    """本轮产生的 L3 检索意图（查询原文）；空串 = 没有提议。**只是记录，未执行。**"""
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -65,6 +68,7 @@ class TickResult:
             "emerged": self.emerged,
             "error": self.error,
             "dream": self.dream,
+            "intent": self.intent,
         }
 
 
@@ -79,6 +83,7 @@ class BusDaemon:
         config: BusDaemonConfig | None = None,
         clock: Callable[[], float] = time.time,
         dream_runner: Callable[[float], dict[str, Any] | None] | None = None,
+        curiosity: EmergentRetrieval | None = None,
     ) -> None:
         self.store = store
         self.config = config or BusDaemonConfig()
@@ -97,6 +102,9 @@ class BusDaemon:
         self.state: BusState = read_state(self.state_path) or BusState()
         self._prev_rates: np.ndarray | None = self._load_rates()
         self._dream_runner = dream_runner or self._default_dream
+        if self.config.curiosity_enabled and curiosity is None:
+            raise ValueError("curiosity_enabled=True 时必须注入一个 EmergentRetrieval。")
+        self._curiosity = curiosity
 
     # ------------------------------------------------------------ 路径
 
@@ -186,6 +194,7 @@ class BusDaemon:
         )
         write_state(self.state_path, self.state)
 
+        intent = ""
         if emerged:
             append_event(
                 self.events_path,
@@ -199,6 +208,27 @@ class BusDaemon:
                 },
                 at=now,
             )
+            if self.config.curiosity_enabled:
+                assert self._curiosity is not None
+                proposal = self._curiosity.propose(
+                    novelty=novelty,
+                    activity=activity,
+                    memories=tuple(ids[-5:]),
+                )
+                if proposal is not None:
+                    intent = proposal.query
+                    append_event(
+                        self.events_path,
+                        "retrieval_intent",
+                        {
+                            "query": proposal.query,
+                            "reason": proposal.reason,
+                            "novelty": round(novelty, 4),
+                            "activity": round(activity, 6),
+                            "memories": ids[-5:],
+                        },
+                        at=now,
+                    )
 
         dream = None
         try:
@@ -215,6 +245,7 @@ class BusDaemon:
             novelty,
             emerged,
             dream=dream,
+            intent=intent,
         )
 
     # ------------------------------------------------------------ 循环
