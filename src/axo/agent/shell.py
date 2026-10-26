@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import contextlib
+import functools
 import os
 import subprocess
 import sys
@@ -136,8 +137,90 @@ def run_command(
     )
 
 
+_MSVC_KEYS = (
+    "PATH",
+    "LIB",
+    "INCLUDE",
+    "LIBPATH",
+    "VCINSTALLDIR",
+    "VCTOOLSINSTALLDIR",
+    "VCTOOLSVERSION",
+    "VSINSTALLDIR",
+    "WINDOWSSDKDIR",
+    "WINDOWSSDKVERSION",
+    "UCRTVERSION",
+    "VSCMD_ARG_TGT_ARCH",
+    "VSCMD_VER",
+)
+
+
+@functools.lru_cache(maxsize=1)
+def _msvc_env() -> dict[str, str]:
+    """Windows 上把 MSVC 编译环境补进白名单。找不到就返回空字典。
+
+    为什么需要它：Rust 的 MSVC target 要 ``link.exe``/``LIB``/``INCLUDE``；Build Tools
+    装好但不在 PATH 里时，``cargo test`` 会误抓到 Git 自带的 GNU ``link`` 然后报
+    ``missing operand``。这里用 ``vswhere`` 找安装路径，再跑一次 ``vcvarsall.bat``
+    只取编译相关变量——**不继承完整用户环境**，更不碰 API key。缓存一次，避免每条
+    命令都付一次 ``vcvarsall`` 的启动成本。
+    """
+    if os.name != "nt":
+        return {}
+    program_files = os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")
+    vswhere = Path(program_files) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+    if not vswhere.is_file():
+        return {}
+    try:
+        found = subprocess.run(
+            [
+                str(vswhere),
+                "-latest",
+                "-products",
+                "*",
+                "-requires",
+                "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                "-property",
+                "installationPath",
+            ],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    installation = found.stdout.strip().splitlines()[0].strip() if found.stdout.strip() else ""
+    if not installation:
+        return {}
+    vcvars = Path(installation) / "VC" / "Auxiliary" / "Build" / "vcvarsall.bat"
+    if not vcvars.is_file():
+        return {}
+    try:
+        shell = subprocess.run(
+            f'call "{vcvars}" x64 >nul && set',
+            shell=True,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if shell.returncode != 0:
+        return {}
+    env: dict[str, str] = {}
+    for line in shell.stdout.splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key.upper() in _MSVC_KEYS:
+            env[key] = value
+    return env
+
+
 def _minimal_env() -> dict[str, str]:
     env = {key: os.environ[key] for key in _ENV_KEYS if key in os.environ}
+    env.update(_msvc_env())
     env.setdefault("PYTHONIOENCODING", "utf-8")
     return env
 

@@ -1,6 +1,6 @@
 # 编码任务基准
 
-固定 8 个任务，判据不是"模型说通过"，而是**跑测试 + 保护文件哈希**：
+固定 9 个任务，判据不是"模型说通过"，而是**跑测试 + 保护文件哈希**：
 
 | 任务 | 语言 | 内容 | 保护 |
 | :--- | :--- | :--- | :--- |
@@ -12,10 +12,11 @@
 | `parse_duration` | Python | 从零实现 `1h30m` 解析 | 公开测试一例；隐藏测试覆盖复合/秒/小时/非法输入 |
 | `js_calc` | JavaScript | 修 `calc.js` 的加法（Node 内置 test runner） | `calc.test.js`、`package.json` 不得改；另有隐藏测试 |
 | `multi_file_locate` | Python | 在 4 个模块里找到真正负责归一化的地方并修首尾空白 | `tests/test_service.py` 不得改；另有隐藏空白测试 |
+| `rust_calc` | Rust | 修 `src/lib.rs` 的加法（`cargo test`） | `tests/public.rs`、`Cargo.toml` 不得改；另有隐藏负数测试 |
 
-Rust 的 `repo_map`/`run_tests` 支持已经落地，但**没有进基准**：本机 rustc 是 MSVC
-工具链，而机器上没有 Visual Studio C++ build tools，`cargo test` 无法链接。这是环境
-限制，不是 Rust 解析/测试探测的缺口。
+Rust 已进基准：本机 Build Tools 18 装好但不在 PATH，`_minimal_env()` 通过
+`vswhere` + `vcvarsall.bat` 只补 `PATH`/`LIB`/`INCLUDE` 等编译变量；`cargo test`
+可正常链接。环境变量仍是白名单，不含 API key。
 
 每个任务在临时 git 仓库中从 initial commit 开始；写/命令自动批准（沙箱）；`run_tests`
 或 `run_command` 跑测试。测试文件哈希变了一律记失败——不许通过改测试"通过"。
@@ -77,6 +78,18 @@ tools: repo_overview → run_tests → search_files → read_file ×2 →
 结果：`benchmarks/coding/results-deepseek-real.json`。用例只有 1 个、且是恶意注入的
 显式 bug，**不能代表真实仓库的整体能力**；它证明的是“在真实目录结构里定位—读—
 改—跑测试—看 diff”这条链能走通。
+
+## Rust 单题（真实 MSVC 工具链）
+
+```text
+backend=axo-settings  model=deepseek-chat
+rust_calc passed=True tools=6 rounds=4 elapsed=10.12s
+prompt 29,759 / completion 256
+tools: repo_overview → repo_map → read_file×2 → edit_file → run_tests
+```
+
+结果：`benchmarks/coding/results-deepseek-rust.json`。Rust LSP 也用真实 `rust-analyzer`
+验过：definition 跳到 `src/lib.rs:1:8`，references 返回调用点，pull diagnostics 返回空诊断。
 
 ## 本机 fallback 基线（qwen3-4b，Ollama，think=false）
 

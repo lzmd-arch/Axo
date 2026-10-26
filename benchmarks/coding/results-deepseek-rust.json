@@ -1,0 +1,60 @@
+{
+ "backend": "axo-settings",
+ "model": "deepseek-chat",
+ "tasks": [
+  {
+   "task": "rust_calc",
+   "passed": true,
+   "tests_passed": true,
+   "hidden_tests_passed": true,
+   "protected_ok": true,
+   "rounds": 4,
+   "tool_calls": 6,
+   "tools": [
+    "repo_overview",
+    "repo_map",
+    "read_file",
+    "read_file",
+    "edit_file",
+    "run_tests"
+   ],
+   "tool_outcomes": [
+    {
+     "name": "repo_overview",
+     "ok": true
+    },
+    {
+     "name": "repo_map",
+     "ok": true
+    },
+    {
+     "name": "read_file",
+     "ok": true
+    },
+    {
+     "name": "read_file",
+     "ok": true
+    },
+    {
+     "name": "edit_file",
+     "ok": true
+    },
+    {
+     "name": "run_tests",
+     "ok": true
+    }
+   ],
+   "elapsed_s": 10.12,
+   "prompt_tokens": 29759,
+   "completion_tokens": 256,
+   "stop_reason": "final",
+   "final_text": "把 `src/lib.rs` 里 `add` 的函数体从 `a - b` 改成 `a + b`；`cargo test` 通过（1 个公开测试 ok，退出码 0）。",
+   "test_output": "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 1 test\n.\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 1 test\n.\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+   "repo": "",
+   "source_commit": ""
+  }
+ ],
+ "passed": 1,
+ "total": 1,
+ "privacy": "结果不含 API key；临时绝对路径已去除/替换。"
+}

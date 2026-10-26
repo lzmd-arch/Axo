@@ -39,6 +39,7 @@ import shlex
 import shutil
 import subprocess
 import threading
+import time
 from collections import deque
 from pathlib import Path
 from typing import Any, ClassVar
@@ -440,6 +441,15 @@ class LspClient:
         event.clear()
         previous = self._documents.get(uri)
         self._ensure_open(path)
+        # LSP 3.17 的拉取诊断：rust-analyzer 等服务器不会主动 push，必须问。
+        try:
+            pulled = self.request(
+                "textDocument/diagnostic", {"textDocument": {"uri": uri}}, timeout=2.0
+            )
+            if isinstance(pulled, dict) and isinstance(pulled.get("items"), list):
+                return list(pulled["items"])
+        except LspError:
+            pass
         if (
             previous is not None
             and previous[1] == _read_document(path)
@@ -625,10 +635,24 @@ class LspTool:
                     "definition/references 需要 line（1 基），或给 symbol 让它自动找行。"
                 )
             line, character = position
-            if action == "definition":
-                result = client.definition(path, line, character)
-                return ToolOutcome.success(_format_locations(result, root), replayable=False)
-            result = client.references(path, line, character)
+            result: Any = None
+            for attempt in range(3):
+                try:
+                    result = (
+                        client.definition(path, line, character)
+                        if action == "definition"
+                        else client.references(path, line, character)
+                    )
+                except LspError as exc:
+                    if "content modified" in str(exc) and attempt < 2:
+                        time.sleep(0.3)
+                        continue
+                    raise
+                if result not in (None, []):
+                    break
+                # 服务器可能还在索引：空结果重试两次，别让第一次空答复骗过模型。
+                if attempt < 2:
+                    time.sleep(0.5)
             return ToolOutcome.success(_format_locations(result, root), replayable=False)
         except LspError as exc:
             detail = client.stderr_tail()

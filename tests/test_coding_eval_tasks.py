@@ -90,3 +90,24 @@ def test_extra_tasks_are_well_formed() -> None:
             assert name in task.files, f"{task.name}: 保护文件 {name} 不在初始仓库里"
         for name in task.hidden:
             assert name not in task.files, f"{task.name}: 隐藏测试 {name} 提前出现在仓库里"
+
+
+@pytest.mark.skipif(shutil.which("cargo") is None, reason="本机没有 cargo")
+def test_rust_calc_hidden_test_turns_green(tmp_path: Path) -> None:
+    module = _module()
+    task = _task(module, "rust_calc")
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    before, _ = _prepare_with_hidden(module, task, root, {})
+    assert before is False, "未修复时隐藏测试不该通过"
+
+    fixed = tmp_path / "repo-fixed"
+    fixed.mkdir()
+    passed, output = _prepare_with_hidden(
+        module,
+        task,
+        fixed,
+        {"src/lib.rs": "pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n"},
+    )
+    assert passed, output

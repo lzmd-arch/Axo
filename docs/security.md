@@ -18,7 +18,8 @@
 - `repo_map` / `find_symbol` 只回灌仓库根、相对路径、文件大小和符号声明；不把文件正文发给模型。
   `.env` 这类文件最多出现在文件名列表里，不会被读取。
 - 评测的测试子进程 `_run_tests()` 也显式改用 `_minimal_env()`，不会把 key 传给 agent
-  生成的代码。
+  生成的代码。Windows 上 `_minimal_env()` 额外补 MSVC 的 `PATH`/`LIB`/`INCLUDE` 等
+  编译变量（用 vswhere + vcvarsall 解析），同样不含 key。
 - `lsp` 只启动用户已安装/用 `AXO_LSP_<语言>` 显式指定的语言服务器；子进程环境
   同样是白名单（额外保留 `VIRTUAL_ENV`/`JAVA_HOME` 等构建变量，不含 key）。
   **每次 LSP 调用都过确认闸门**：服务器可能执行构建脚本/过程宏，不能当纯只读。

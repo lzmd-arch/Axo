@@ -17,7 +17,7 @@
 | **测试循环** | `run_tests`：自动探测 pytest/npm/pnpm/yarn/cargo/go/mvn/gradle/dotnet/rspec/phpunit/swift/mix/dart/ctest/make，跑完把失败行摘成摘要，提示“读断言、最小修改、别只重跑”；需确认。 |
 | **补丁预览/回滚** | `preview_patch` 只检查/展示 diff；`write_file`/`edit_file`/`apply_patch` 应用前写文件检查点，`rollback` 恢复最近一次或指定 id。 |
 | **长任务** | `start_command` 后台启动立即返回 job_id，`command_status` 读输出尾部/退出码，`command_stop` 杀进程树；不阻塞对话。 |
-| **编码评测** | `tools/coding_eval.py`：8 个固定任务（单文件修复/实现/CLI、多文件配置/定位、JavaScript、隐藏测试），临时 git 仓库、保护测试文件、自动批准沙箱；记录通过率/工具数/轮数/耗时/token。 |
+| **编码评测** | `tools/coding_eval.py`：9 个固定任务（单文件修复/实现/CLI、多文件配置/定位、JavaScript、Rust、隐藏测试），临时 git 仓库、保护测试文件、自动批准沙箱；记录通过率/工具数/轮数/耗时/token。 |
 | **测试** | 新增 git/patch/检查点/后台/路由/接线/空白保留测试；全量 Axo 测试见 `pytest` 日志。 |
 
 ### 1.1 第二批（同日）
@@ -37,11 +37,11 @@
 | **上下文压缩** | 工具尾巴超预算驱逐整对时，`loop._summarize_pair` 把工具名、参数、成败、结果开头压成一条 `system` 摘要，放在工作尾巴前；最多 30 行 / 2400 字符。记录仍由 `MessagesAppended` 完整保留——摘要是提示，不是审计。 |
 | **地图缓存** | `RepoMapCache`（LRU 8）键里带工作区快照摘要：文件没变命中，改一个字节失效；快照截断时不缓存。`ToolContext.repo_map_cache` 由主窗口注入。 |
 | **符号检索** | 新增只读 `find_symbol`：在跨语言符号索引里按名字搜索，返回 `文件:行: 声明`；大小写不敏感、结果有上限。它是静态索引，不是 LSP。 |
-| **LSP 桥** | 新增可选 `lsp` 工具：definition / references / symbols / diagnostics，stdio JSON-RPC、超时/进程收尾、按文件根缓存客户端；无服务器时明确回退。服务器不随包分发，用 `AXO_LSP_<语言>` 或 PATH 配置。**每次调用过闸门**（服务器可能执行构建脚本）。假服务器协议测试覆盖；本机没有真实服务器。 |
+| **LSP 桥** | 新增可选 `lsp` 工具：definition / references / symbols / diagnostics，stdio JSON-RPC、超时/进程收尾、按文件根缓存客户端；无服务器时明确回退。服务器不随包分发，用 `AXO_LSP_<语言>` 或 PATH 配置。**每次调用过闸门**（服务器可能执行构建脚本）。假服务器协议测试覆盖；本机已装 rust-analyzer，Rust 真机验过定义/引用/拉取诊断。 |
 | **多语言测试探测** | `detect_test_command` 覆盖 pytest/tox/nox、npm/pnpm/yarn/bun、deno、cargo、go、maven/gradle、dotnet、rspec/rake、phpunit、swift、mix、dart/flutter、ctest、sbt、stack/cabal、clojure/lein、zig、bazel、meson、R testthat、prove、Pester、make；`_test_files` 按多语言文件名/目录约定列前 8 个；失败行标记覆盖 Go/Rust/Jest/JUnit/GoogleTest/RSpec/PHPUnit/.NET/ExUnit/XCTest 等。 |
 | **逐文件补丁** | `apply_patch` / `preview_patch` 支持 `files` 过滤；确认卡片按文件出勾选框，`ToolContext.approval_selection` 把用户勾选结果交给工具；空选择或未知文件拒绝且不改盘。卡片上的 diff 按 `+`/`-`/`@@` 逐行着色。 |
 | **后台日志 UI** | 主窗口 700 ms 定时轮询 `CommandJobs.status(cursor=...)`，把增量日志推进网页的作业日志块（每作业最多留 200 KB），不经过模型、不占工具轮次；作业结束后在标题写退出码。 |
-| **多语言评测** | 新增 `js_calc`（Node 内置 test runner）与 `multi_file_locate`（4 模块定位）两个任务，共 8 题；Rust 工具支持已落地，但本机缺 MSVC C++ build tools，`cargo test` 无法链接，暂不进基准。 |
+| **多语言评测** | 新增 `js_calc`（Node 内置 test runner）、`multi_file_locate`（4 模块定位）与 `rust_calc`（cargo test），共 9 题；Windows 上 `_minimal_env()` 用 vswhere + vcvarsall 补 MSVC 编译变量，Rust 已能真实链接。 |
 
 ## 2. 工作区自动上下文（本轮新增）
 
@@ -68,9 +68,10 @@ multi_file_locate passed=True  tools=7  rounds=4  elapsed=5.69s   prompt 29,961 
 passed 8/8；总 token：prompt 342,451 / completion 3,710
 ```
 
-结果：`benchmarks/coding/results-deepseek-8tasks.json`。8/8 只说明当前 8 个任务、
-工具面与云端 DeepSeek 的组合可用，任务仍偏小，不能据此宣称达到 Codex。旧的 6 题
-结果留在 `benchmarks/coding/results-deepseek.json`，不要和新基线混用。
+结果：`benchmarks/coding/results-deepseek-8tasks.json`。8/8 只说明这 8 个任务、
+工具面与云端 DeepSeek 的组合可用；当前任务集共 9 题（Rust 单题见 2.3），任务仍偏小，
+不能据此宣称达到 Codex。旧的 6 题结果留在 `benchmarks/coding/results-deepseek.json`，
+不要和新基线混用。
 
 ### 2.2 真实仓库冒烟（单个任务）
 
@@ -87,7 +88,19 @@ tools: repo_overview → run_tests → search_files → read_file ×2 →
 只有 1 个显式 bug，不能代表真实仓库整体能力；它证明“真实目录里定位—读—改—跑测试—
 看 diff”这条链能走通。
 
-### 2.3 本机 fallback 基线（qwen3-4b，think=false）
+### 2.3 Rust 单题（真实 MSVC 工具链）
+
+```text
+rust_calc passed=True tools=6 rounds=4 elapsed=10.12s
+prompt 29,759 / completion 256
+tools: repo_overview → repo_map → read_file×2 → edit_file → run_tests
+```
+
+结果：`benchmarks/coding/results-deepseek-rust.json`。Windows 上 `_minimal_env()` 用
+`vswhere` + `vcvarsall.bat` 只补 MSVC 编译变量，`cargo test` 能真实链接。Rust LSP 也用
+真实 `rust-analyzer` 验过 definition / references / pull diagnostics。
+
+### 2.4 本机 fallback 基线（qwen3-4b，think=false）
 
 ```text
 bugfix_add       passed=True   6 tools / 6 rounds / 36.67s
@@ -109,7 +122,7 @@ passed 2/3
 | 测试循环 | **`run_tests` 多语言自动探测 + 失败摘要 + `TestSession` 跨轮对比**（新增/消失/原地重跑） | 自动识别测试命令、失败→修复循环 |
 | 计划 | `update_plan` 有，但不强制 | 计划与执行步骤绑定、可恢复 |
 | 上下文 | token 预算 + 工具结果裁剪 + **被驱逐整对的确定性摘要**；`repo_map` 有界符号索引 | 仓库地图、符号索引、压缩/恢复 |
-| 评测 | **`tools/coding_eval.py` 固定 8 任务**（Python + JavaScript）；云端 DeepSeek **8/8**（342,451 prompt / 3,710 completion）；真实仓库冒烟 1/1（195,229 / 1,379） | 固定任务集 + 真实仓库任务 + 通过率/成本 |
+| 评测 | **`tools/coding_eval.py` 固定 9 任务**（Python + JavaScript + Rust）；8 题基线 **8/8**（342,451 / 3,710），Rust 单题 1/1（29,759 / 256）；真实仓库冒烟 1/1（195,229 / 1,379） | 固定任务集 + 真实仓库任务 + 通过率/成本 |
 | 模型 | DeepSeek/本地 4B 可选 | 强模型 + 可靠工具调用 |
 
 ## 4. 下一阶段（建议顺序）
@@ -117,9 +130,9 @@ passed 2/3
 1. **工作区模式**：L1 已带工作区/AGENTS 摘要与测试命令，`repo_map` 已给多语言符号索引与快照缓存；下一步补关键清单（README/CI 配置/依赖文件）的自动摘要。
 2. **测试循环**：已落地失败摘要、跨轮 `TestSession`、同轮对比与 `<session_id>.tests.json` 落盘；下一步把“每轮改了什么、失败集合怎么变”也写进逐字稿供回看。
 3. **补丁审查**：已落地 `preview_patch`、逐文件勾选/过滤与 diff 逐行着色；下一步补 hunk 级选择与“应用后立刻显示逐文件结果”。
-4. **LSP**：已接可选 JSON-RPC 桥（definition/references/symbols/diagnostics），并有假服务器协议测试；本机没有 pyright/pylsp/typescript-language-server/gopls/clangd 等真实服务器，所以还没有真实语义结果。下一步是选 2–3 个服务器做安装文档与真仓库验证。
+4. **LSP**：已接可选 JSON-RPC 桥（definition/references/symbols/diagnostics），并有假服务器协议测试；本机已装 rust-analyzer，Rust 真机验过 definition/references/pull diagnostics。其他语言还没有安装服务器，下一步选 2–3 个做安装文档与真仓库验证。
 5. **长任务**：已落地后台启动/增量游标/列表/内存清理/UI 实时日志；下一步做独立作业面板与日志保留策略。
-6. **编码评测**：8 个任务（含 JavaScript）、云端 DeepSeek **8/8** 与一个真实仓库冒烟（1/1）已落地；下一步加更多真实仓库任务（不止一个显式 bug），并在有 MSVC build tools 的机器上补 Rust 任务。
+6. **编码评测**：9 个任务（含 JavaScript/Rust）、云端 DeepSeek 8 题 **8/8**、Rust 单题 1/1 与真实仓库冒烟 1/1 已落地；下一步跑 9 题全量基线、加更多真实仓库任务（不止一个显式 bug）。
 
 ## 5. 边界
 

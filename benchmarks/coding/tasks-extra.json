@@ -77,5 +77,22 @@
   "hidden": {
    "tests/test_hidden_service.py": "from app.service import display_name\n\n\ndef test_whitespace():\n    assert display_name('\\tBob\\n') == '[bob]'\n"
   }
+ },
+ {
+  "name": "rust_calc",
+  "files": {
+   "Cargo.toml": "[package]\nname = \"rustcalc\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n",
+   "src/lib.rs": "pub fn add(a: i32, b: i32) -> i32 {\n    a - b\n}\n",
+   "tests/public.rs": "use rustcalc::add;\n\n#[test]\nfn adds() {\n    assert_eq!(add(2, 3), 5);\n}\n"
+  },
+  "prompt": "cargo test 失败。修复 src/lib.rs 的 add，让公开测试通过；不要修改测试文件或 Cargo.toml。",
+  "protected": [
+   "tests/public.rs",
+   "Cargo.toml"
+  ],
+  "hidden": {
+   "tests/hidden.rs": "use rustcalc::add;\n\n#[test]\nfn negatives() {\n    assert_eq!(add(-2, 3), 1);\n}\n"
+  },
+  "test_command": "cargo test --quiet"
  }
 ]
