@@ -161,3 +161,83 @@ def test_an_unknown_model_does_not_get_the_screen_tool() -> None:
     """**问不到能力就不登记**：看不到工具是可见且可解释的，而"登记了但每次必败"会把
     一次静默失败叠在提示词上（同 ``read_file`` 那条"宁可不给"）。"""
     assert "look_at_screen" not in _tool_names(_window(model_combo=_combo(""), _model_caps={}))
+
+
+def test_write_and_command_tools_reach_the_tool_set(tmp_path: Path) -> None:
+    """**写工具曾经不在真实工具表里。**
+
+    ``default_tools(read_root=...)`` 的纯层测试一直绿，但 ``_tools()`` 漏传了
+    ``write_root``/``allow_commands``：真实界面里只有读工具，模型改不了文件、跑不了
+    命令。这条守卫盯的是那根线，不是 ``default_tools`` 自己。
+    """
+    writable = _tool_names(_window(_read_roots=(tmp_path,), _allow_commands=False))
+    assert "write_file" in writable
+    assert "edit_file" in writable
+    assert "apply_patch" in writable
+    assert "run_command" not in writable
+
+    with_commands = _tool_names(_window(_read_roots=(tmp_path,), _allow_commands=True))
+    assert "run_command" in with_commands
+    assert {"start_command", "command_status", "command_stop", "command_list"} <= set(with_commands)
+    assert "repo_map" in writable
+
+
+def test_agent_turn_context_carries_a_test_session() -> None:
+    """``run_tests`` 的跨次对比靠 ``ToolContext.test_session``。
+
+    这条守卫实际调用点：``TestSession`` 自己的测试全绿，也可能只是
+    ``_start_agent_turn`` 里忘了传那一行——症状是"每轮都显示第 1 次、从不提示原地
+    重跑"，而不是报错。
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    source = inspect.getsource(MainWindow._start_agent_turn)
+    tree = ast.parse(textwrap.dedent(source))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "ToolContext"
+    ]
+    assert calls, "_start_agent_turn 里没有构造 ToolContext"
+    for name, attribute in (
+        ("test_session", "_test_session"),
+        ("repo_map_cache", "_repo_map_cache"),
+    ):
+        keyword = next((item for item in calls[0].keywords if item.arg == name), None)
+        assert keyword is not None, f"ToolContext(...) 漏了 {name}"
+        value = keyword.value
+        if isinstance(value, ast.Call):  # repo_map_cache=self._repo_map_cache()
+            value = value.func
+        assert isinstance(value, ast.Attribute), f"{name} 不是取主窗口上的那一份"
+        assert value.attr == attribute, f"{name} 没接到 {attribute}"
+
+
+def test_new_session_resets_test_history() -> None:
+    """测试历史跨回合保留、跨会话清空；忘了清会把上一个会话的失败带进新会话。"""
+    import inspect
+
+    for method in (MainWindow._new_session, MainWindow._on_session_selected):
+        assert "self._test_session = TestSession()" in inspect.getsource(method)
+
+
+def test_workspace_context_injects_last_test_brief(tmp_path: Path) -> None:
+    from axo.agent.test_session import Snapshot, TestSession
+
+    session = TestSession()
+    session.finish(
+        command="python -m pytest -q",
+        cwd=tmp_path,
+        ok=False,
+        exit_code=1,
+        failures=("FAILED tests/test_a.py::test_a",),
+        before=Snapshot("d1", 1),
+    )
+    window = SimpleNamespace(_read_roots=(), _test_session=session)
+    text = MainWindow._workspace_context(window)  # type: ignore[arg-type]
+    assert "上次测试" in text
+    assert "python -m pytest -q" in text
+    assert "FAILED tests/test_a.py::test_a" in text

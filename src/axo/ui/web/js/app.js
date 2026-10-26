@@ -202,12 +202,42 @@
   // 现在这次问询"，而比对不上就会被丢弃（见 agent/gate.py）。
 
   var cards = []; // 活着的卡片：[{node, at, resolved}]
+  var jobLogs = {}; // job_id -> {node, body, done}：后台作业的实时日志块
 
   function findCard(callId) {
     for (var i = 0; i < cards.length; i++) {
       if (cards[i].node.getAttribute("data-call-id") === callId) return cards[i];
     }
     return null;
+  }
+
+  /* 摘要按行渲染。**只有像 diff 的才走逐行着色**：普通摘要仍然是一段文本，
+     不要因为里面出现一个减号就把它排版成代码块。 */
+  function renderToolSummary(text) {
+    var source = typeof text === "string" ? text : "";
+    var lines = source.split("\n");
+    var looksLikeDiff = lines.some(function (line) {
+      return /^(diff --git |@@ |\+\+\+ |--- )/.test(line);
+    });
+    if (!looksLikeDiff) {
+      var plain = document.createElement("div");
+      plain.className = "tool-summary";
+      plain.textContent = source || "（没有参数）";
+      return plain;
+    }
+    var block = document.createElement("pre");
+    block.className = "tool-summary tool-diff";
+    lines.forEach(function (raw) {
+      var row = document.createElement("div");
+      row.className = "tool-diff-line";
+      if (raw.indexOf("@@") === 0) row.classList.add("diff-hunk");
+      else if (/^(diff --git |\+\+\+ |--- )/.test(raw)) row.classList.add("diff-head");
+      else if (raw.indexOf("+") === 0) row.classList.add("diff-add");
+      else if (raw.indexOf("-") === 0) row.classList.add("diff-del");
+      row.textContent = raw || " ";
+      block.appendChild(row);
+    });
+    return block;
   }
 
   function makeToolCard(callId, name, summary, meta) {
@@ -225,19 +255,39 @@
     var body = document.createElement("div");
     body.className = "msg-body";
 
-    var line = document.createElement("div");
-    line.className = "tool-summary";
-    // textContent 而不是 innerHTML：摘要是从**模型给的参数**拼出来的，里面出现
-    // 尖括号完全正常。用 innerHTML 就等于让模型的参数决定这段 DOM 的结构。
-    line.textContent = summary || "（没有参数）";
+    var line = renderToolSummary(summary);
     body.appendChild(line);
+
+    // 逐文件勾选：只有工具声明了文件列表才出现。默认全选；一个都不选时「允许」
+    // 按钮禁用——否则用户会点出一个"允许但什么都不做"的动作。
+    var files = meta && Array.isArray(meta.files) ? meta.files : [];
+    var boxes = [];
+    if (files.length) {
+      var list = document.createElement("div");
+      list.className = "tool-files";
+      files.forEach(function (path) {
+        var label = document.createElement("label");
+        label.className = "tool-file";
+        var box = document.createElement("input");
+        box.type = "checkbox";
+        box.checked = true;
+        box.value = path;
+        var text = document.createElement("span");
+        text.textContent = path;
+        label.appendChild(box);
+        label.appendChild(text);
+        list.appendChild(label);
+        boxes.push(box);
+      });
+      body.appendChild(list);
+    }
 
     var actions = document.createElement("div");
     actions.className = "tool-actions";
     var allow = document.createElement("button");
     allow.type = "button";
     allow.className = "tool-allow";
-    allow.textContent = "允许";
+    allow.textContent = files.length ? "允许所选" : "允许";
     var deny = document.createElement("button");
     deny.type = "button";
     deny.className = "tool-deny";
@@ -248,6 +298,17 @@
     deny.addEventListener("click", function () {
       answerToolConfirm(callId, false);
     });
+    if (boxes.length) {
+      var refreshAllow = function () {
+        allow.disabled = !boxes.some(function (box) {
+          return box.checked;
+        });
+      };
+      boxes.forEach(function (box) {
+        box.addEventListener("change", refreshAllow);
+      });
+      refreshAllow();
+    }
     actions.appendChild(allow);
     actions.appendChild(deny);
     body.appendChild(actions);
@@ -259,6 +320,7 @@
     wrap.appendChild(body);
     wrap._allow = allow;
     wrap._deny = deny;
+    wrap._files = boxes;
     wrap._countdown = countdown;
     return wrap;
   }
@@ -284,12 +346,22 @@
      这里是让界面先说清楚"已经收到了"。 */
   function answerToolConfirm(callId, granted) {
     var entry = findCard(callId);
+    var selected = null;
+    if (entry && entry.node._files && entry.node._files.length) {
+      selected = entry.node._files
+        .filter(function (box) {
+          return box.checked;
+        })
+        .map(function (box) {
+          return box.value;
+        });
+    }
     if (entry) {
       entry.node._allow.disabled = true;
       entry.node._deny.disabled = true;
     }
     if (channelDead || !bridge) return;
-    bridge.tool_confirm(callId, granted);
+    bridge.tool_confirm(callId, granted, selected);
   }
 
   /* 倒计时。**一个全局定时器扫所有活着的卡片**，不是每张卡一个 setInterval：
@@ -374,6 +446,49 @@
 
     setStatus: function (text) {
       statusLabel.textContent = text || "";
+    },
+
+    /* 后台作业的增量日志。Python 侧按字节游标轮询，只把新增的那一段送过来；
+       这里按 job_id 找/建一个块并追加。**内容走 textContent**——日志是命令输出，
+       里面出现尖括号/HTML 完全正常。 */
+    appendJobLog: function (jobId, text) {
+      var id = jobId || "";
+      if (!id) return;
+      var entry = jobLogs[id];
+      if (!entry) {
+        var wrap = document.createElement("div");
+        wrap.className = "msg msg-job-log";
+        wrap.setAttribute("data-job-id", id);
+        var caption = document.createElement("div");
+        caption.className = "msg-caption";
+        caption.textContent = "后台作业 " + id;
+        var body = document.createElement("pre");
+        body.className = "job-log-body";
+        wrap.appendChild(caption);
+        wrap.appendChild(body);
+        stream.appendChild(wrap);
+        entry = { node: wrap, body: body, done: false };
+        jobLogs[id] = entry;
+        updateEmpty();
+      }
+      if (text) {
+        var stick = nearBottom();
+        entry.body.textContent += text;
+        // 单个作业最多留 200 KB 文本；更早的截掉，避免一个长构建把页面拖死。
+        var limit = 200000;
+        if (entry.body.textContent.length > limit) {
+          entry.body.textContent = "…（更早的日志已截断）\n" + entry.body.textContent.slice(-limit);
+        }
+        if (stick) scrollToBottom();
+      }
+    },
+
+    finishJobLog: function (jobId, status) {
+      var entry = jobLogs[jobId || ""];
+      if (!entry) return;
+      entry.done = true;
+      var caption = entry.node.querySelector(".msg-caption");
+      if (caption) caption.textContent = "后台作业 " + jobId + " · " + (status || "已结束");
     },
 
     setMotion: function (enabled) {
@@ -483,7 +598,7 @@
     /* 确认卡片。meta.timeoutMs 决定倒计时；没有它就只显示按钮，不显示倒计时
        （闸门那一侧仍然会超时，只是界面上不预告——这比显示一个编出来的秒数诚实）。 */
     appendToolConfirm: function (callId, name, summary, meta) {
-      if (!channelDead) appendToolCard(callId, name, summary || {}, meta || {});
+      if (!channelDead) appendToolCard(callId, name, summary || "", meta || {});
     },
 
     /* 卡片的结果。**accepted 与 granted 是两件事**：granted 是用户点了什么，

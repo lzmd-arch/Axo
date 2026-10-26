@@ -674,7 +674,17 @@ def test_oldest_pair_is_evicted_when_the_tail_overflows(store: MemoryStore) -> N
 
     final = backend.last_text(3)
     assert "丙" in final, "最新的一对被驱逐了"
-    assert "甲" not in final, "最老的一对没有被驱逐"
+    assert "甲" * 300 not in final, "最老的一对没有被驱逐（完整结果还在）"
+    assert "早前工具调用摘要" in final, "被驱逐的对没有留下摘要"
+    assert "spy" in final and "甲" in final, "摘要丢了工具名或参数"
+
+    summaries = [
+        message
+        for message in backend.requests[-1].messages
+        if message.role == "system" and "早前工具调用摘要" in message.content
+    ]
+    assert len(summaries) == 1, "摘要消息应当只有一条"
+    assert "甲" in summaries[0].content and "成功" in summaries[0].content
 
     assert_tool_pairs_intact(backend.requests[-1].messages)
     # 被驱逐的仍然留在记录里（调用方要把它写进逐字稿）——驱逐只是"不进这次请求"，
@@ -682,6 +692,24 @@ def test_oldest_pair_is_evicted_when_the_tail_overflows(store: MemoryStore) -> N
     rows = appended_rows(events)
     assert_tool_pairs_intact(rows)
     assert len(rows) == 6  # 三对，一对不多一对不少
+
+
+def test_compressed_summary_marks_failed_tool(store: MemoryStore) -> None:
+    """摘要要区分成败：失败的那一步不能写成“成功”。"""
+    spy = SpyTool(raiser=RuntimeError("boom"))
+    backend = ScriptedBackend(
+        script=[
+            [tool_chunk(call("spy", call_id="c1"))],
+            [tool_chunk(call("spy", call_id="c2"))],
+            [text_chunk("看完了", done=True)],
+        ]
+    )
+
+    drive(backend, ToolRegistry([spy]), store, ceiling=60, limits=LoopLimits(max_rounds=2))
+
+    final = backend.last_text(2)
+    assert "早前工具调用摘要" in final
+    assert "spy" in final and "失败" in final
 
 
 def test_tail_management_never_evicts_the_only_pair(store: MemoryStore) -> None:

@@ -180,8 +180,11 @@ class AgentWorker(QObject):
     "刚刚看到的"，模型会照着它回答，而谁也看不出差别。
     """
 
-    approval_needed = Signal(str, str, str)
-    """有一个改状态的动作在等用户点头：``(call_id, 工具名, 一句话摘要)``。
+    approval_needed = Signal(str, str, str, object)
+    """有一个改状态的动作在等用户点头：``(call_id, 工具名, 一句话摘要, 文件列表)``。
+
+    文件列表是 ``tuple[str, ...]``；空元组 = 这个工具没有按文件勾选的语义。界面
+    据此画勾选框，并把选中结果随裁决一起回传。
 
     **界面必须为它画一张卡片。** 收到这个信号而没有画，用户就永远看不到这次问询，
     而 worker 会一直等到超时然后按拒绝处理——症状是"助手说它没做"。
@@ -315,7 +318,9 @@ class AgentWorker(QObject):
             # 槽是单向闩：取消之后再发起问询只可能是接线错。这里按拒绝收场而不是
             # 让它抛出去——抛出去会炸掉整轮，而用户看到的是"任务莫名失败了"。
             return None
-        self.approval_needed.emit(request.call_id, request.tool_name, request.summary)
+        self.approval_needed.emit(
+            request.call_id, request.tool_name, request.summary, request.files
+        )
         return self._slot.wait(timeout=self._approval_timeout)
 
     @Slot()

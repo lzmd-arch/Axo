@@ -205,3 +205,14 @@ def test_alerts_that_arrived_during_a_call_are_reported_next_turn() -> None:
 
     quiet = build_environment(now=datetime(2026, 10, 10, 15, 4))
     assert "该睡了" not in quiet
+
+
+def test_workspace_context_is_in_environment_only_when_given() -> None:
+    """L1 只带事实；没给工作区时逐字节不变。"""
+    base = build_environment(now=datetime(2026, 10, 10, 15, 4))
+    with_ws = build_environment(
+        now=datetime(2026, 10, 10, 15, 4), workspace="工作区：D:/repo\ngit：main，干净"
+    )
+    assert "工作区：" not in base
+    assert "工作区：D:/repo" in with_ws and "git：main，干净" in with_ws
+    assert with_ws.startswith(base.splitlines()[0])

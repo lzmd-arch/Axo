@@ -35,7 +35,7 @@ class RecordingChatView(QWidget):
 
     message_submitted = Signal(str)
     persona_answered = Signal(str)
-    tool_confirm_decided = Signal(str, bool)
+    tool_confirm_decided = Signal(str, bool, object)
     voice_toggled = Signal()
     call_toggled = Signal()
     call_interrupted = Signal()
@@ -117,3 +117,9 @@ class RecordingChatView(QWidget):
     def resolve_tool_confirm(self, call_id: str, *, granted: bool, accepted: bool) -> None:
         # 关键字参数不可省，理由同 ``set_persona_state``。
         self.calls.append(f"resolveToolConfirm({granted},{accepted})")
+
+    def append_job_log(self, job_id: str, text: str) -> None:
+        self.calls.append(f"appendJobLog({job_id},{len(text)})")
+
+    def finish_job_log(self, job_id: str, status: str) -> None:
+        self.calls.append(f"finishJobLog({job_id})")

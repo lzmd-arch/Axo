@@ -12,7 +12,7 @@ JS 与 Python 的契约（两边都是**只增不改**，否则旧前端会静�
 
     JS   → Python   window.bridge.send(text)                          一条聊天消息
                     window.bridge.answer_persona(text)               首启人设卡片的答案；"" = 不写
-                    window.bridge.tool_confirm(call_id, granted)     确认卡片上的一次点击
+                    window.bridge.tool_confirm(call_id, granted, files)  确认卡片上的一次点击；files 可为 null
                     window.bridge.voice_toggle()                     麦克风按钮：开始/结束听
                     window.bridge.attach_files(uris)                 拖进来的文件：file:// URL 的列表
                     window.bridge.call_toggle()                      开始/结束通话
@@ -154,8 +154,11 @@ class WebBridge(QObject):
     persona_answered = Signal(str)
     """首启卡片收了答案。空串 = 用户选了「这一次先不写」。"""
 
-    tool_confirm_decided = Signal(str, bool)
-    """确认卡片被点了一下：``(call_id, 是否允许)``。
+    tool_confirm_decided = Signal(str, bool, object)
+    """确认卡片被点了一下：``(call_id, 是否允许, 勾选的文件)``。
+
+    ``files`` 是 ``tuple[str, ...]`` 或 ``None``：``None`` 表示这张卡片没有文件
+    勾选；空元组表示“一个都没选”。
 
     **不在这一层判"这一次点击还算不算数"**：那要看闸门的当前状态，而这里够不着它。
     这里只保证"一次点击 = 一次信号"，把 ``call_id`` 原样带过去由调用方比对。
@@ -254,12 +257,16 @@ class WebBridge(QObject):
         if uris:
             self.files_dropped.emit([str(one) for one in uris])
 
-    @Slot(str, bool)
-    def tool_confirm(self, call_id: str, granted: bool) -> None:
+    @Slot(str, bool, object)
+    def tool_confirm(self, call_id: str, granted: bool, files: object = None) -> None:
         # ``call_id`` 为空的点击直接丢弃：它配不上任何一个待决请求，送上去只会
         # 白跑一趟（闸门会拒），而这里丢掉它至少能在信号上少一次噪声。
-        if call_id:
-            self.tool_confirm_decided.emit(call_id, bool(granted))
+        if not call_id:
+            return
+        selected: tuple[str, ...] | None = None
+        if isinstance(files, (list, tuple)):
+            selected = tuple(str(item) for item in files if str(item).strip())
+        self.tool_confirm_decided.emit(call_id, bool(granted), selected)
 
 
 class _SafePage(QWebEnginePage):
@@ -336,8 +343,8 @@ class ChatView(QWidget):
     persona_answered = Signal(str)
     """首启卡片收了答案。空串 = 用户选了「这一次先不写」。"""
 
-    tool_confirm_decided = Signal(str, bool)
-    """确认卡片被点了一下：``(call_id, 是否允许)``。由 :class:`WebBridge` 转发。"""
+    tool_confirm_decided = Signal(str, bool, object)
+    """确认卡片被点了一下：``(call_id, 是否允许, 勾选的文件)``。由 :class:`WebBridge` 转发。"""
 
     voice_toggled = Signal()
     """麦克风按钮被按了一下。**主窗口据此开始/结束录音**（见 ``ui/voice.py``）。"""
@@ -529,6 +536,16 @@ class ChatView(QWidget):
 
     def set_status(self, text: str) -> None:
         self._call("setStatus", text)
+
+    def append_job_log(self, job_id: str, text: str) -> None:
+        """后台作业的增量日志。**只显示，不写逐字稿、不进模型上下文。**"""
+        if job_id and text:
+            self._call("appendJobLog", job_id, text)
+
+    def finish_job_log(self, job_id: str, status: str) -> None:
+        """在日志块标题上写收场（退出码/停止）。"""
+        if job_id:
+            self._call("finishJobLog", job_id, status)
 
     def set_voice_state(self, state: str) -> None:
         """录音那一路的状态：``""`` / ``"listening"`` / ``"recognizing"``。

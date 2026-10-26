@@ -417,6 +417,75 @@ body.has-wallpaper #scrim {
   overflow-wrap: anywhere;
 }
 
+/* 逐文件勾选。默认全选；一个都不选时 JS 会禁用「允许所选」。 */
+.tool-files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.tool-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.tool-file input {
+  accent-color: var(--accent);
+}
+
+/* 补丁预览：按行着色。行号不在这里画——摘要里本来就没有行号列。 */
+.tool-diff {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.45;
+  max-height: 320px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 60%, transparent);
+}
+
+.tool-diff-line {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.diff-head {
+  color: var(--fg-muted);
+}
+
+.diff-hunk {
+  color: var(--accent);
+}
+
+.diff-add {
+  background: color-mix(in srgb, #2ea043 14%, transparent);
+}
+
+.diff-del {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+
+/* 后台作业的实时日志：独立的一块，不混进助手气泡。 */
+.msg-job-log .job-log-body {
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 260px;
+  overflow: auto;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 60%, transparent);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .tool-actions {
   display: flex;
   gap: 8px;

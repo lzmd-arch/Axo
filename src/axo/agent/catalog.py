@@ -60,6 +60,12 @@ from ..memory.policy import MemoryDraft
 from ..net import DEFAULT_COUNT, WebError
 from ..stickers import Sticker, catalog_line, find_in
 from ..weather import DEFAULT_DAYS, MAX_DAYS, WeatherError, format_report
+from .background_tools import (
+    CommandListTool,
+    CommandStatusTool,
+    CommandStopTool,
+    StartCommandTool,
+)
 from .fs import (
     MAX_LIST_ENTRIES,
     MAX_SEARCH_RESULTS,
@@ -71,6 +77,14 @@ from .fs import (
     resolve_within,
     search_text,
     write_text_atomic,
+)
+from .git_tools import (
+    ApplyPatchTool,
+    GitDiffTool,
+    GitLogTool,
+    GitStatusTool,
+    PreviewPatchTool,
+    RepoOverviewTool,
 )
 from .music_tools import (
     MusicControlTool,
@@ -89,7 +103,9 @@ from .reminders import (
     repeat_label,
     weekday_name,
 )
+from .repo_map import RepoMapTool
 from .shell import DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S, run_command
+from .test_tools import RunTestsTool
 from .tools import (
     Capture,
     Tool,
@@ -98,6 +114,7 @@ from .tools import (
     ToolOutcome,
     argument_int,
     argument_str,
+    argument_text,
 )
 
 __all__ = [
@@ -399,7 +416,7 @@ class ReadFileTool:
         description=(
             "读取用户允许目录里的一个文本文件。用户说「看看某个文件里写了什么」"
             "「那个文件的内容」时用它。路径要写**相对于允许目录**的路径。"
-            "读不了会告诉你原因，按提示改路径再试。"
+            "开始编码任务时先用 repo_overview，再按需读文件；读不了会告诉你原因。"
         ),
         parameters={
             "type": "object",
@@ -410,6 +427,10 @@ class ReadFileTool:
                     "description": "从第几行开始读，从 1 开始。文件很长时用它翻页。",
                 },
                 "max_lines": {"type": "integer", "description": "最多读多少行。"},
+                "line_numbers": {
+                    "type": "boolean",
+                    "description": "是否给每行加行号（默认 true）；写 unified diff 时用。",
+                },
             },
             "required": ["path"],
         },
@@ -422,6 +443,9 @@ class ReadFileTool:
         start_line = argument_int(arguments, "start_line", default=1, minimum=1)
         max_lines = argument_int(arguments, "max_lines", default=200, minimum=1, maximum=2000)
         assert start_line is not None and max_lines is not None
+        line_numbers = arguments.get("line_numbers", True)
+        if not isinstance(line_numbers, bool):
+            raise ToolArgumentError("line_numbers 必须是布尔值。")
         try:
             path = resolve_within(ctx.read_root, raw)
             body = read_text(path, start_line=start_line, max_lines=max_lines)
@@ -433,6 +457,10 @@ class ReadFileTool:
         # ``replayable=False``：读到的是**此刻**的文件内容，而文件随时会被改。回放它
         # 的代价是模型拿着旧正文下结论，且它没有任何线索知道那是旧的——比"重新读一次"
         # 贵得多（重读只是一次工具往返，而这里是悄悄答错）。
+        if line_numbers:
+            body = "\n".join(
+                f"{start_line + i:6d}  {line}" for i, line in enumerate(body.splitlines())
+            )
         return ToolOutcome.success(f"{path.name}：\n{body}", replayable=False)
 
 
@@ -1390,6 +1418,7 @@ class WriteFileTool:
         description=(
             "把一段文本写进用户允许目录里的文件（覆盖或追加）。用户说「把这个存下来」"
             "「写到那个文件里」时用它。**会改磁盘上的内容**，所以每次都会先问用户。"
+            "代码任务写完后用 git_diff 自查、run_command 跑测试。"
             "路径要相对于允许目录；要新建子目录时把 create_dirs 设为 true。"
         ),
         parameters={
@@ -1411,7 +1440,7 @@ class WriteFileTool:
 
     def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
         raw = argument_str(arguments, "path")
-        content = argument_str(arguments, "content", required=False)
+        content = argument_text(arguments, "content")
         mode = argument_str(arguments, "mode", required=False) or "overwrite"
         create_dirs = _argument_flag(arguments, "create_dirs")
         if mode not in ("overwrite", "append"):
@@ -1421,13 +1450,15 @@ class WriteFileTool:
         deny = (ctx.data_root,) if ctx.data_root is not None else ()
         try:
             path = resolve_for_write(ctx.write_root, raw, create_dirs=create_dirs, deny=deny)
+            cid = ctx.checkpoints.capture([path], "write_file") if ctx.checkpoints else ""
             written = write_text_atomic(
                 path, content, append=(mode == "append"), create_dirs=create_dirs
             )
         except WriteFileError as exc:
             return ToolOutcome.failure(str(exc))
         verb = "追加" if mode == "append" else "写入"
-        return ToolOutcome.success(f"已{verb} {path}（{written} 字节）。", replayable=False)
+        note = f"（检查点 {cid}）" if cid else ""
+        return ToolOutcome.success(f"已{verb} {path}（{written} 字节）{note}。", replayable=False)
 
 
 class EditFileTool:
@@ -1437,8 +1468,9 @@ class EditFileTool:
         name="edit_file",
         description=(
             "在文件里把一段**精确文本**替换成另一段。适合小改动；要整份重写时用"
-            " write_file。old_text 必须在文件里出现且（默认）只出现一次——出现零次或"
-            "多次会拒绝并说明，不会猜你想改哪一处。"
+            " write_file，多文件改动用 apply_patch。old_text 必须在文件里出现且（默认）"
+            "只出现一次——出现零次或多次会拒绝并说明，不会猜你想改哪一处。"
+            "改完用 git_diff 自查。"
         ),
         parameters={
             "type": "object",
@@ -1455,8 +1487,8 @@ class EditFileTool:
 
     def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
         raw = argument_str(arguments, "path")
-        old_text = argument_str(arguments, "old_text")
-        new_text = argument_str(arguments, "new_text", required=False)
+        old_text = argument_text(arguments, "old_text")
+        new_text = argument_text(arguments, "new_text", required=False)
         replace_all = _argument_flag(arguments, "replace_all")
         if not ctx.write_root:
             return ToolOutcome.failure("写入工具没有配置可写目录。")
@@ -1480,13 +1512,53 @@ class EditFileTool:
                 "或者把 replace_all 设为 true 全部替换。"
             )
         revised = original.replace(old_text, new_text, -1 if replace_all else 1)
+        cid = ctx.checkpoints.capture([path], "edit_file") if ctx.checkpoints else ""
         try:
             write_text_atomic(path, revised)
         except WriteFileError as exc:
             return ToolOutcome.failure(str(exc))
+        note = f"（检查点 {cid}）" if cid else ""
         return ToolOutcome.success(
-            f"已修改 {path.name}（替换 {count if replace_all else 1} 处）。", replayable=False
+            f"已修改 {path.name}（替换 {count if replace_all else 1} 处）{note}。", replayable=False
         )
+
+
+class RollbackTool:
+    """把最近一次（或指定 id）编辑前的文件快照恢复回去。**过闸门。**"""
+
+    spec: ClassVar[ToolSpec] = ToolSpec(
+        name="rollback",
+        description=(
+            "回滚最近一次写文件/编辑/补丁之前的文件内容（可给 checkpoint_id 指定历史点）。"
+            "每次写工具成功后会返回检查点 id；不确定时先看返回。**会改磁盘，需要确认。**"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "checkpoint_id": {
+                    "type": "string",
+                    "description": "要恢复的检查点 id；省略 = 最近一次。",
+                }
+            },
+        },
+    )
+    requires_approval: ClassVar[bool] = True
+    parallel_safe: ClassVar[bool] = False
+
+    def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+        if ctx.checkpoints is None:
+            return ToolOutcome.failure("这一轮没有检查点存储，无法回滚。")
+        cid = argument_str(arguments, "checkpoint_id", required=False) or None
+        try:
+            result = ctx.checkpoints.restore(cid, roots=ctx.write_root)
+        except Exception as exc:  # noqa: BLE001 — 回滚失败要如实回灌
+            return ToolOutcome.failure(f"回滚失败：{exc}")
+        parts = [f"已回滚检查点 {result.checkpoint_id}。"]
+        if result.restored:
+            parts.append("恢复：" + "、".join(result.restored))
+        if result.deleted:
+            parts.append("删除（原本不存在）：" + "、".join(result.deleted))
+        return ToolOutcome.success("\n".join(parts), replayable=False)
 
 
 class RunCommandTool:
@@ -1496,8 +1568,9 @@ class RunCommandTool:
         name="run_command",
         description=(
             "在允许目录里执行一条 shell 命令，拿回输出与退出码。查版本、跑测试、"
-            "看目录树这类事用它。**会在这台机器上真正执行**，所以每次都会先问用户；"
-            "超时默认 30 秒（最多 120），用户随时可以停止。"
+            "构建、git status/diff 这类事用它；测试失败后根据输出继续修。"
+            "**会在这台机器上真正执行**，所以每次都会先问用户；"
+            "超时默认 30 秒（最多 600），用户随时可以停止。"
         ),
         parameters={
             "type": "object",
@@ -1507,7 +1580,7 @@ class RunCommandTool:
                     "type": "string",
                     "description": "工作目录（相对路径）；默认第一个允许目录。",
                 },
-                "timeout_s": {"type": "integer", "description": "超时秒数，默认 30，最多 120。"},
+                "timeout_s": {"type": "integer", "description": "超时秒数，默认 30，最多 600。"},
             },
             "required": ["command"],
         },
@@ -1632,7 +1705,7 @@ class ClipboardWriteTool:
     requires_approval: ClassVar[bool] = True
 
     def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
-        text = argument_str(arguments, "text", required=False)
+        text = argument_text(arguments, "text", required=False)
         if not text:
             return ToolOutcome.failure("没有要复制的文字。")
         if ctx.clipboard_write is None:
@@ -1684,7 +1757,7 @@ def default_tools(
     allow_commands: bool = False,
     music: Any | None = None,
 ) -> tuple[Tool, ...]:
-    """十个工具。
+    """工具面。
 
     **两个工具按条件登记**，判据是"这个环境里它根本不可能成功"：
 
@@ -1737,6 +1810,12 @@ def default_tools(
         # 有可写根、用户没关命令执行；``edit_file`` 与 ``write_file`` 同一前提。
         *((WriteFileTool(), EditFileTool()) if write_root else ()),
         *((RunCommandTool(),) if write_root and allow_commands else ()),
+        *((RunTestsTool(),) if write_root and allow_commands else ()),
+        *(
+            (StartCommandTool(), CommandStatusTool(), CommandStopTool(), CommandListTool())
+            if write_root and allow_commands
+            else ()
+        ),
         # 桌面操作：会打开东西、覆盖剪贴板、弹通知——都要过闸门。通道由主窗口注入，
         # 没注入时工具自己回一句"这一轮没有桌面通道"。
         OpenExternalTool(),
@@ -1760,6 +1839,15 @@ def default_tools(
             if music is not None and getattr(music, "available", False)
             else ()
         ),
+        # 工作区/编码工具追加在最后：只读 git 工具要有可读根，apply_patch 要有可写根。
+        # 追加在末尾是为了让原有工具声明的稳定前缀不变（提示缓存）；模型仍能看见。
+        *(
+            (GitStatusTool(), GitDiffTool(), GitLogTool(), RepoOverviewTool(), RepoMapTool())
+            if read_root
+            else ()
+        ),
+        *((PreviewPatchTool(), ApplyPatchTool()) if write_root else ()),
+        *((RollbackTool(),) if write_root else ()),
         # **插件一律追加在最后。** 它们由 ``axo.plugins`` 从插件目录装上来，装不上
         # 的那些不在这里（各自记了一句人话，见 `MainWindow._tools`）。
         *plugins,

@@ -162,7 +162,7 @@ def run(worker: AgentWorker | ChatWorker, *, on_approval: Any = None) -> SimpleN
             )
         )
         worker.approval_needed.connect(
-            lambda call_id, name, summary: collected.asks.append((call_id, name, summary))
+            lambda call_id, name, summary, _files: collected.asks.append((call_id, name, summary))
         )
         if on_approval is not None:
             worker.approval_needed.connect(on_approval)
@@ -346,7 +346,7 @@ def test_the_card_question_carries_the_templated_summary(qapp: Any, store: Memor
 
     collected = run(
         build(backend, ToolRegistry([spy]), store, approval_timeout=0.05),
-        on_approval=lambda _call_id, _name, _summary: None,
+        on_approval=lambda _call_id, _name, _summary, _files: None,
     )
 
     assert collected.asks == [("call_1", "write_memory", "content：用户喜欢美式")]
@@ -409,7 +409,7 @@ def test_allow_runs_the_tool_and_deny_does_not(qapp: Any, store: MemoryStore) ->
 
         collected = run(
             worker,
-            on_approval=lambda call_id, _name, _summary: adopted.append(
+            on_approval=lambda call_id, _name, _summary, _files: adopted.append(
                 worker.provide_approval(call_id, granted)
             ),
         )
@@ -444,7 +444,7 @@ def test_a_card_that_arrives_after_the_stop_is_dropped(qapp: Any, store: MemoryS
 
     collected = run(
         worker,
-        on_approval=lambda call_id, _n, _s: (
+        on_approval=lambda call_id, _n, _s, _f: (
             worker.stop(),
             adopted.append(worker.provide_approval(call_id, True)),
         ),
@@ -564,7 +564,7 @@ def test_the_gui_thread_can_stop_a_worker_blocked_inside_the_slot(
     worker = build(backend, ToolRegistry([spy]), store, approval_timeout=LONG_TIMEOUT)
 
     asks: list[tuple[str, str, str]] = []
-    worker.approval_needed.connect(lambda c, n, s: asks.append((c, n, s)))
+    worker.approval_needed.connect(lambda c, n, s, _f: asks.append((c, n, s)))
 
     thread = QThread()
     # 与 ``track()`` 同形：亲和面留在界面线程，``run()`` 靠直连在工作线程里跑。

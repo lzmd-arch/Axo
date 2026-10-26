@@ -5,7 +5,7 @@
 * **工作目录**由调用方给（限定在用户授权的根里），这里不猜；
 * **环境变量白名单**：绝不继承 ``OPENAI_API_KEY`` / ``DEEPSEEK_KEY`` 之类——模型
   能跑的命令不该顺手拿到模型自己的凭据；
-* **超时**（默认 30 秒、硬顶 120 秒）与**取消**：用户点停止/关窗时要能杀掉整棵
+* **超时**（默认 30 秒、硬顶 600 秒）与**取消**：用户点停止/关窗时要能杀掉整棵
   进程树。Windows 上只杀 ``cmd`` 会留下 python 子进程，而它会一直占着管道；
 * **输出上限**：保留首尾各一段并明说中间省略了多少——模型看到半截输出却不知道
   是半截，会基于半截下结论。
@@ -29,7 +29,7 @@ from typing import Any
 __all__ = ["DEFAULT_TIMEOUT_S", "MAX_TIMEOUT_S", "ShellResult", "run_command"]
 
 DEFAULT_TIMEOUT_S = 30
-MAX_TIMEOUT_S = 120
+MAX_TIMEOUT_S = 600
 
 #: 输出总上限（字节）。首尾各留一半。
 OUTPUT_CAP = 32 * 1024

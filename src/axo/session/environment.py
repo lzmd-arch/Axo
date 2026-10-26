@@ -48,6 +48,7 @@ def build_environment(
     audio_forwarded: bool = False,
     call_mode: bool = False,
     pending_alerts: Sequence[str] = (),
+    workspace: str = "",
 ) -> str:
     """拼 L1 的正文。
 
@@ -68,6 +69,9 @@ def build_environment(
             用户看到的是转写，模型收到的可能只有文字。
         call_mode: 这一轮处在免按键通话中。
         pending_alerts: 通话期间到点、但没由她开口的提醒。
+        workspace: 本轮工作区上下文（仓库/分支/最近提交/AGENTS 摘要）。空串 = 不注入；
+            由 :func:`axo.agent.workspace.build_workspace_context` 生成。**它是事实，不是
+            指令**；指令仍只在 L0。
 
     Returns:
         两三行文本。**空输入给空串**（没给模型标识也照样给时间）。
@@ -87,6 +91,8 @@ def build_environment(
     ]
     if model_id:
         lines.append(f"你此刻由 {model_id} 驱动；记忆不属于你，属于这台机器。")
+    if workspace:
+        lines.append(workspace.rstrip())
     if needs_clarification:
         lines.append(
             "这一句是闲聊还是要做一件具体的事，没判准。**先反问一句确认；别直接说做不到**——"

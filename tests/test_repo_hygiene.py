@@ -324,3 +324,43 @@ def test_bench_space_corpus_is_still_loadable() -> None:
     sentences = _bench_space_sentences()
     assert len(sentences) == 80, f"语料应当是 20 对 + 20 对（80 句），实际 {len(sentences)} 句。"
     assert all(s.strip() for s in sentences), "语料里有空串。"
+
+
+def test_environment_files_are_ignored() -> None:
+    """凭据文件不得入库；这是 API key 不进远端的第一道门。"""
+    import subprocess
+
+    for name in (".env", "secrets.json", "private.key"):
+        result = subprocess.run(
+            ["git", "check-ignore", "-q", name], cwd=Path(__file__).resolve().parents[1]
+        )
+        assert result.returncode == 0, f"{name} 没有被 .gitignore 挡住"
+
+
+def test_benchmark_results_have_no_credentials_or_personal_paths() -> None:
+    """评测结果可能被公开：不得含 key 形状、api_key 字段或本机用户路径。"""
+    import re
+
+    root = Path(__file__).resolve().parents[1]
+    key = re.compile(r"sk-[A-Za-z0-9_-]{20,}")
+    user_path = "C:" + chr(92) + "Users" + chr(92)
+    for path in (root / "benchmarks" / "coding").glob("results*.json"):
+        text = path.read_text(encoding="utf-8")
+        assert not key.search(text), f"{path.name} 含 key 形状"
+        assert "api_key" not in text, f"{path.name} 含 api_key 字段"
+        assert user_path not in text, f"{path.name} 含本机用户路径"
+
+
+def test_dpapi_source_module_is_not_ignored() -> None:
+    """`secrets.*` 挡的是凭据文件；`src/axo/secrets.py` 是 DPAPI 源码，不能被误伤。"""
+    import subprocess
+
+    root = Path(__file__).resolve().parents[1]
+    tracked = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", "src/axo/secrets.py"],
+        cwd=root,
+        capture_output=True,
+    )
+    assert tracked.returncode == 0, "src/axo/secrets.py 没有被跟踪"
+    ignored = subprocess.run(["git", "check-ignore", "-q", "src/axo/secrets.py"], cwd=root)
+    assert ignored.returncode == 1, "src/axo/secrets.py 被误当成凭据文件忽略了"

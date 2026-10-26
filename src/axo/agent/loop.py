@@ -37,6 +37,11 @@
 ——而逐字稿是"这次对话真的发生过什么"的记录（与 ``_WRAP_UP_NOTE`` 不进记录是同一条
 理由）。这个区别**没有任何症状**：界面上一切正常，只是回看的时候少了几步。
 
+**被驱逐的对会留下一行摘要。** ``_summarize_pair`` 把工具名、参数、成败与结果开头
+压成一条 ``system`` 消息，放在工作尾巴之前。它是**提示**，不是记录；记录仍由
+``MessagesAppended`` 完整保留。没有这条摘要，长任务里模型会把刚被裁掉的
+``repo_map``/失败输出原样重做一遍——花的是 token，丢的是"已经做过什么"。
+
 **为什么记录是"边产出边吐"，而不是攒到 :class:`LoopDone` 里一次给。** 因为调用方
 **会中途停止消费**：用户点了停止，``ui/agent_worker.py`` 就跳出这个生成器（生成器
 随即被关闭，后端那条流也跟着断）。攒到 LoopDone 的话，那些**已经真的执行过**的工具
@@ -346,12 +351,59 @@ def _tail_tokens(tail: Sequence[ChatMessage], meter: TokenMeter) -> int:
     return sum(meter.message(message) for message in tail)
 
 
+_MAX_COMPRESSED_LINES = 30
+_MAX_COMPRESSED_CHARS = 2400
+"""被驱逐的工具对留下多少摘要。它是**提示**，不是记录：记录只增不减（见模块文档），
+摘要只负责让模型记得“早前做过什么”，不承担审计职责。"""
+
+
+def _one_line(text: str, limit: int) -> str:
+    collapsed = " ".join(text.split())
+    return collapsed if len(collapsed) <= limit else collapsed[:limit] + "…"
+
+
+def _summarize_pair(chunk: Sequence[ChatMessage], ok_map: Mapping[str, bool]) -> list[str]:
+    """把一对被驱逐的 assistant/tool 消息压成几行。**不丢调用名与参数。**"""
+    calls: dict[str, ToolCall] = {}
+    results: dict[str, ChatMessage] = {}
+    assistant_text = ""
+    for message in chunk:
+        if message.role == "assistant":
+            if message.content:
+                assistant_text = message.content
+            for call in message.tool_calls:
+                calls[call.id] = call
+        elif message.role == "tool" and message.tool_call_id:
+            results[message.tool_call_id] = message
+    lines: list[str] = []
+    for call_id, call in calls.items():
+        result = results.get(call_id)
+        state = (
+            "成功"
+            if ok_map.get(call_id) is True
+            else "失败"
+            if ok_map.get(call_id) is False
+            else "结果"
+        )
+        try:
+            args = json.dumps(call.arguments, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            args = str(call.arguments)
+        body = _one_line(result.content, 80) if result is not None else "（没有结果行）"
+        lines.append(f"- {call.name}({_one_line(args, 60)}) → {state}：{body}")
+    if not lines and assistant_text:
+        lines.append(f"- 助手：{_one_line(assistant_text, 120)}")
+    return lines
+
+
 def _fit_tool_tail(
     tail: list[ChatMessage],
     pairs: list[tuple[int, int]],
     *,
     ceiling: int,
     meter: TokenMeter,
+    summaries: list[str] | None = None,
+    ok_map: Mapping[str, bool] | None = None,
 ) -> int:
     """按**整对**把尾巴压进 ``ceiling``，返回驱逐了几对。
 
@@ -359,11 +411,19 @@ def _fit_tool_tail(
     的一对之后，后面所有对的下标都要往前挪——**这一步漏了会删错行**，而症状是
     "模型收到了两段对不上的工具结果"，一种看起来像模型变笨的问题。
 
+    ``summaries`` 非空时，被驱逐的对会先压成几行摘要（工具名、参数、成败、结果开头）。
+    它**不是记录**：逐字稿仍由 ``MessagesAppended`` 完整保留；摘要只让模型在长任务里
+    记得“这步发生过”，避免把刚裁掉的东西又原样重做一遍。
+
     **只动 ``tail``，不动记录。** 被驱逐的行仍然在这次回合的逐字稿里（见模块文档）。
     """
     evicted = 0
     while len(pairs) > 1 and _tail_tokens(tail, meter) > ceiling:
         start, length = pairs.pop(0)
+        if summaries is not None:
+            summaries.extend(_summarize_pair(tail[start : start + length], ok_map or {}))
+            if len(summaries) > _MAX_COMPRESSED_LINES:
+                del summaries[: len(summaries) - _MAX_COMPRESSED_LINES]
         del tail[start : start + length]
         pairs[:] = [(begin - length, size) for begin, size in pairs]
         evicted += 1
@@ -477,11 +537,23 @@ def run_agent_loop(
     stop_detail = ""
     seen: set[str] = set()
     stagnant_rounds = 0
+    compressed: list[str] = []
+    tool_ok: dict[str, bool] = {}
     supports_choice = bool(getattr(backend, "supports_tool_choice", False))
 
     while True:
         wrap = bool(stop_reason) or rounds >= fuse
-        if not wrap and _context_full([*messages, *tail], budget, meter):
+        summary_message: ChatMessage | None = None
+        if compressed:
+            summary_text = "\n".join(compressed)
+            if len(summary_text) > _MAX_COMPRESSED_CHARS:
+                summary_text = "…（更早的摘要已省略）\n" + summary_text[-_MAX_COMPRESSED_CHARS:]
+            summary_message = ChatMessage(
+                role="system",
+                content="早前工具调用摘要（已从上下文裁掉，供你继续任务）：\n" + summary_text,
+            )
+        head = (*messages, *((summary_message,) if summary_message else ()))
+        if not wrap and _context_full([*head, *tail], budget, meter):
             wrap, stop_reason, stop_detail = True, "context_full", "上下文余量不够再走一轮了"
         if rounds >= fuse and not stop_reason:
             stop_reason, stop_detail = "fuse", f"到了硬熔断（{fuse} 轮）"
@@ -493,7 +565,7 @@ def run_agent_loop(
         # **重排一遍而不是维护一个 working 列表**：驱逐会把 tail 里的整段删掉，
         # 而下标是驱逐算法唯一的抓手。每次从头拼，``turn`` 与 ``tail`` 就不可能
         # 不一致——那种不一致的表现是模型收到两份对不上的历史。
-        turn: list[ChatMessage] = _fresh_time([*messages, *tail], clock())
+        turn: list[ChatMessage] = _fresh_time([*head, *tail], clock())
         if wrap:
             turn.append(_WRAP_UP_NOTE)
 
@@ -618,6 +690,7 @@ def run_agent_loop(
                 arguments=dict(tool_call.arguments),
                 preview=outcome.preview,
             )
+            tool_ok[tool_call.id] = outcome.ok
             # **图只活在这一次往返里。** 落逐字稿的那条路只存 ``content``、L5 回放
             # 重建行时也不带 ``images``（``session/assemble.py`` 的 ``_tool_pair``），
             # 所以带图的工具**必须**标 ``replayable=False``——那一条由工具自己保证，
@@ -646,7 +719,14 @@ def run_agent_loop(
         yield MessagesAppended(rows=tuple(storable), no_replay=tuple(pair_no_replay))
 
         pairs.append((pair_start, len(tail) - pair_start))
-        _fit_tool_tail(tail, pairs, ceiling=tools_ceiling, meter=meter)
+        _fit_tool_tail(
+            tail,
+            pairs,
+            ceiling=tools_ceiling,
+            meter=meter,
+            summaries=compressed,
+            ok_map=tool_ok,
+        )
         rounds += 1
 
         # **无进展检测**：同一工具、同一参数、同一结果，再来一次不会有新信息。

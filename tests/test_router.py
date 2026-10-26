@@ -940,3 +940,24 @@ def test_direct_web_commands_are_recognised() -> None:
 
 def test_a_longer_word_starting_with_search_is_not_a_command() -> None:
     assert parse_slash("/searchx 什么").command is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "优化agent功能，达到codex的水平",
+        "实现一个功能",
+        "改代码",
+        "跑测试",
+        "重构这个模块",
+        "给这个函数加测试",
+    ],
+)
+def test_coding_requests_enter_task(text: str) -> None:
+    """编码请求常常没有"帮我"也没有文件路径；规则层要能接住它们。
+
+    不收的代价不是"模型答错"，而是那一轮**工具表根本不声明**——看起来像模型不会用
+    工具。裸"测试"不收，避免把"两分钟后测试语音提醒"误判成跑测试（语料 u-0132）。
+    """
+    register, _score = rule_register(text)
+    assert register is Register.TASK

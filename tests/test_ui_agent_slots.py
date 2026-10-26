@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 from collections.abc import Callable, Sequence
 from datetime import date, datetime
@@ -347,6 +348,8 @@ class Stub(QObject):
         self._call = FakeCall()
         self._streaming = streaming
         self._agent_worker = worker
+        self._approval_files: dict[str, tuple[str, ...]] = {}
+        self._approval_lock = threading.Lock()
         self._scheduler = FakeScheduler()
         self._tray = FakeTray()
         self.stored: list[Any] = []
@@ -501,7 +504,7 @@ def test_a_pending_approval_draws_a_card_in_the_stream(qapp: Any) -> None:
     """
     stub = Stub()
 
-    stub._on_approval_needed("c1", "write_memory", "content：用户喜欢美式")
+    stub._on_approval_needed("c1", "write_memory", "content：用户喜欢美式", ())
 
     assert stub.chat_view.calls == [
         "endMessage",
@@ -510,7 +513,7 @@ def test_a_pending_approval_draws_a_card_in_the_stream(qapp: Any) -> None:
             "c1",
             "write_memory",
             "content：用户喜欢美式",
-            {"timeoutMs": int(APPROVAL_TIMEOUT_S * 1000)},
+            {"timeoutMs": int(APPROVAL_TIMEOUT_S * 1000), "files": []},
         ),
         ("setStatus", "等待你确认：write_memory"),
     ], "状态栏那一句是唯一一处「现在轮到你」的提示：卡片可能出现在用户翻不到的地方"
@@ -524,7 +527,7 @@ def test_a_card_for_an_already_finished_turn_is_not_drawn(qapp: Any) -> None:
     """
     stub = Stub(streaming=False)
 
-    stub._on_approval_needed("c1", "write_memory", "content：甲")
+    stub._on_approval_needed("c1", "write_memory", "content：甲", ())
 
     assert stub.chat_view.calls == []
 
@@ -539,6 +542,16 @@ def test_a_click_is_passed_to_the_worker_and_answered_on_the_card(qapp: Any) -> 
     assert worker.clicks == [("c1", True)]
     assert stub.chat_view.calls == [("resolveToolConfirm", "c1", True, True)]
     assert statuses(stub) == [], "采纳了就不该再解释一句"
+
+
+def test_file_selection_is_kept_for_the_tool(qapp: Any) -> None:
+    """卡片上勾选的文件要留在主窗口，工具线程才读得到。"""
+    worker = FakeWorker(adopted=True)
+    stub = Stub(worker=worker)
+
+    stub._on_tool_confirm("c1", True, ["a.py", "b.py"])
+
+    assert stub._approval_files["c1"] == ("a.py", "b.py")
 
 
 def test_a_click_that_was_not_adopted_says_so(qapp: Any) -> None:

@@ -1,6 +1,6 @@
 """工具的机制：一个工具长什么样、怎么注册、怎么派发。
 
-**这个模块只有机制，没有内容。** 七个具体工具在 :mod:`~axo.agent.catalog`
+**这个模块只有机制，没有内容。** 具体工具在 :mod:`~axo.agent.catalog`
 里——分开是因为两者的改动节奏完全不同：注册表与派发纪律一旦定了就该稳定，而工具
 的措辞、参数、返回格式会反复调。混在一起时，每调一次工具描述都要重读一遍派发逻辑。
 
@@ -53,6 +53,7 @@ __all__ = [
     "ToolRegistry",
     "argument_int",
     "argument_str",
+    "argument_text",
 ]
 
 
@@ -140,6 +141,28 @@ class ToolContext:
     """允许**写**的目录。默认空 = 写入工具不登记（同 ``read_root``）。"""
     data_root: Path | None = None
     """程序自己的数据目录。**永远不许写**——模型不该改自己的记忆库、设置与日志。"""
+    checkpoints: Any = None
+    """文件检查点存储（``CheckpointStore``）。写工具在获批后先 capture；None = 不回滚。"""
+    jobs: Any = None
+    """后台作业管理器（``CommandJobs``）。None = 后台命令工具不可用。"""
+    test_session: Any = None
+    """同一会话的测试历史（``TestSession``）。None = ``run_tests`` 不做跨次对比。
+
+    **跨用户回合复用**：上一轮的失败集合与文件快照留在这里，下一轮第一次跑测试就能
+    说出“与上次相比”。换会话时由主窗口重建；放在 ToolContext 上而不是模块级单例，
+    是因为两个窗口/两轮并发运行时不能互相污染。
+    """
+    repo_map_cache: Any = None
+    """仓库地图缓存（``RepoMapCache``）。None = 每次重扫。
+
+    键里带工作区快照摘要：文件没变就命中，改一个字节就失效。快照截断时不缓存。
+    """
+    approval_selection: Callable[[str], tuple[str, ...] | None] | None = None
+    """界面在确认卡片上按文件勾选的结果：``call_id -> 选中的路径``。
+
+    ``None`` = 没限定（整包应用）；空元组 = 用户一个文件都没选。只有需要“逐文件”
+    的工具（目前是 ``apply_patch``）读它；其它工具不看。
+    """
     allow_commands: bool = False
     """允许执行命令。默认假；打开后每次执行仍然过闸门。"""
     cancel: Any = None
@@ -428,6 +451,27 @@ def _describe(spec: ToolSpec) -> str:
     return "；".join(
         f"{name}（{body.get('description', '')}）" for name, body in properties.items()
     )
+
+
+def argument_text(arguments: dict[str, Any], key: str, *, required: bool = True) -> str:
+    """取一段**要原样使用**的文本（文件内容、old_text、补丁）。
+
+    与 :func:`argument_str` 的区别只有一个：**不 strip**。代码的第一行缩进、末尾换行
+    都是内容的一部分；strip 之后再写盘/匹配，症状是"模型说要改，文件却没变"或
+    "写进去的代码少了缩进"，而且逐字稿里看不出哪里错了。
+    """
+    value = arguments.get(key)
+    if value is None:
+        if required:
+            raise ToolArgumentError(f"{key} 不能为空。")
+        return ""
+    if not isinstance(value, str):
+        raise ToolArgumentError(
+            f"{key} 必须是字符串，收到的是 {type(value).__name__}（{value!r}）。"
+        )
+    if required and not value.strip():
+        raise ToolArgumentError(f"{key} 不能为空。")
+    return value
 
 
 def argument_int(

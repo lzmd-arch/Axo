@@ -1,0 +1,81 @@
+[
+ {
+  "name": "multi_file_tax",
+  "files": {
+   "config.py": "TAX_RATE = 0.08\n",
+   "pricing.py": "from config import TAX_RATE\n\n\ndef total(amount):\n    return amount * (1 + 0.10)\n",
+   "test_pricing.py": "from pricing import total\n\n\ndef test_total():\n    assert total(100) == 108\n"
+  },
+  "prompt": "test_pricing.py 失败：pricing.py 没有使用 config.py 里的税率。修复；不要修改测试文件。",
+  "protected": [
+   "test_pricing.py"
+  ],
+  "hidden": {
+   "test_hidden_tax.py": "from pricing import total\n\n\ndef test_other():\n    assert total(250) == 270\n"
+  }
+ },
+ {
+  "name": "multi_file_limiter",
+  "files": {
+   "config.py": "WINDOW_SECONDS = 60\nLIMIT = 5\n",
+   "limiter.py": "from config import WINDOW_SECONDS, LIMIT\n\n\ndef allowed(history, now):\n    recent = [t for t in history if now - t < 30]\n    return len(recent) < 10\n",
+   "test_limiter.py": "from limiter import allowed\n\n\ndef test_basic():\n    assert allowed([0, 1], 2) is True\n"
+  },
+  "prompt": "test_limiter.py 只是基础用例。limiter.py 必须使用 config.py 的 WINDOW_SECONDS 和 LIMIT，不能把 30/10 写死。修复实现；不要修改测试文件。",
+  "protected": [
+   "test_limiter.py"
+  ],
+  "hidden": {
+   "test_hidden_limiter.py": "from limiter import allowed\n\n\ndef test_limit_count():\n    assert allowed([0, 1, 2, 3], 3) is True\n    assert allowed([0, 1, 2, 3, 4], 4) is False\n\ndef test_window_expiry():\n    assert allowed([0, 1, 2, 3, 4], 61) is True\n"
+  }
+ },
+ {
+  "name": "parse_duration",
+  "files": {
+   "duration.py": "def parse_duration(text):\n    raise NotImplementedError\n",
+   "test_duration.py": "from duration import parse_duration\n\n\ndef test_minutes():\n    assert parse_duration('2m') == 120\n"
+  },
+  "prompt": "实现 duration.py 的 parse_duration(text)，接受由 h/m/s 组成的时长（如 '1h30m'、'45s'、'2h'），返回总秒数；空串或无法解析的输入抛 ValueError。不要修改测试文件。",
+  "protected": [
+   "test_duration.py"
+  ],
+  "hidden": {
+   "test_hidden_duration.py": "import pytest\nfrom duration import parse_duration\n\n\ndef test_compound():\n    assert parse_duration('1h30m') == 5400\ndef test_seconds():\n    assert parse_duration('45s') == 45\ndef test_hours():\n    assert parse_duration('2h') == 7200\ndef test_bad():\n    with pytest.raises(ValueError):\n        parse_duration('1x')\n"
+  }
+ },
+ {
+  "name": "js_calc",
+  "files": {
+   "package.json": "{\"name\":\"calc\",\"type\":\"module\",\"scripts\":{\"test\":\"node --test\"}}\n",
+   "calc.js": "export function add(a, b) {\n  return a - b;\n}\n",
+   "calc.test.js": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { add } from './calc.js';\n\ntest('add', () => {\n  assert.equal(add(2, 3), 5);\n});\n"
+  },
+  "prompt": "calc.test.js 失败。修复 calc.js 的 add，让测试通过；不要修改测试文件或 package.json。",
+  "protected": [
+   "calc.test.js",
+   "package.json"
+  ],
+  "hidden": {
+   "hidden.test.js": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { add } from './calc.js';\n\ntest('negatives', () => {\n  assert.equal(add(-2, 3), 1);\n});\n"
+  },
+  "test_command": "node --test"
+ },
+ {
+  "name": "multi_file_locate",
+  "files": {
+   "pyproject.toml": "[tool.pytest.ini_options]\n",
+   "app/__init__.py": "",
+   "app/util/__init__.py": "",
+   "app/util/text.py": "def normalize(name):\n    return name.lower()\n",
+   "app/service.py": "from app.util.text import normalize\n\n\ndef display_name(name):\n    return f\"[{normalize(name)}]\"\n",
+   "tests/test_service.py": "from app.service import display_name\n\n\ndef test_trims():\n    assert display_name('  Alice  ') == '[alice]'\n"
+  },
+  "prompt": "tests/test_service.py 失败：显示名没有去掉首尾空白。在 app 包里找到真正负责归一化的地方并修复；不要修改测试文件。",
+  "protected": [
+   "tests/test_service.py"
+  ],
+  "hidden": {
+   "tests/test_hidden_service.py": "from app.service import display_name\n\n\ndef test_whitespace():\n    assert display_name('\\tBob\\n') == '[bob]'\n"
+  }
+ }
+]

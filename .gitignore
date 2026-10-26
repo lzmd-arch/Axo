@@ -73,3 +73,12 @@ htmlcov/
 .vscode/
 .idea/
 *.swp
+
+# 凭据：任何形式的 key 文件都不进库。API key 走 DPAPI/环境变量，不落明文。
+.env
+.env.*
+*.key
+*.pem
+secrets.*
+# 例外：DPAPI 模块本身叫 secrets.py，是源代码不是凭据文件。
+!src/axo/secrets.py

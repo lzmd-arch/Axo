@@ -112,6 +112,7 @@ class ApprovalRequest:
         summary: 一句人话，说明**将要发生什么**。
         arguments: 原始参数。界面可以展开看全，但 :attr:`summary` 才是给眼睛的。
         round_index: 这一轮里第几次工具调用（从 0 数）。只用于显示。
+        files: 这次动作会碰到的文件（可逐文件勾选）。空元组 = 不适用/没有文件列表。
     """
 
     call_id: str
@@ -119,6 +120,7 @@ class ApprovalRequest:
     summary: str
     arguments: Mapping[str, Any] = field(default_factory=dict)
     round_index: int = 0
+    files: tuple[str, ...] = ()
 
 
 def _render_value(value: Any) -> str:
@@ -148,11 +150,19 @@ def summarize(call: ToolCall, *, tool: object | None = None) -> str:
     所以这类工具**自己带一句话**（``approval_summary``），这里在参数为空时用它。
 
     ``tool`` 是那个工具对象，用 ``getattr`` 读、**不进 ``Tool`` 协议**：那个协议是
-    ``@runtime_checkable`` 的，往里加成员等于要求十个工具都长这个属性
+    ``@runtime_checkable`` 的，往里加成员等于要求所有工具都长这个属性
     （``isinstance`` 只查有没有这个属性），而它只对"要说明范围"的那一个有意义。
     与 ``requires_approval`` 一样，这句话仍然是**工具自己声明的**——不是闸门里的
     第二张表。
     """
+    provider = getattr(tool, "approval_summary_for", None)
+    if callable(provider):
+        try:
+            detailed = provider(call)
+        except Exception:  # noqa: BLE001 — 摘要失败回落到模板
+            detailed = ""
+        if isinstance(detailed, str) and detailed.strip():
+            return detailed.strip()
     if not call.arguments:
         stated = getattr(tool, "approval_summary", "")
         if isinstance(stated, str) and stated.strip():
@@ -162,13 +172,28 @@ def summarize(call: ToolCall, *, tool: object | None = None) -> str:
     return "；".join(parts)
 
 
+def _approval_files(call: ToolCall, tool: object | None) -> tuple[str, ...]:
+    """工具声明“这次会碰哪些文件”。读不到/形状不对就返回空元组。"""
+    provider = getattr(tool, "approval_files_for", None)
+    if not callable(provider):
+        return ()
+    try:
+        declared = provider(call)
+    except Exception:  # noqa: BLE001 — 文件列表失败只意味着卡片没有勾选框
+        return ()
+    if not isinstance(declared, list | tuple):
+        return ()
+    return tuple(str(item) for item in declared if str(item).strip())
+
+
 def build_request(
     call: ToolCall, *, round_index: int = 0, tool: object | None = None
 ) -> ApprovalRequest:
     """把一次工具调用变成一次问询。
 
-    ``tool`` 只为了 :func:`summarize` 那句"没有参数时由工具自己说"。调用方
-    （``agent/loop.py``）手里有注册表，所以它给得出；不给也能跑（回落旧行为）。
+    ``tool`` 只为了 :func:`summarize` 那句"没有参数时由工具自己说"以及
+    :func:`_approval_files` 的文件列表。调用方（``agent/loop.py``）手里有注册表，
+    所以它给得出；不给也能跑（回落旧行为）。
     """
     return ApprovalRequest(
         call_id=call.id,
@@ -176,6 +201,7 @@ def build_request(
         summary=summarize(call, tool=tool),
         arguments=dict(call.arguments),
         round_index=round_index,
+        files=_approval_files(call, tool),
     )
 
 

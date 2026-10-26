@@ -33,6 +33,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import sys
 import threading
 import time
@@ -84,7 +85,9 @@ from memcore.recall import RecallConfig
 from memcore.store import MemoryStore
 
 from .. import autostart
+from ..agent.background import CommandJobs
 from ..agent.catalog import default_tools
+from ..agent.checkpoints import CheckpointStore
 from ..agent.gate import APPROVAL_TIMEOUT_S
 from ..agent.proactive import build_reminder_messages
 from ..agent.proactive_chat import (
@@ -97,6 +100,7 @@ from ..agent.proactive_chat import (
     should_speak,
 )
 from ..agent.reminders import Alert, CancelledStore, FiredStore, ReminderStore
+from ..agent.repo_map import RepoMapCache
 from ..agent.router import (
     HELP_TEXT,
     SCREEN_MARKERS,
@@ -107,7 +111,9 @@ from ..agent.router import (
     route_turn,
 )
 from ..agent.runlog import RunLog
+from ..agent.test_session import TestSession
 from ..agent.tools import Capture, ToolContext, ToolRegistry
+from ..agent.workspace import build_workspace_context
 from ..asr import Transcription
 from ..attachments import Attachment, attachment_for, body_of
 from ..busd.launcher import launch_blocked_reason, spawn_daemon, stop_daemon
@@ -768,6 +774,18 @@ class MainWindow(QMainWindow):
         self._reminders_cancelled = CancelledStore(reminders_cancelled_path())
 
         self._session: Session = Session(session_id=new_session_id())
+        # 测试历史跨用户回合复用；换会话时重置（见 _new_session / _on_session_selected）。
+        self._test_session = TestSession()
+        #: 确认卡片上按文件勾选的结果：call_id -> 选中路径。工具线程只读，锁保护。
+        self._approval_files: dict[str, tuple[str, ...]] = {}
+        self._approval_lock = threading.Lock()
+        #: 后台作业日志的读取游标与已收场集合。UI 自己轮询，不消耗模型轮次。
+        self._job_log_cursors: dict[str, int] = {}
+        self._job_log_done: set[str] = set()
+        self._job_log_timer = QTimer(self)
+        self._job_log_timer.setInterval(700)
+        self._job_log_timer.timeout.connect(self._poll_job_logs)
+        self._job_log_timer.start()
         self._backend: OllamaChatBackend | None = None
         self._embedding: OllamaEmbeddingBackend | None = None
         self._embedding_model: str = ""
@@ -1519,6 +1537,7 @@ class MainWindow(QMainWindow):
         if self._streaming:
             return
         self._session = Session(session_id=new_session_id(), model_ref=self._current_model_id())
+        self._test_session = TestSession()
         self.chat_view.clear()
         self.session_list.setCurrentItem(None)
         self.chat_view.set_status("新会话")
@@ -1530,6 +1549,8 @@ class MainWindow(QMainWindow):
             return
         session_id = current.data(Qt.ItemDataRole.UserRole)
         self._session = self._store.load(session_id)
+        # 测试历史只在内存里，不随会话文件恢复；切会话就重新开始。
+        self._test_session = TestSession()
         self.chat_view.load_history(display_rows(self._session.messages))
         self.chat_view.set_status(f"已载入会话 {session_id}")
         # 记忆窗口要按会话区分一条早退路径：属于当前会话的记忆会被召回当作"逐字稿
@@ -2122,6 +2143,7 @@ class MainWindow(QMainWindow):
                 audio_forwarded=self._audio_forwarded(audio),
                 call_mode=bool(getattr(self, "_call", None) and self._call.live),
                 pending_alerts=tuple(getattr(self, "_call_pending_alerts", ())),
+                workspace=self._workspace_context() if self._turn_uses_tools else "",
             ),
             embedding=self._embedding,
             session_id=self._session.session_id,
@@ -2233,6 +2255,106 @@ class MainWindow(QMainWindow):
         self.chat_view.set_status("正在生成…")
         thread.start()
 
+    def _command_jobs_store(self) -> CommandJobs:
+        """本次进程共用的后台命令管理器。懒建。"""
+        jobs = getattr(self, "_agent_jobs", None)
+        if jobs is None:
+            jobs = CommandJobs(data_dir() / "agent_jobs")
+            self._agent_jobs = jobs
+        return jobs
+
+    def _poll_job_logs(self) -> None:
+        """把后台作业的新日志推给网页。**不经过模型，不占工具轮次。**
+
+        游标是字节偏移（``CommandJobs.status(cursor=...)``），一次最多追四块；追不完
+        就等下一个 tick。作业结束后在标题上写退出码，并且只写一次。
+        """
+        jobs = getattr(self, "_agent_jobs", None)
+        if jobs is None:
+            return
+        try:
+            listed = jobs.list_jobs()
+        except Exception:  # noqa: BLE001 — UI 轮询失败不该影响主流程
+            return
+        if len(listed) > 40:
+            with contextlib.suppress(Exception):
+                jobs.prune(keep_finished=20)
+            alive = {item["id"] for item in jobs.list_jobs()}
+            self._job_log_cursors = {
+                key: value for key, value in self._job_log_cursors.items() if key in alive
+            }
+            self._job_log_done &= alive
+            listed = [item for item in listed if item["id"] in alive]
+        for item in listed:
+            job_id = item["id"]
+            if job_id in self._job_log_done:
+                continue
+            cursor = self._job_log_cursors.get(job_id, 0)
+            status: dict[str, Any] = {}
+            for _ in range(4):
+                try:
+                    status = jobs.status(job_id, cursor=cursor, chunk_bytes=32 * 1024)
+                except Exception:  # noqa: BLE001 — 作业可能刚被清掉
+                    break
+                chunk = status.get("tail", "")
+                if chunk:
+                    self.chat_view.append_job_log(job_id, chunk)
+                cursor = int(status.get("next_cursor", cursor))
+                if not status.get("has_more"):
+                    break
+            if not status:
+                continue
+            self._job_log_cursors[job_id] = cursor
+            # 追完最后一块才收场：作业结束但日志还有 >4 块时，下一 tick 继续读。
+            if not status.get("running") and not status.get("has_more"):
+                self.chat_view.finish_job_log(job_id, f"已结束（退出码 {status.get('exit_code')}）")
+                self._job_log_done.add(job_id)
+
+    def _checkpoint_store(self) -> CheckpointStore:
+        """本次进程共用的文件检查点存储。懒建，落在应用数据目录。"""
+        store = getattr(self, "_agent_checkpoints", None)
+        if store is None:
+            store = CheckpointStore(data_dir() / "agent_checkpoints")
+            self._agent_checkpoints = store
+        return store
+
+    def _repo_map_cache(self) -> RepoMapCache:
+        """本次进程共用的仓库地图缓存。文件快照变了会自动失效。"""
+        cache = getattr(self, "_agent_repo_map_cache", None)
+        if cache is None:
+            cache = RepoMapCache()
+            self._agent_repo_map_cache = cache
+        return cache
+
+    def _approval_selection(self, call_id: str) -> tuple[str, ...] | None:
+        """确认卡片勾选的文件。**在 worker 线程调用**，所以只碰锁和 dict。"""
+        with self._approval_lock:
+            return self._approval_files.get(call_id)
+
+    def _workspace_context(self) -> str:
+        """本轮 L1 的工作区摘要。只读；失败就当没有，不打断对话。
+
+        只在任务语域调用（``_turn_uses_tools``）——闲聊轮里注入仓库状态既费 token，
+        又会让"今天有点累"这样的句子旁边突然出现一串 git 信息。
+
+        末尾附一句**上次测试**（同一会话内跨回合保留）：模型不必先重跑一次才知道
+        上一轮失败在哪。它是事实，不是指令。
+        """
+        parts: list[str] = []
+        try:
+            workspace = build_workspace_context(self._read_roots)
+        except Exception:  # noqa: BLE001 — 工作区摘要不该让整轮起不来
+            workspace = ""
+        if workspace:
+            parts.append(workspace)
+        try:
+            brief = self._test_session.brief()
+        except Exception:  # noqa: BLE001 — 测试摘要同样不该让整轮起不来
+            brief = ""
+        if brief:
+            parts.append(brief)
+        return "\n\n".join(parts)
+
     def _tools(self) -> ToolRegistry:
         """这一轮可用的工具集。
 
@@ -2240,7 +2362,7 @@ class MainWindow(QMainWindow):
         提问之间改。缓存的话要配一个失效钩子，而漏掉任何一处调用点的症状是"改了设置
         但工具还是老样子"——七个轻量对象的重建成本远比那个 bug 便宜。
 
-        **两个工具按条件登记**（判据都是"这个环境里它根本不可能成功"）：
+        **若干工具按条件登记**（判据都是"这个环境里它根本不可能成功"）：
         ``read_roots`` 为空时不登记 ``read_file``，当前模型看不见图时不登记
         ``look_at_screen``（见 :meth:`_model_can_see`）——看不到它，模型就不会去试，
         省一段 prompt，也省一次必然失败的调用（后者还会白弹一张确认卡片）。
@@ -2250,6 +2372,12 @@ class MainWindow(QMainWindow):
         """
         builtin = default_tools(
             read_root=self._read_roots,
+            # **写与执行限同一组根**（用户拍板）。这一行曾经漏传：纯层的
+            # ``default_tools(read_root=...)`` 测试全绿，而真实界面里
+            # ``write_file``/``edit_file``/``run_command`` 从未登记——模型只能读、
+            # 不能改，正是"看起来在干活"的那种失效。``apply_patch`` 也走同一组根。
+            write_root=self._read_roots,
+            allow_commands=bool(getattr(self, "_allow_commands", False)),
             vision=self._model_can_see(),
             web=(self._web_backend() if callable(getattr(self, "_web_backend", None)) else None),
             weather=OpenMeteoWeather() if getattr(self, "_weather_enabled", True) else None,
@@ -2613,6 +2741,9 @@ class MainWindow(QMainWindow):
         assert self._backend is not None and self._budget is not None
         self._agent_turn = True
         self._agent_cancel = threading.Event()
+        # 每轮清掉上一轮的勾选；call_id 不会跨轮复用，但缓存不清只会慢慢长大。
+        with self._approval_lock:
+            self._approval_files.clear()
         ctx = ToolContext(
             store=self._memory,
             session_id=self._session.session_id,
@@ -2630,6 +2761,13 @@ class MainWindow(QMainWindow):
             # 就是用户已经授权过的地方；一次授权不该自动扩成另一次。
             write_root=self._read_roots,
             data_root=data_dir(),
+            checkpoints=self._checkpoint_store(),
+            jobs=self._command_jobs_store(),
+            # 跨用户回合复用：上一轮的失败集合/快照留在这里，下一轮第一次跑测试
+            # 就能给出“与上次相比”的对照。换会话时重建。
+            test_session=self._test_session,
+            repo_map_cache=self._repo_map_cache(),
+            approval_selection=self._approval_selection,
             allow_commands=self._allow_commands,
             cancel=self._agent_cancel,
             net=self._web_backend(),
@@ -3954,8 +4092,10 @@ class MainWindow(QMainWindow):
         exclude = own_window_rects(screen, QApplication.topLevelWidgets())
         return capture_screen(screen, exclude=exclude)
 
-    @Slot(str, str, str)
-    def _on_approval_needed(self, call_id: str, tool_name: str, summary: str) -> None:
+    @Slot(str, str, str, object)
+    def _on_approval_needed(
+        self, call_id: str, tool_name: str, summary: str, files: object
+    ) -> None:
         """有一个改状态的动作在等用户点头：画卡片。
 
         **状态栏也要说一句**：卡片出现在对话流中间，而用户可能正在往上翻。状态栏是
@@ -3965,22 +4105,33 @@ class MainWindow(QMainWindow):
             # 已经复位过的那一轮：它的卡片画出来也没人接（闸门那边这一轮已经拆了）。
             return
         self.chat_view.end_message()
+        declared = [str(item) for item in files] if isinstance(files, (list, tuple)) else []
         self.chat_view.append_tool_confirm(
             call_id,
             tool_name,
             summary,
-            {"timeoutMs": int(APPROVAL_TIMEOUT_S * 1000)},
+            {"timeoutMs": int(APPROVAL_TIMEOUT_S * 1000), "files": declared},
         )
         self.chat_view.set_status(f"等待你确认：{tool_name}")
 
-    @Slot(str, bool)
-    def _on_tool_confirm(self, call_id: str, granted: bool) -> None:
+    @Slot(str, bool, object)
+    def _on_tool_confirm(self, call_id: str, granted: bool, files: object = None) -> None:
         """用户点了「允许」/「拒绝」。**直连 worker，不走信号**——理由见 ``stop()``。
 
         两种结局都要说清楚：``accepted`` 为假表示这次点击**没有被采纳**（卡片过期、
         这一轮已经停止）。它与"用户拒绝了"是两回事，混成一句话就会出现"我以为我
         同意了"那种静默分歧。
+
+        ``files`` 是卡片上勾选的文件；``None`` 表示这张卡片没有文件勾选（或旧界面
+        没传），空列表表示"一个都没选"。工具在 worker 线程里通过
+        :attr:`ToolContext.approval_selection` 读它。
         """
+        if files is not None:
+            selected = (
+                tuple(str(item) for item in files) if isinstance(files, (list, tuple)) else ()
+            )
+            with self._approval_lock:
+                self._approval_files[call_id] = selected
         worker = self._agent_worker
         accepted = worker.provide_approval(call_id, granted) if worker is not None else False
         self.chat_view.resolve_tool_confirm(call_id, granted=granted, accepted=accepted)
@@ -5456,6 +5607,12 @@ class MainWindow(QMainWindow):
         if self._shutting_down:
             return
         self._shutting_down = True
+        timer = getattr(self, "_job_log_timer", None)
+        if timer is not None:
+            timer.stop()
+        jobs = getattr(self, "_agent_jobs", None)
+        if jobs is not None:
+            jobs.stop_all()
         self._stop_sync()
         # **先关麦，再等线程。** 录音那一半在界面线程（`QAudioSource`），而解码线程要
         # 有人叫停才会退出——两件都在 `_end_voice(discard=True)` 里（收尾时那一遍

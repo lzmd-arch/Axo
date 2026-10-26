@@ -246,6 +246,12 @@ def test_read_file_appears_once_a_root_is_configured(tmp_path: Path) -> None:
         "clipboard_read",
         "clipboard_write",
         "show_notification",
+        # 工作区/编码工具（只读 git 四件 + 仓库地图；apply_patch 要有可写根，故不在这一组）。
+        "git_status",
+        "git_diff",
+        "git_log",
+        "repo_overview",
+        "repo_map",
     ]
 
 
@@ -1587,3 +1593,40 @@ def test_a_page_dump_is_refused(store: MemoryStore, write_ctx: ToolContext, tmp_
     assert outcome.ok is False
     assert "摘要" in outcome.content
     assert store.load_all() == []
+
+
+def test_write_file_preserves_whitespace(tmp_path: Path) -> None:
+    """**文件内容是原样文本，不是一句聊天。**
+
+    ``argument_str`` 会 strip；拿它读 ``content`` 会让写进去的代码丢掉首行缩进与末尾
+    换行，而逐字稿里看起来只是一次成功的写入。``argument_text`` 是这条路径的专用口。
+    """
+    content = "  def f():\n      return 1\n\n"
+    outcome = WriteFileTool().run({"path": "code.py", "content": content}, _write_ctx(tmp_path))
+
+    assert outcome.ok
+    assert (tmp_path / "code.py").read_text(encoding="utf-8") == content
+
+
+def test_edit_file_matches_indented_multiline_text(tmp_path: Path) -> None:
+    target = tmp_path / "code.py"
+    target.write_text("if x:\n    a = 1\n    b = 2\n", encoding="utf-8")
+    old = "    a = 1\n    b = 2\n"
+    new = "    a = 3\n    b = 4\n"
+
+    outcome = EditFileTool().run(
+        {"path": "code.py", "old_text": old, "new_text": new}, _write_ctx(tmp_path)
+    )
+
+    assert outcome.ok, outcome.content
+    assert target.read_text(encoding="utf-8") == "if x:\n    a = 3\n    b = 4\n"
+
+
+def test_read_file_adds_line_numbers_by_default(store: MemoryStore, tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("x = 1\ny = 2\n", encoding="utf-8")
+    ctx = ToolContext(store=store, read_root=(tmp_path,))
+    with_numbers = ReadFileTool().run({"path": "a.py"}, ctx)
+    without = ReadFileTool().run({"path": "a.py", "line_numbers": False}, ctx)
+    assert "     1  x = 1" in with_numbers.content
+    assert "     2  y = 2" in with_numbers.content
+    assert "x = 1" in without.content and "     1" not in without.content

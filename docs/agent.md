@@ -125,7 +125,7 @@ NFKC + casefold、不删标点，所以"好的，知道了"既不是"好的"也�
 语域时，最省事的写法就是去改它，于是同一条线再断一次。`tests/test_ui_router_wire.py` 用
 ast 同时钉"旧字段不存在"与"三个字段真的被赋值"——后者防的正是上面那个 bug 的精确形状。
 
-### 十个工具，五个过闸门
+### 工具面与确认闸门
 
 | 工具 | 确认 | 结果可回放 | 说明 |
 |---|---|---|---|
@@ -793,7 +793,7 @@ None 的图。schema 4 → 5 那一节在 ``tests/test_session_store.py`` 里，
 1. **卡片上那句话由工具自己说。** `gate.summarize` 对没有参数的调用只会生成
    `look_at_screen（无参数）`——对用户没有任何信息量，而这条偏偏是唯一需要说清范围的
    工具。出口是 `getattr(tool, "approval_summary", "")`，**不进 `Tool` 协议**：那个协议
-   是 `@runtime_checkable` 的，加一个成员等于要求十个工具都长这个属性（`isinstance`
+   是 `@runtime_checkable` 的，加一个成员等于要求所有工具都长这个属性（`isinstance`
    只查"有没有"），而它只对"要说明范围"的那一个有意义。摘要**只在参数为空时**被读，
    有参数的工具照旧走模板。
 2. **截图从界面线程来。** `QScreen.grabWindow` 是 GUI 线程的事，而工具跑在 worker 线程
@@ -1096,13 +1096,33 @@ L1 会在语音回合写一句事实："你收到的只有文字，原声没有�
   用户也可以用 `/search`、`/fetch` **直接触发**，结果只显示在对话里、不进模型上下文。
   工具**不写记忆**：原文按 SHA-256 落 `fetch-cache/`，台账 `ledger.jsonl` 只追加一行；
   摘要入库归 daemon 的巩固路径，重复内容由台账的 `deduped` 标出来。
-- 有副作用：`write_file`、`edit_file`、`run_command`、`open_external`、
+- 有副作用：`write_file`、`edit_file`、`apply_patch`、`run_command`、`open_external`、
   `clipboard_read`、`clipboard_write`、`show_notification`——全部 `requires_approval`。
+- `read_file` 默认带行号（写 unified diff 用）；工作区/编码：任务语域自动在 L1 带一段只读摘要（`axo.agent.workspace`，最多 3000
+  字符）；另有只读的 `git_status` / `git_diff` / `git_log` / `repo_overview` /
+  `repo_map`（目录 + 常见语言符号与行号；Python 用 AST，其余声明行匹配；带工作区
+  快照缓存，有界且明确截断）；
+  `apply_patch` 接受 unified diff，先 `git apply --check` 再写入；确认卡片可按文件
+  勾选/过滤，diff 逐行着色。它们只在配置了可读/可写根时登记。**2026-10-26 修了一处
+  接线**：`MainWindow._tools()` 之前漏传 `write_root`/`allow_commands`，真实界面里
+  写工具与命令从未出现；现在由 `tests/test_ui_tools_wire.py` 的守卫盯住。
+- 测试循环：`run_tests` 自动探测 pytest/tox/nox、npm/pnpm/yarn/bun、deno、cargo、
+  go、maven/gradle、dotnet、rspec/rake、phpunit、swift、mix、dart/flutter、ctest、
+  sbt、stack/cabal、clojure/lein、zig、bazel、meson、R testthat、prove、Pester、make，
+  返回失败摘要；同一**会话**内的 `TestSession` 会把"第几次、失败集合怎么变、
+  工作区文件动过没有"回灌给模型，跨用户回合保留、换会话时重置。
+  失败完全相同且文件没变时明确提示**原地重跑不会改变结果**；快照被截断时不会断言
+  "没有变化"。
+- 长任务：`start_command` 后台启动立即返回 id；`command_status` 支持 `cursor` 字节
+  偏移只读新增日志（`has_more` 时用返回的 `next_cursor` 继续追）；`command_stop`
+  杀进程树；`command_list` 列当前记得的作业。主窗口另有 700 ms 轮询，把增量日志
+  推到网页的作业日志块，不经过模型。旧作业的内存记录可用 `CommandJobs.prune()`
+  清理，日志文件保留供复盘。
 - 音乐：只读的 `music_search` / `music_playlists` / `music_lyrics` / `music_status`；
   副作用但**不过闸门**的 `music_play` / `music_control`（本地、可逆，用户拍板）。
   它们只在「音乐」页选过文件夹且已扫出曲目时登记。
 - 写与执行限**同一组可读目录**；数据根永远拒绝。命令环境变量白名单，默认 30 秒、
-  硬顶 120 秒，取消/超时杀整棵进程树。
+  硬顶 600 秒，取消/超时杀整棵进程树。
 - 工具结果仍受两层上限：工具自己按字符裁（并明说），循环再按 token 裁。
 
 ### 循环收敛
