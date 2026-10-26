@@ -29,7 +29,7 @@
 | PyYAML | 6.0.3 | MIT |
 | Pygments | 2.21.0 | BSD-2-Clause |
 | anyio | 4.15.1 | MIT |
-| biosnn-bus | 0.3.0 | Apache-2.0 |
+| biosnn-bus | 0.4.0 | Apache-2.0 |
 | certifi | 2026.10.19 | MPL-2.0 |
 | cffi | 2.1.1 | MIT |
 | charset-normalizer | 3.5.2 | MIT |
