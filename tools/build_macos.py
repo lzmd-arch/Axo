@@ -169,7 +169,10 @@ def _build_command(*, model: Path | None, icon: Path | None) -> list[str]:
     if vosk_library is not None:
         command += ["--add-data", f"{vosk_library}:vosk"]
     if model is not None:
-        command += ["--add-data", f"{model}:models"]
+        # PyInstaller 的 --add-data 对**目录**是把内容拷进目标，不是把目录本身放进去；
+        # 目标写成 models 会得到 models/am、models/conf……，而 paths 找的是
+        # models/vosk-model-small-cn-0.22。所以目标要带上模型目录名。
+        command += ["--add-data", f"{model}:models/{_VOSK_MODEL}"]
     if icon is not None:
         command += ["--icon", str(icon)]
     command.append(str(_ROOT / ENTRY))

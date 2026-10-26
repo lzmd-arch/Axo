@@ -53,7 +53,7 @@
 去 [Releases](https://github.com/lzmd-arch/Axo/releases) 下
 `axo-<版本>-win64.zip`，解开，双击里面的 `axo.exe`。
 
-**macOS（Apple Silicon）** 的包是 `.app` + `.dmg`，由
+**macOS（Apple Silicon，macOS 14+）** 的包是 `.app` + `.dmg`，由
 [`macos-release.yml`](.github/workflows/macos-release.yml) 在 `macos-15` 上构建
 （PyInstaller 不能交叉编译，所以 Windows 本机做不出 Mac 的包）。从 Actions 那次构建的
 `axo-macos-arm64` artifact 里取 `Axo-<版本>-macos-arm64.zip` 或 `.dmg`，把 `Axo.app`
