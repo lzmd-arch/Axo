@@ -318,8 +318,9 @@ _README = """Axo（千岁 / 阿螈）macOS 包
 - 语言服务器不随包带（它们体积大、更新快）。设置 → 工具 → 语言服务器 可以体检、
   预览并自动安装；macOS 上走 npm / rustup / go / dotnet / Homebrew。
 - 记忆库、设置与用户文件都在首次启动时新建，包本身是干净的初始状态。
-- 语音输出（TTS）与 Windows 版一样是一个可选的外部组件（F5-TTS）；不装时她不出声，
-  但会在对话里说明原因，文字回答照常。
+- 语音输出（TTS）随包带千岁的 ZipVoice（CPU，不需要 torch 或外部组件）；
+  设置里可以关掉它改用外部 F5-TTS 组件。
+- 语义召回随包带 bge-small-zh-v1.5（ONNX），不要求 Ollama 嵌入模型。
 - 许可全文在 licenses/，第三方组件清单在 THIRD-PARTY-NOTICES.txt。
 
 第一次启动要知道

@@ -297,6 +297,14 @@ _GRAPH_CHANNEL_WEIGHT = 0.25
 
 SPEECH_TIMEOUT_MS = 20_000
 
+#: 一次“检索记忆 + 装配”在界面上的硬等待上限。
+#:
+#: 正常路径（随包嵌入 / 本地 Ollama）是几十毫秒；远端 Ollama 的嵌入读超时已经收到
+#: 20 秒。这里多留 10 秒给慢机器与向量补账，超过就**把它当成失败收场**：这一轮
+#: 不注入记忆、复位界面，并明确说“检索超时”。没有这个上限时，一个卡住的嵌入请求
+#: 会让状态栏永远停在“正在检索记忆…”，新会话与停止看起来都像坏了。
+PREPARE_TIMEOUT_MS = 30_000
+
 #: 主动回合允许她查工具时，给整轮更长的时间（本地模型 + 一两次工具往返）。
 PROACTIVE_TOOL_TIMEOUT_MS = 90_000
 """她开口那一轮最多等多久（毫秒）。**它挡的是一个具体的硬杀，不是体验优化。**
@@ -905,6 +913,9 @@ class MainWindow(QMainWindow):
         self._speak_timeout = QTimer(self)
         self._speak_timeout.setSingleShot(True)
         self._speak_timeout.timeout.connect(self._time_out_speech)
+        self._prepare_timeout = QTimer(self)
+        self._prepare_timeout.setSingleShot(True)
+        self._prepare_timeout.timeout.connect(self._on_prepare_timeout)
 
         #: 录音那一路（见 ``ui/voice.py``）。**采集就在界面线程**：`QAudioSource` 的
         #: `readyRead` 是它属主线程的信号，把它搬走要自己管一个事件循环与一次对象
@@ -2150,6 +2161,9 @@ class MainWindow(QMainWindow):
         self._streaming = True
         self._preparing = True
         self._cancel_requested = False
+        prepare_timeout = getattr(self, "_prepare_timeout", None)
+        if prepare_timeout is not None:
+            prepare_timeout.start(PREPARE_TIMEOUT_MS)
         self.chat_view.set_busy(True)
         self.stop_button.setEnabled(True)
         self.chat_view.set_status("正在检索记忆…")
@@ -2214,6 +2228,9 @@ class MainWindow(QMainWindow):
             # 就等于把上一轮的召回接到这一轮的请求上——而这一轮会有一个新的 worker，
             # ``_cancel_requested`` 那时已经复位成假，光靠那个布尔拦不住。
             return
+        prepare_timeout = getattr(self, "_prepare_timeout", None)
+        if prepare_timeout is not None:
+            prepare_timeout.stop()
         self._preparing = False
         if not self._streaming or self._cancel_requested:
             # 用户在准备期间按了停止。准备阶段还没发出去任何东西，所以那次停止是
@@ -2861,6 +2878,13 @@ class MainWindow(QMainWindow):
         一次网络抖动——悄悄降级会让用户在一个坏掉的预算上继续对话，而症状是几轮之后
         模型突然开始忘事。说清楚比蒙混过去好。
         """
+        if self.sender() is not self._prepare_worker:
+            # 上一轮在准备阶段被新会话取消后迟到的失败。它不属于当前这一轮，
+            # 收下会把新会话的状态栏改成“准备失败”。
+            return
+        prepare_timeout = getattr(self, "_prepare_timeout", None)
+        if prepare_timeout is not None:
+            prepare_timeout.stop()
         self.chat_view.append_message("system", f"**准备上下文失败**\n\n{detail}")
         self.chat_view.set_status("准备失败")
         # 这一轮没有账本，所以三处一起复位（灯、侧栏、记忆窗口）。只复位灯的话，
@@ -4258,6 +4282,9 @@ class MainWindow(QMainWindow):
         一次同线程析构。**换掉 ``_track`` 里那条约定之前，先读那里的注释**——
         在旧形状（``moveToThread``）下，正是这一行的同类操作让 Qt ``abort()``。
         """
+        timeout = getattr(self, "_prepare_timeout", None)
+        if timeout is not None:
+            timeout.stop()
         self._streaming = False
         self._preparing = False
         self._cancel_requested = False
@@ -4270,6 +4297,24 @@ class MainWindow(QMainWindow):
         self._prepare_worker = None
         self._prepare_thread = None
         self._reload_sessions(select=self._session.session_id)
+
+    @Slot()
+    def _on_prepare_timeout(self) -> None:
+        """检索/装配超时：**收场并把原因说出来**，不把界面留在“正在检索记忆…”。
+
+        后台那个装配线程没有取消（与 ``_on_stop`` 的说明同源：杀线程不安全）；它
+        跑完后的结果会被 ``_on_assembly_ready`` 的发送者校验丢掉。
+        """
+        if not self._preparing:
+            return
+        self._cancel_requested = True
+        self.chat_view.append_message(
+            "system",
+            "**记忆检索超时。** 这一轮不注入记忆，先按词法/无记忆处理；"
+            "检查嵌入模型或 Ollama 是否卡住，然后在设置里重新探测。",
+        )
+        self.chat_view.set_status("记忆检索超时")
+        self._reset_generation_state()
 
     @Slot()
     def _on_stop(self) -> None:
@@ -5681,6 +5726,9 @@ class MainWindow(QMainWindow):
         self._end_voice(discard=True)
         if self._chat_worker is not None:
             self._chat_worker.stop()
+        prepare_timeout = getattr(self, "_prepare_timeout", None)
+        if prepare_timeout is not None:
+            prepare_timeout.stop()
         if self._speak_worker is not None:
             # **这一句最容易漏，漏了也最难查。** 她那一轮的线程可能正挂在一次
             # 后端读上（超时 300 秒），而下面只等 3 秒——它不停下来就是下一次

@@ -1313,8 +1313,8 @@ _RELEASE_README = """Axo {version}（Windows x64）
       填进去的 key 会用 Windows 自带的加密接口（DPAPI）加密后存起来，只有当前这个
       Windows 账户解得开。
 
-想让它在记忆里"按意思"找，而不只是按字面匹配，还需要一个嵌入模型：
-
+想让它在记忆里"按意思"找，而不只是按字面匹配：安装包已经带了中文嵌入模型
+（bge-small-zh-v1.5），不需要再 ollama pull；源码态没有随包模型时才退回
       ollama pull nomic-embed-text
 
 数据放在哪、怎么卸载
@@ -1357,11 +1357,12 @@ HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run）；
 · 只有 Windows 64 位这一版。
 · 还没有 Live2D 形象（素材未到），对话区是普通的网页渲染。
 · 既没装 Ollama、又没填云端 key 的话，程序能打开，但没法对话。
-· 麦克风那个按钮要先自己放一个语音模型才用得起来（约 42 MB，识别完全在你这台机器上
-  做，声音不出去）：去 https://alphacephei.com/vosk/models 下
-  vosk-model-small-cn-0.22.zip，解压到 %LOCALAPPDATA%\\axo\\models\\ 下面。
-  没放的话，按下去会直接告诉你这一点。
-· **她会开口说话（TTS）。**声音是离线克隆的：数据目录 models/voices/<名字>/ 下放一段 10–30 秒的参考音（ref.wav）与它的逐字稿（ref.txt）。发声引擎是一个独立安装的组件（默认 http://127.0.0.1:8800）——没在跑时不出声，但会说一句原因。
+· 语音输入模型已随包带（vosk-model-small-cn-0.22）；识别完全在你这台机器上做，
+  声音不出去。源码态才需要自己去 https://alphacephei.com/vosk/models 下。
+· **她会开口说话（TTS）。**随包带千岁的 ZipVoice 与参考音，CPU 合成，不需要
+  torch/F5/外部组件；第一次合成本地加载约一两秒，短句约 4–5 秒。音色仍可用
+  models/voices/<名字>/ref.wav + ref.txt 换；设置里可以关掉随包语音改用外部组件。
+  随包权重是 CC-BY-NC-4.0，只允许非商业再分发。
 · **她会自己找你说话。**你静够 20 分钟（默认）她拿最近几天里的一条记忆起一句，并且念
   出声；一天最多 3 次，23:00 到次日 8:00 不打扰。三个数都在「设置 → 主动」里，也能
   整个关掉。

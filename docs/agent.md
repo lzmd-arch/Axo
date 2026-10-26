@@ -945,12 +945,13 @@ OpenAI 兼容协议**只认 `user` 行的 content 分片**——`tool` 行的 co
 （`No binder found for interface media.mojom.SpeechRecognizer`）——在应用里等于对话区
 当场变白。所以识别只能走 Python 侧。
 
-## 语音回复（TTS）：**已实现**——离线克隆，独立组件
+## 语音回复（TTS）：**已实现**——随包 ZipVoice，外部组件可选
 
-2026-10-13 落地。她的声音用**离线克隆 TTS**（零样本：`models/voices/<名字>/` 下放一段
-10–30 秒参考音 `ref.wav` + 它的逐字稿 `ref.txt`，引擎拿参考音当音色模板）。**引擎在独立
-组件里**（torch 不进本仓那条纪律），Axo 只带调用端（`axo/llm/speech.py`，贴
-`POST {base}/v1/audio/speech` → wav 字节）；组件没在跑时**不出声但说一句原因**，对话照常。
+2026-10-13 落地，2026-10-26 起分发版**不再要求独立组件**：随包 ZipVoice distill-int8
+（ONNX/CPU）用 `models/voices/<名字>/` 或随包 `tts/voices/qiansui/` 的参考音做零样本
+克隆，`axo/llm/local_speech.py` 在进程内合成；外部 F5-TTS 组件仍保留在设置里，关掉
+「优先使用随包千岁语音」才连 `POST {base}/v1/audio/speech`。随包权重按
+CC-BY-NC-4.0，只允许非商业再分发（见 `THIRD-PARTY-NOTICES.md`）。
 
 **出声判定只有一个**：`_on_submit(text, *, spoken=)`——语音那条路传 `spoken=True`。
 说出来的那一轮她的回复出声、到点那句提醒也出声；打字不响、被打断的半句与空回复不响、
