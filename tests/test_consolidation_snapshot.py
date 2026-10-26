@@ -27,6 +27,7 @@ from axo.paths import (
     memory_db_path,
     snapshot_dir,
 )
+from memcore.consolidation import consolidate
 from memcore.graph import GraphIndex
 from memcore.sdr import encode_lexical
 from memcore.store import MemoryStore
@@ -476,3 +477,18 @@ def test_the_summary_line_carries_the_rate_when_there_is_one(data_dir: Path) -> 
     assert entry.summary_line(run.report) == (
         f"巩固 {run.report.run_id[:8]}：回放 3 条，认出 3 条（辨认率 100.0%）"
     )
+
+
+def test_the_summary_line_mentions_memories_added_after_the_graph(data_dir: Path) -> None:
+    """建图之后写的记忆不参与这一轮，但报告要把这个缺口说出来。"""
+    with _store():
+        extra = _items()[0].copy(
+            memory_id="m999",
+            content="建图之后才写进来的一条。",
+            lex_sdr=encode_lexical("建图之后才写进来的一条。"),
+        )
+        report = consolidate(_one_cluster(), [*_items(), extra], at=AT)
+
+    line = entry.summary_line(report)
+
+    assert "1 条新记忆不在图里" in line

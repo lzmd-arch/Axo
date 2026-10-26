@@ -446,12 +446,15 @@ def summary_line(report: RunReport) -> str:
     head = f"巩固 {report.run_id[:8]}："
     skipped = sum(report.skip_reasons.values())
     tail = f"，跳过 {skipped} 条" if skipped else ""
+    gap = (
+        f"，另有 {report.missing_from_graph} 条新记忆不在图里" if report.missing_from_graph else ""
+    )
     rate = report.recognition_rate
     if rate is None:
-        return f"{head}没有可回放的条目（跳过 {skipped} 条）"
+        return f"{head}没有可回放的条目（跳过 {skipped} 条）{gap}"
     return (
         f"{head}回放 {report.replayed} 条，认出 {len(report.reinforced)} 条"
-        f"（辨认率 {rate:.1%}）{tail}"
+        f"（辨认率 {rate:.1%}）{tail}{gap}"
     )
 
 

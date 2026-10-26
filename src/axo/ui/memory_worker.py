@@ -95,6 +95,12 @@ _LARGE_LIB_NOTE = (
     "要确定就点「重建联想」（大库要几分钟）。"
 )
 
+_LARGE_LIB_MISSING_NOTE = (
+    "库太大，没有逐条比对——这份图是上次建好存下的，可能已经过期；"
+    "按 id 看有 {count} 条新记忆不在图里，重建后才会参与联想。"
+    "要确定就点「重建联想」（大库要几分钟）。"
+)
+
 
 @dataclass(frozen=True)
 class EmbeddingSetup:
@@ -447,7 +453,14 @@ class GraphWorker(QObject):
             existing = None
 
         if existing is not None and not self.force and self._store.count() > AUTO_GRAPH_MAX:
-            self.ready.emit(existing, None, _LARGE_LIB_NOTE)
+            # **只比成员，不重编码。** 大库不跑 ``is_stale``（5 万条约 63 s），但
+            # 一次 ``SELECT memory_id`` 只要几十毫秒，足以把"建图之后又写了 N 条"
+            # 说出来——那正是图通道与巩固漏掉新记忆的原因。
+            missing = existing.missing_nodes(self._store.memory_ids(encoded_only=True))
+            note = (
+                _LARGE_LIB_MISSING_NOTE.format(count=len(missing)) if missing else _LARGE_LIB_NOTE
+            )
+            self.ready.emit(existing, None, note)
             return
 
         items = list(self._store.iter_items())

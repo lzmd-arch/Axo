@@ -453,3 +453,13 @@ def test_items_created_between_is_half_open_and_unfiltered(store: MemoryStore) -
     # id 版本与整行版本必须同序同集合；召回只走 id 版本。
     assert store.ids_created_between(100.0, 200.0) == [item.memory_id for item in hits]
     assert store.ids_created_between(201.0, 250.0) == []
+
+
+def test_memory_ids_can_skip_entries_without_a_lexical_code(store: MemoryStore) -> None:
+    encoded = make_item("有词法码的一条。")
+    unencoded = make_item("没有词法码的一条。", lex_sdr=None)
+    store.add(encoded)
+    store.add(unencoded)
+
+    assert set(store.memory_ids()) == {encoded.memory_id, unencoded.memory_id}
+    assert store.memory_ids(encoded_only=True) == [encoded.memory_id]

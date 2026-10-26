@@ -454,3 +454,9 @@ def test_graph_path_lives_beside_the_database() -> None:
     assert graph_path().name == "graph.npz"
     assert graph_path().parent == memory_db_path().parent
     assert graph_path() != memory_db_path()
+
+
+def test_missing_nodes_lists_ids_that_are_not_in_the_graph() -> None:
+    graph = GraphIndex.build([_lex_item("01", "路由器放在书房书架顶层。")])
+
+    assert graph.missing_nodes(["01", "02"]) == ("02",)

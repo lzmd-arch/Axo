@@ -658,6 +658,9 @@ class RunReport:
         missing_from_store: 图里有、库里没有的成员数。它们是**被彻底删除**的记忆
             （图是上次建图时的快照），不是错误——但也不能假装没看见：一个越来越大的
             这个数说明图该重建了。
+        missing_from_graph: 库里有词法码、图里没有的成员数。它们是**建图之后才写
+            进来**的记忆：这一轮不参与，必须等重建图。它与 ``missing_from_store``
+            是两个方向，混在一起会得出相反的"该重建了吗"。
     """
 
     run_id: str
@@ -665,6 +668,7 @@ class RunReport:
     at: float
     clusters: tuple[tuple[ReplayOutcome, ...], ...]
     missing_from_store: int = 0
+    missing_from_graph: int = 0
 
     @property
     def outcomes(self) -> tuple[ReplayOutcome, ...]:
@@ -756,6 +760,14 @@ def consolidate(
         )
 
     by_id = {item.memory_id: item for item in items}
+    graph_ids = set(graph.node_ids)
+    # 没有词法码的条目永远进不了图，不该被算成"新记忆没建图"；有码却没在图里的，
+    # 才是建图之后写进来的那一批。
+    missing_from_graph = sum(
+        1
+        for memory_id, item in by_id.items()
+        if item.lex_sdr is not None and memory_id not in graph_ids
+    )
     ordered = _round_order(
         partition(graph, max_cluster=max_cluster),
         run_seed=run_seed_for(base_seed, at),
@@ -780,6 +792,7 @@ def consolidate(
         at=at,
         clusters=tuple(clusters),
         missing_from_store=missing,
+        missing_from_graph=missing_from_graph,
     )
 
 

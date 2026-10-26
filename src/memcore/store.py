@@ -671,6 +671,21 @@ class MemoryStore:
                         self._lex_index_revision = revision
                         return index
 
+    def memory_ids(self, *, encoded_only: bool = False) -> list[str]:
+        """全部 memory_id，按 ``memory_id`` 升序；不解码正文与 SDR。
+
+        图的成员比对只需要 id：``iter_items`` 会把 5 万条的 SDR 全解一遍，
+        ``summaries`` 会带正文与权重。``encoded_only=True`` 只返回有词法码的条目，
+        因为建图会跳过没有词法码的记忆——它们不该被算成"新记忆不在图里"。
+        """
+        sql = "SELECT memory_id FROM memories"
+        if encoded_only:
+            sql += " WHERE lex_idx IS NOT NULL"
+        sql += " ORDER BY memory_id"
+        with self._lock:
+            rows = self._connection.execute(sql).fetchall()
+        return [str(row["memory_id"]) for row in rows]
+
     def count(self) -> int:
         """条目总数。"""
         with self._lock:

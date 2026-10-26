@@ -219,6 +219,16 @@ class GraphIndex:
     def __len__(self) -> int:
         return len(self.node_ids)
 
+    def missing_nodes(self, memory_ids: Iterable[str]) -> tuple[str, ...]:
+        """库里有、图里没有的 id（按输入顺序）。
+
+        **只比成员，不比内容。** 这比 :meth:`is_stale` 便宜得多（不重编码），
+        能回答"建图之后有没有新记忆"，但看不见"id 没变、正文改了"——后者仍要
+        ``is_stale``。大库打开记忆窗口时只做这一步，别再让 5 万条 SDR 解一遍。
+        """
+        present = set(self.node_ids)
+        return tuple(memory_id for memory_id in memory_ids if memory_id not in present)
+
     # ── 构建 ────────────────────────────────────────────────────────────────
 
     @classmethod

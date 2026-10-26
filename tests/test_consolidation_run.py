@@ -498,6 +498,7 @@ def test_graph_nodes_missing_from_the_store_are_counted_not_swallowed() -> None:
     report = consolidate(_one_cluster(3), items, at=AT)
 
     assert report.missing_from_store == 0
+    assert report.missing_from_graph == 1, "库里新增、图里没有的要报出来"
     assert _replayed_ids(report) == ("m000", "m001", "m002"), "m009 不在图里，这一轮不参与"
 
 

@@ -338,8 +338,28 @@ def test_a_large_library_reuses_the_stored_graph_without_rebuilding(
 
     assert len(graph) == 1, "大库那条路必须原样交回盘上那份，不重建"
     assert freshness is None, "没跟库比对过——必须报 None，不许冒充「确认没过期」"
+    assert note == module._LARGE_LIB_MISSING_NOTE.format(count=3)
+    assert "3 条新记忆不在图里" in note, "成员比对是新加的可见性，别退回只说「可能过期」"
+
+
+def test_a_large_library_whose_nodes_are_all_present_keeps_the_plain_note(
+    qapp: Any, store: MemoryStore, graph_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """图与库的成员**一致**时，不冒充"新记忆没入图"——只说"没比对内容"。"""
+    import axo.ui.memory_worker as module
+    from memcore.graph import GraphIndex
+
+    store.add(make_item("第一条。"))
+    store.add(make_item("第二条。"))
+    store.add(make_item("第三条。"))
+    GraphIndex.build(store.iter_items()).save(graph_file)
+    monkeypatch.setattr(module, "AUTO_GRAPH_MAX", 2)
+
+    graph, freshness, note = _build(store)
+
+    assert len(graph) == 3
+    assert freshness is None
     assert note == module._LARGE_LIB_NOTE
-    assert "可能已经过期" in note, "这条路必须自己说出「没验过」，否则用户以为它是新的"
 
 
 def test_force_rebuilds_even_a_large_library(

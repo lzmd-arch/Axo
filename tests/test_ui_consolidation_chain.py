@@ -210,7 +210,7 @@ def fakes(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
 
 def _round(**overrides: Any) -> SimpleNamespace:
     """一轮的产出。**形状照 ``ConsolidationRun``**：主窗口只碰 ``.report``，
-    而 ``summary_line`` 从它读五个字段。"""
+    而 ``summary_line`` 从它读六个字段。"""
 
     report = SimpleNamespace(
         run_id="0123456789abcdef",
@@ -218,6 +218,7 @@ def _round(**overrides: Any) -> SimpleNamespace:
         reinforced=["m1", "m2"],
         skip_reasons={"pinned": 1},
         recognition_rate=0.5,
+        missing_from_graph=0,
     )
     report.__dict__.update(overrides)
     return SimpleNamespace(report=report)
