@@ -591,6 +591,7 @@ NOTICES 里。
 | [agent.md](docs/agent.md) | 语域与词表、工具面与确认闸门、工作区/git 工具、托盘与定时触发、云端后端、屏幕识别与语音输入、Live2D 与语音回复两条接缝 |
 | [coding-agent.md](docs/coding-agent.md) | Codex 类编码代理的现状、差距与下一阶段路线 |
 | [security.md](docs/security.md) | API key 的存储、工具子进程隔离与评测结果清洗 |
+| 语言体检 | `python tools/language_doctor.py`：26 个常见后缀的符号索引与 LSP 服务器状态 |
 | [bench.md](docs/bench.md) | 金标准集与四项指标的精确口径、路由语料、门槛怎么读 |
 | [operations.md](docs/operations.md) | 跑测试与 CI、出问题时先跑哪个脚本、排障、退出码、打包与 `--release` |
 

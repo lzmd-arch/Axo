@@ -37,7 +37,7 @@
 | **上下文压缩** | 工具尾巴超预算驱逐整对时，`loop._summarize_pair` 把工具名、参数、成败、结果开头压成一条 `system` 摘要，放在工作尾巴前；最多 30 行 / 2400 字符。记录仍由 `MessagesAppended` 完整保留——摘要是提示，不是审计。 |
 | **地图缓存** | `RepoMapCache`（LRU 8）键里带工作区快照摘要：文件没变命中，改一个字节失效；快照截断时不缓存。`ToolContext.repo_map_cache` 由主窗口注入。 |
 | **符号检索** | 新增只读 `find_symbol`：在跨语言符号索引里按名字搜索，返回 `文件:行: 声明`；大小写不敏感、结果有上限。它是静态索引，不是 LSP。 |
-| **LSP 桥** | 新增可选 `lsp` 工具：definition / references / symbols / diagnostics，stdio JSON-RPC、超时/进程收尾、按文件根缓存客户端；无服务器时明确回退。服务器不随包分发，用 `AXO_LSP_<语言>` 或 PATH 配置。**每次调用过闸门**（服务器可能执行构建脚本）。假服务器协议测试覆盖；本机已装 rust-analyzer，Rust 真机验过定义/引用/拉取诊断。 |
+| **LSP 桥** | 新增可选 `lsp` 工具：definition / references / symbols / diagnostics，stdio JSON-RPC、超时/进程收尾、按文件根缓存客户端；无服务器时明确回退。服务器不随包分发，用 `AXO_LSP_<语言>`、`AXO_LSP_BIN_DIRS`、`AXO_JDTLS_HOME` 配置。**每次调用过闸门**（服务器可能执行构建脚本）。本机真机验过 Python/TS/JS/PHP/Rust/Go/C/C++/Java/C#/Shell/Lua/Svelte/Perl/Dart；`tools/language_doctor.py` 列出 26 个常见后缀的符号索引/LSP 服务器状态。 |
 | **多语言测试探测** | `detect_test_command` 覆盖 pytest/tox/nox、npm/pnpm/yarn/bun、deno、cargo、go、maven/gradle、dotnet、rspec/rake、phpunit、swift、mix、dart/flutter、ctest、sbt、stack/cabal、clojure/lein、zig、bazel、meson、R testthat、prove、Pester、make；`_test_files` 按多语言文件名/目录约定列前 8 个；失败行标记覆盖 Go/Rust/Jest/JUnit/GoogleTest/RSpec/PHPUnit/.NET/ExUnit/XCTest 等。 |
 | **逐文件补丁** | `apply_patch` / `preview_patch` 支持 `files` 过滤；确认卡片按文件出勾选框，`ToolContext.approval_selection` 把用户勾选结果交给工具；空选择或未知文件拒绝且不改盘。卡片上的 diff 按 `+`/`-`/`@@` 逐行着色。 |
 | **后台日志 UI** | 主窗口 700 ms 定时轮询 `CommandJobs.status(cursor=...)`，把增量日志推进网页的作业日志块（每作业最多留 200 KB），不经过模型、不占工具轮次；作业结束后在标题写退出码。 |
@@ -130,11 +130,30 @@ passed 2/3
 1. **工作区模式**：L1 已带工作区/AGENTS 摘要与测试命令，`repo_map` 已给多语言符号索引与快照缓存；下一步补关键清单（README/CI 配置/依赖文件）的自动摘要。
 2. **测试循环**：已落地失败摘要、跨轮 `TestSession`、同轮对比与 `<session_id>.tests.json` 落盘；下一步把“每轮改了什么、失败集合怎么变”也写进逐字稿供回看。
 3. **补丁审查**：已落地 `preview_patch`、逐文件勾选/过滤与 diff 逐行着色；下一步补 hunk 级选择与“应用后立刻显示逐文件结果”。
-4. **LSP**：已接可选 JSON-RPC 桥（definition/references/symbols/diagnostics），并有假服务器协议测试；本机已装 rust-analyzer，Rust 真机验过 definition/references/pull diagnostics。其他语言还没有安装服务器，下一步选 2–3 个做安装文档与真仓库验证。
+4. **LSP**：已接可选 JSON-RPC 桥（definition/references/symbols/diagnostics），并有假服务器协议测试；本机已真机验证 Python/TS/JS/PHP/Rust/Go/C/C++/Java/C#/Shell/Lua/Svelte。运行 `python tools/language_doctor.py` 看每个常见后缀缺哪个服务器；下一步补 Ruby/Dart/Kotlin/Swift/R 等的运行时或安装文档。
 5. **长任务**：已落地后台启动/增量游标/列表/内存清理/UI 实时日志；下一步做独立作业面板与日志保留策略。
 6. **编码评测**：9 个任务（含 JavaScript/Rust）、云端 DeepSeek 8 题 **8/8**、Rust 单题 1/1 与真实仓库冒烟 1/1 已落地；下一步跑 9 题全量基线、加更多真实仓库任务（不止一个显式 bug）。
 
-## 5. 边界
+## 5. 常见语言支持现状
+
+共 26 个常见后缀进入同一张矩阵：**符号索引**（`repo_map`）、**LSP 语言映射/默认服务器**
+（`lsp`）与**测试探测**（`detect_test_command`）必须同时存在；`tests/test_language_matrix.py`
+逐个后缀守这条。未知后缀仍列文件，只是不摘符号。
+
+本机真机验过 LSP 的：Python、JavaScript/TypeScript、PHP、Rust、Go、C/C++、Java、
+C#、Shell、Lua、Svelte、Perl、Dart。Rust 还跑了完整 `cargo test` 基准。
+
+没装真实服务器/运行时的：Ruby（RubyGems 缺 MSYS2）、Kotlin（Kotlin LS 不兼容 Java 25）、
+Swift、R、PowerShell、Vue 之外的其余生态等。用：
+
+```powershell
+python tools/language_doctor.py
+```
+
+看每个后缀缺哪个服务器；`AXO_LSP_<语言>` 指定命令，`AXO_LSP_BIN_DIRS` 放便携
+工具链目录，`AXO_JDTLS_HOME` 指向便携 jdtls。
+
+## 6. 边界
 
 - 不把 Codex 的模型能力当成工具面能补齐的东西；强模型仍是上限。
 - 所有写入/命令仍需用户确认；不引入鼠标/键盘注入或无限自治。

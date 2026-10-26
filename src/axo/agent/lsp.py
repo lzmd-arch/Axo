@@ -33,11 +33,15 @@ LSP 服务器不在本仓里，也不该被自动安装：它们要单独装、�
 from __future__ import annotations
 
 import contextlib
+import functools
+import hashlib
 import json
 import os
+import platform
 import shlex
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from collections import deque
@@ -91,6 +95,14 @@ _LANGUAGE_BY_SUFFIX = {
     ".dart": ("dart", "dart"),
     ".ex": ("elixir", "elixir"),
     ".exs": ("elixir", "elixir"),
+    ".vue": ("vue", "vue"),
+    ".svelte": ("svelte", "svelte"),
+    ".sh": ("shell", "shellscript"),
+    ".bash": ("shell", "shellscript"),
+    ".zsh": ("shell", "shellscript"),
+    ".r": ("r", "r"),
+    ".pl": ("perl", "perl"),
+    ".pm": ("perl", "perl"),
     ".hs": ("haskell", "haskell"),
     ".clj": ("clojure", "clojure"),
     ".cljs": ("clojure", "clojure"),
@@ -117,6 +129,11 @@ _DEFAULT_SERVERS: dict[str, tuple[tuple[str, ...], ...]] = {
     "dart": (("dart", "language-server"),),
     "elixir": (("language_server.sh",),),
     "haskell": (("haskell-language-server-wrapper", "--lsp"),),
+    "r": (("R", "--no-save", "-e", "languageserver::run()"),),
+    "perl": (("perl", "-MPerl::LanguageServer", "-e", "Perl::LanguageServer::run"),),
+    "shell": (("bash-language-server", "start"),),
+    "vue": (("vue-language-server", "--stdio"),),
+    "svelte": (("svelteserver", "--stdio"),),
     "clojure": (("clojure-lsp",),),
     "powershell": (("PowerShellEditorServices",),),
 }
@@ -144,11 +161,36 @@ def _lsp_env() -> dict[str, str]:
     return env
 
 
+def _user_bin_dirs() -> tuple[Path, ...]:
+    """常见用户级安装目录。服务器不一定要进系统 PATH。"""
+    home = Path.home()
+    dirs = [
+        home / ".cargo" / "bin",
+        home / "go" / "bin",
+        home / ".local" / "bin",
+        Path(os.environ.get("LOCALAPPDATA", home / "AppData" / "Local")) / "Programs",
+    ]
+    # 便携工具链不一定在系统 PATH；用分号/冒号分隔的显式目录列表补进来。
+    for raw in os.environ.get("AXO_LSP_BIN_DIRS", "").split(os.pathsep):
+        if raw.strip():
+            dirs.append(Path(raw.strip()))
+    return tuple(dirs)
+
+
 def _resolve_executable(token: str) -> str:
     candidate = Path(token).expanduser()
     if candidate.is_file():
         return str(candidate)
-    return shutil.which(token) or ""
+    found = shutil.which(token)
+    if found:
+        return found
+    suffixes = (".exe", ".cmd", ".bat", "") if os.name == "nt" else ("", ".exe", ".cmd")
+    for directory in _user_bin_dirs():
+        for suffix in suffixes:
+            path = directory / f"{token}{suffix}"
+            if path.is_file():
+                return str(path)
+    return ""
 
 
 def _launch_command(parts: tuple[str, ...] | list[str]) -> list[str] | None:
@@ -178,7 +220,73 @@ def _configured_command(language: str) -> list[str] | None:
     return _launch_command([part for part in parts if part])
 
 
+@functools.lru_cache(maxsize=1)
+def _npm_global_root() -> Path | None:
+    npm = shutil.which("npm")
+    if not npm:
+        return None
+    try:
+        proc = subprocess.run(
+            f'"{npm}" root -g',
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    return Path(proc.stdout.strip())
+
+
+def _jdtls_command() -> list[str] | None:
+    """便携 jdtls：AXO_JDTLS_HOME 指向解压目录，直接调 java，绕开 .bat 的 pause。"""
+    home = os.environ.get("AXO_JDTLS_HOME", "").strip()
+    if not home:
+        return None
+    base = Path(home).expanduser()
+    jars = sorted((base / "plugins").glob("org.eclipse.equinox.launcher_*.jar"))
+    if not jars:
+        return None
+    system = platform.system()
+    config_name = (
+        "config_win"
+        if system == "Windows"
+        else "config_mac"
+        if system == "Darwin"
+        else "config_linux"
+    )
+    config = base / config_name
+    if not config.is_dir():
+        return None
+    return [
+        "java",
+        "-Declipse.application=org.eclipse.jdt.ls.core.id1",
+        "-Dosgi.bundles.defaultStartLevel=4",
+        "-Declipse.product=org.eclipse.jdt.ls.core.product",
+        "-Dosgi.checkConfiguration=true",
+        f"-Dosgi.sharedConfiguration.area={config}",
+        "-Dosgi.sharedConfiguration.area.readOnly=true",
+        "-Dosgi.configuration.cascaded=true",
+        "-Xms256m",
+        "--add-modules=ALL-SYSTEM",
+        "--add-opens",
+        "java.base/java.util=ALL-UNNAMED",
+        "--add-opens",
+        "java.base/java.lang=ALL-UNNAMED",
+        "-jar",
+        str(jars[0]),
+        "-data",
+        "{jdtls_data}",
+    ]
+
+
 def _default_command(language: str) -> list[str] | None:
+    if language == "java":
+        portable = _jdtls_command()
+        if portable is not None:
+            return portable
     for parts in _DEFAULT_SERVERS.get(language, ()):
         command = _launch_command(parts)
         if command is not None:
@@ -330,8 +438,14 @@ class LspClient:
         frame = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body
         assert self._proc.stdin is not None
         with self._write_lock:
-            self._proc.stdin.write(frame)
-            self._proc.stdin.flush()
+            # 不用 BufferedWriter.flush：某些服务器（TS/jdtls）在 Windows 上会让它
+            # 抛 EINVAL；直接写 fd，避免缓冲层。
+            awaitable = memoryview(frame)
+            while awaitable:
+                written = os.write(self._proc.stdin.fileno(), awaitable)
+                if written <= 0:
+                    raise LspError("写 LSP 请求失败（管道已关闭）。")
+                awaitable = awaitable[written:]
 
     def request(self, method: str, params: dict[str, Any], *, timeout: float = _TIMEOUT_S) -> Any:
         self._next_id += 1
@@ -355,26 +469,35 @@ class LspClient:
         self._send({"jsonrpc": "2.0", "method": method, "params": params})
 
     def _initialize(self) -> None:
-        self.request(
-            "initialize",
-            {
-                "processId": os.getpid(),
-                "clientInfo": {"name": "Axo", "version": "0.1"},
-                "rootUri": self.root.as_uri(),
-                "workspaceFolders": [{"uri": self.root.as_uri(), "name": self.root.name}],
-                "capabilities": {
-                    "workspace": {"workspaceFolders": True, "configuration": True},
-                    "textDocument": {
-                        "definition": {"linkSupport": False},
-                        "references": {},
-                        "documentSymbol": {"hierarchicalDocumentSymbolSupport": True},
-                        "publishDiagnostics": {},
-                        "synchronization": {"didSave": False},
-                    },
+        params: dict[str, Any] = {
+            "processId": os.getpid(),
+            "clientInfo": {"name": "Axo", "version": "0.1"},
+            "rootUri": self.root.as_uri(),
+            "workspaceFolders": [{"uri": self.root.as_uri(), "name": self.root.name}],
+            "capabilities": {
+                "workspace": {"workspaceFolders": True, "configuration": True},
+                "textDocument": {
+                    "definition": {"linkSupport": False},
+                    "references": {},
+                    "documentSymbol": {"hierarchicalDocumentSymbolSupport": True},
+                    "publishDiagnostics": {},
+                    "synchronization": {"didSave": False},
                 },
             },
-            timeout=15.0,
-        )
+        }
+        if self.language_id in (
+            "javascript",
+            "javascriptreact",
+            "typescript",
+            "typescriptreact",
+        ):
+            npm_root = _npm_global_root()
+            tsserver = npm_root / "typescript" / "lib" / "tsserver.js" if npm_root else None
+            if tsserver is not None and tsserver.is_file():
+                # typescript-language-server 6 不再接受 --tsserver-path，改走
+                # initializationOptions.tsserver.path。
+                params["initializationOptions"] = {"tsserver": {"path": str(tsserver)}}
+        self.request("initialize", params, timeout=15.0)
         self.notify("initialized", {})
 
     def _ensure_open(self, path: Path) -> str:
@@ -507,6 +630,11 @@ class LspManager:
             raise LspError(
                 f"没有可用的 LSP 服务器（{language}）。装一个或用 find_symbol/repo_map 回退。"
             )
+        if "{jdtls_data}" in command:
+            digest = hashlib.sha1(str(root).encode()).hexdigest()[:12]
+            data_dir = Path(tempfile.gettempdir()) / f"axo-jdtls-{digest}"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            command = [part.replace("{jdtls_data}", str(data_dir)) for part in command]
         key = (tuple(command), str(root))
         with self._lock:
             client = self._clients.get(key)
