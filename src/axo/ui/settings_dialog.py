@@ -70,6 +70,7 @@ from ..tts import voices_in
 from .color import parse_hex, readable_foreground
 from .data_root import data_root_description
 from .glass import GlassHost, fade_page, fade_window
+from .language_dialog import LanguageServersDialog
 from .settings_store import (
     CLOUD_PRESET_CUSTOM,
     CLOUD_PRESETS,
@@ -1096,6 +1097,19 @@ class ToolPage(QWidget):
             )
         )
 
+        outer.addSpacing(6)
+        outer.addWidget(_section("语言服务器"))
+        self.language_button = QPushButton("安装 / 体检语言服务器…", self)
+        self.language_button.setObjectName("languageServersButton")
+        self.language_button.clicked.connect(self._open_language_dialog)
+        outer.addWidget(self.language_button)
+        outer.addWidget(
+            _hint(
+                "LSP 的语义查询需要对应语言的服务器。这个窗口可以检查缺什么、预览安装命令，"
+                "或确认后自动安装；没有服务器的语言仍会回退到仓库地图/符号搜索。"
+            )
+        )
+
         self.note = _hint("")
         self.note.setObjectName("toolNote")
         outer.addWidget(self.note)
@@ -1104,6 +1118,9 @@ class ToolPage(QWidget):
         self._sync_wide()
 
     # ── 状态进出 ────────────────────────────────────────────────────────────
+
+    def _open_language_dialog(self) -> None:
+        LanguageServersDialog(self).exec()
 
     def set_state(self, settings: ToolSettings) -> None:
         """**打开窗口时调，陈述现状。** 顺带重置快照（同外观页的道理：撤销回到的

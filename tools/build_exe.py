@@ -349,6 +349,11 @@ def _command(*, name: str, console: bool, icon: Path | None, clean: bool) -> lis
         # 音乐标签是函数内 import 的（没装 music extra 也能启动主程序）。
         "--hidden-import",
         "tinytag",
+        # 语言服务器安装/体检：设置页的对话框在函数内 import，静态分析看不到。
+        "--hidden-import",
+        "axo.agent.lsp_install",
+        "--hidden-import",
+        "axo.agent.language_doctor",
     ]
     for source, target in DATAS:
         command += ["--add-data", f"{_ROOT / source}{os.pathsep}{target}"]
