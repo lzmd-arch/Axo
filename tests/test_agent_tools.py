@@ -253,6 +253,7 @@ def test_read_file_appears_once_a_root_is_configured(tmp_path: Path) -> None:
         "repo_overview",
         "repo_map",
         "find_symbol",
+        "lsp",
     ]
 
 
@@ -272,7 +273,7 @@ def test_look_at_screen_is_registered_only_when_the_model_can_see(tmp_path: Path
     assert with_vision == [*without, "look_at_screen"]
 
 
-def test_exactly_five_tools_ask_for_confirmation_when_the_model_can_see(tmp_path: Path) -> None:
+def test_exactly_six_tools_ask_for_confirmation_when_the_model_can_see(tmp_path: Path) -> None:
     """看得见图的模型多一个要点头的工具——**而它不改任何状态**。
 
     它进来的判据与那四个不同：不是"它改了状态"，而是**整块屏幕的内容会交给模型看一次**
@@ -295,6 +296,8 @@ def test_exactly_five_tools_ask_for_confirmation_when_the_model_can_see(tmp_path
         "clipboard_write",
         "show_notification",
         "look_at_screen",
+        # LSP 会启动本机语言服务器，可能执行构建脚本。
+        "lsp",
     ]
 
 
@@ -350,12 +353,12 @@ def test_look_at_screen_passes_the_reason_back_verbatim() -> None:
     assert outcome.replayable is False, "失败也是那一刻的事实"
 
 
-def test_exactly_four_tools_ask_for_confirmation() -> None:
+def test_exactly_five_tools_ask_for_confirmation() -> None:
     """闸门拦**会改变什么**的那些：改状态、打开外部、覆盖剪贴板、弹通知。
 
     这条断言的是那个分界本身：多一个"要确认"的工具会让用户白点一次头，少一个就是
     **一个改状态的动作没问过任何人**。后者的症状是没有症状——所以它值得一条测试，
-    而这条测试要同时钉住两边（「恰好只有这四个」）。
+    而这条测试要同时钉住两边（「恰好只有这几个」）。
 
     ``cancel_reminder`` 进来的理由比「它改状态」具体：**它取消的是一个未来的
     动作**，而误取消的后果用户要等到错过才发现——那正是最该有一个人点头的一类。
@@ -373,6 +376,8 @@ def test_exactly_four_tools_ask_for_confirmation() -> None:
         "clipboard_read",
         "clipboard_write",
         "show_notification",
+        # LSP 会启动本机语言服务器，可能执行构建脚本。
+        "lsp",
     ]
 
 

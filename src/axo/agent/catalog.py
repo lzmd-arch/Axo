@@ -86,6 +86,7 @@ from .git_tools import (
     PreviewPatchTool,
     RepoOverviewTool,
 )
+from .lsp import LspTool
 from .music_tools import (
     MusicControlTool,
     MusicLyricsTool,
@@ -1849,6 +1850,7 @@ def default_tools(
                 RepoOverviewTool(),
                 RepoMapTool(),
                 FindSymbolTool(),
+                LspTool(),
             )
             if read_root
             else ()

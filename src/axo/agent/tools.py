@@ -163,6 +163,12 @@ class ToolContext:
     ``None`` = 没限定（整包应用）；空元组 = 用户一个文件都没选。只有需要“逐文件”
     的工具（目前是 ``apply_patch``）读它；其它工具不看。
     """
+    lsp_manager: Any = None
+    """语言服务器管理器（``LspManager``）。None = ``lsp`` 工具不可用。
+
+    服务器进程是长生命周期的，所以由主窗口持有、``ToolContext`` 只拿引用；找不到
+    对应语言的服务器时工具会明确让模型回退到 ``find_symbol``/``repo_map``。
+    """
     allow_commands: bool = False
     """允许执行命令。默认假；打开后每次执行仍然过闸门。"""
     cancel: Any = None

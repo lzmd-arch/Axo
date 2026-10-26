@@ -39,15 +39,15 @@ DEEPSEEK_API_KEY=... python tools/coding_eval.py --backend openai --model deepse
 
 ```text
 backend=axo-settings  model=deepseek-chat
-bugfix_add       passed=True   tools=7  rounds=6  elapsed=6.31s   prompt 39,259 / completion 311
-feature_slugify  passed=True   tools=7  rounds=5  elapsed=6.25s   prompt 34,201 / completion 369
-bugfix_cli       passed=True   tools=7  rounds=5  elapsed=6.12s   prompt 34,945 / completion 487
-multi_file_tax   passed=True   tools=10 rounds=7  elapsed=8.23s   prompt 46,138 / completion 398
-multi_file_limiter passed=True tools=9 rounds=6  elapsed=8.54s   prompt 41,808 / completion 746
-parse_duration   passed=True  tools=14 rounds=12 elapsed=15.85s  prompt 80,076 / completion 1,566
-js_calc          passed=True   tools=8  rounds=5  elapsed=7.95s   prompt 34,357 / completion 332
-multi_file_locate passed=True  tools=7  rounds=4  elapsed=5.40s   prompt 28,984 / completion 447
-passed 8/8；总 token：prompt 339,768 / completion 4,656
+bugfix_add       passed=True   tools=7  rounds=5  elapsed=7.17s   prompt 35,320 / completion 298
+feature_slugify  passed=True   tools=7  rounds=5  elapsed=6.36s   prompt 35,824 / completion 397
+bugfix_cli       passed=True   tools=9  rounds=7  elapsed=7.65s   prompt 48,291 / completion 378
+multi_file_tax   passed=True   tools=8  rounds=5  elapsed=6.50s   prompt 35,980 / completion 376
+multi_file_limiter passed=True tools=9 rounds=6  elapsed=7.70s   prompt 42,873 / completion 411
+parse_duration   passed=True  tools=13 rounds=11 elapsed=15.58s  prompt 78,208 / completion 1,193
+js_calc          passed=True   tools=8  rounds=5  elapsed=6.28s   prompt 35,994 / completion 331
+multi_file_locate passed=True  tools=7  rounds=4  elapsed=5.69s   prompt 29,961 / completion 326
+passed 8/8；总 token：prompt 342,451 / completion 3,710
 ```
 
 结果：`benchmarks/coding/results-deepseek-8tasks.json`。8/8 说明当前工具面、8 个任务与云端
@@ -67,11 +67,11 @@ python tools/coding_eval.py --backend axo-settings --model deepseek-chat \
 `tests/test_test_session.py` 与 `tests/test_repo_map.py`，改测试记失败。
 
 ```text
-source_commit=6a9ed7d  model=deepseek-chat
-real_axo_snapshot passed=True tools=15 rounds=12 elapsed=21.75s
-prompt 165,877 / completion 1,689
-tools: repo_overview → run_tests → read_file → find_symbol → read_file×2 →
-       search_files×3 → edit_file → read_file → apply_patch → edit_file×2 → run_tests
+source_commit=c671ae1  model=deepseek-chat
+real_axo_snapshot passed=True tools=14 rounds=12 elapsed=28.59s
+prompt 195,229 / completion 1,379
+tools: repo_overview → run_tests → search_files → read_file ×2 →
+       edit_file → run_tests×4 → run_command×2 → git_diff
 ```
 
 结果：`benchmarks/coding/results-deepseek-real.json`。用例只有 1 个、且是恶意注入的

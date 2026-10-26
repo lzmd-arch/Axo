@@ -15,10 +15,14 @@
 - `run_command` / `run_tests` / 后台命令都用 `axo.agent.shell._minimal_env()` 的**环境变量
   白名单**启动子进程，不继承 `DEEPSEEK_API_KEY` / `OPENAI_API_KEY`。
 - 写文件/编辑/补丁/回滚只碰用户授权的可写根；`data_root` 永远拒绝。
-- `repo_map` 只回灌仓库根、相对路径、文件大小和 Python 符号签名；不把文件正文发给模型。
+- `repo_map` / `find_symbol` 只回灌仓库根、相对路径、文件大小和符号声明；不把文件正文发给模型。
   `.env` 这类文件最多出现在文件名列表里，不会被读取。
 - 评测的测试子进程 `_run_tests()` 也显式改用 `_minimal_env()`，不会把 key 传给 agent
   生成的代码。
+- `lsp` 只启动用户已安装/用 `AXO_LSP_<语言>` 显式指定的语言服务器；子进程环境
+  同样是白名单（额外保留 `VIRTUAL_ENV`/`JAVA_HOME` 等构建变量，不含 key）。
+  **每次 LSP 调用都过确认闸门**：服务器可能执行构建脚本/过程宏，不能当纯只读。
+  服务器本身仍以当前用户权限运行，不要配置不可信服务器。
 
 ## 3. 评测结果
 

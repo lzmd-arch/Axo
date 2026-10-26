@@ -37,6 +37,7 @@
 | **上下文压缩** | 工具尾巴超预算驱逐整对时，`loop._summarize_pair` 把工具名、参数、成败、结果开头压成一条 `system` 摘要，放在工作尾巴前；最多 30 行 / 2400 字符。记录仍由 `MessagesAppended` 完整保留——摘要是提示，不是审计。 |
 | **地图缓存** | `RepoMapCache`（LRU 8）键里带工作区快照摘要：文件没变命中，改一个字节失效；快照截断时不缓存。`ToolContext.repo_map_cache` 由主窗口注入。 |
 | **符号检索** | 新增只读 `find_symbol`：在跨语言符号索引里按名字搜索，返回 `文件:行: 声明`；大小写不敏感、结果有上限。它是静态索引，不是 LSP。 |
+| **LSP 桥** | 新增可选 `lsp` 工具：definition / references / symbols / diagnostics，stdio JSON-RPC、超时/进程收尾、按文件根缓存客户端；无服务器时明确回退。服务器不随包分发，用 `AXO_LSP_<语言>` 或 PATH 配置。**每次调用过闸门**（服务器可能执行构建脚本）。假服务器协议测试覆盖；本机没有真实服务器。 |
 | **多语言测试探测** | `detect_test_command` 覆盖 pytest/tox/nox、npm/pnpm/yarn/bun、deno、cargo、go、maven/gradle、dotnet、rspec/rake、phpunit、swift、mix、dart/flutter、ctest、sbt、stack/cabal、clojure/lein、zig、bazel、meson、R testthat、prove、Pester、make；`_test_files` 按多语言文件名/目录约定列前 8 个；失败行标记覆盖 Go/Rust/Jest/JUnit/GoogleTest/RSpec/PHPUnit/.NET/ExUnit/XCTest 等。 |
 | **逐文件补丁** | `apply_patch` / `preview_patch` 支持 `files` 过滤；确认卡片按文件出勾选框，`ToolContext.approval_selection` 把用户勾选结果交给工具；空选择或未知文件拒绝且不改盘。卡片上的 diff 按 `+`/`-`/`@@` 逐行着色。 |
 | **后台日志 UI** | 主窗口 700 ms 定时轮询 `CommandJobs.status(cursor=...)`，把增量日志推进网页的作业日志块（每作业最多留 200 KB），不经过模型、不占工具轮次；作业结束后在标题写退出码。 |
@@ -56,15 +57,15 @@
 
 ```text
 backend=axo-settings  model=deepseek-chat
-bugfix_add       passed=True   tools=7  rounds=6  elapsed=6.31s   prompt 39,259 / completion 311
-feature_slugify  passed=True   tools=7  rounds=5  elapsed=6.25s   prompt 34,201 / completion 369
-bugfix_cli       passed=True   tools=7  rounds=5  elapsed=6.12s   prompt 34,945 / completion 487
-multi_file_tax   passed=True   tools=10 rounds=7  elapsed=8.23s   prompt 46,138 / completion 398
-multi_file_limiter passed=True tools=9 rounds=6  elapsed=8.54s   prompt 41,808 / completion 746
-parse_duration   passed=True  tools=14 rounds=12 elapsed=15.85s  prompt 80,076 / completion 1,566
-js_calc          passed=True   tools=8  rounds=5  elapsed=7.95s   prompt 34,357 / completion 332
-multi_file_locate passed=True  tools=7  rounds=4  elapsed=5.40s   prompt 28,984 / completion 447
-passed 8/8；总 token：prompt 339,768 / completion 4,656
+bugfix_add       passed=True   tools=7  rounds=5  elapsed=7.17s   prompt 35,320 / completion 298
+feature_slugify  passed=True   tools=7  rounds=5  elapsed=6.36s   prompt 35,824 / completion 397
+bugfix_cli       passed=True   tools=9  rounds=7  elapsed=7.65s   prompt 48,291 / completion 378
+multi_file_tax   passed=True   tools=8  rounds=5  elapsed=6.50s   prompt 35,980 / completion 376
+multi_file_limiter passed=True tools=9 rounds=6  elapsed=7.70s   prompt 42,873 / completion 411
+parse_duration   passed=True  tools=13 rounds=11 elapsed=15.58s  prompt 78,208 / completion 1,193
+js_calc          passed=True   tools=8  rounds=5  elapsed=6.28s   prompt 35,994 / completion 331
+multi_file_locate passed=True  tools=7  rounds=4  elapsed=5.69s   prompt 29,961 / completion 326
+passed 8/8；总 token：prompt 342,451 / completion 3,710
 ```
 
 结果：`benchmarks/coding/results-deepseek-8tasks.json`。8/8 只说明当前 8 个任务、
@@ -74,11 +75,11 @@ passed 8/8；总 token：prompt 339,768 / completion 4,656
 ### 2.2 真实仓库冒烟（单个任务）
 
 ```text
-source_commit=6a9ed7d  model=deepseek-chat
-real_axo_snapshot passed=True tools=15 rounds=12 elapsed=21.75s
-prompt 165,877 / completion 1,689
-tools: repo_overview → run_tests → read_file → find_symbol → read_file×2 →
-       search_files×3 → edit_file → read_file → apply_patch → edit_file×2 → run_tests
+source_commit=c671ae1  model=deepseek-chat
+real_axo_snapshot passed=True tools=14 rounds=12 elapsed=28.59s
+prompt 195,229 / completion 1,379
+tools: repo_overview → run_tests → search_files → read_file ×2 →
+       edit_file → run_tests×4 → run_command×2 → git_diff
 ```
 
 结果：`benchmarks/coding/results-deepseek-real.json`。任务复制 Axo HEAD，在
@@ -102,13 +103,13 @@ passed 2/3
 
 | 维度 | Axo 现在 | Codex 类目标 |
 | :--- | :--- | :--- |
-| 仓库上下文 | **已自动注入 L1**（任务语域，最多 3000 字符）：工作区、分支/改动、最近提交、顶层目录、AGENTS 前 40 行；`repo_overview` 看更多，`repo_map` 给目录 + 多语言符号索引（带快照缓存），`find_symbol` 按名字定位 | 会话开始自动带仓库规则/结构 |
+| 仓库上下文 | **已自动注入 L1**（任务语域，最多 3000 字符）：工作区、分支/改动、最近提交、顶层目录、AGENTS 前 40 行；`repo_overview` 看更多，`repo_map` 给目录 + 多语言符号索引（带快照缓存），`find_symbol` 按名字定位，`lsp` 提供语义定义/引用/诊断（需自装服务器） | 会话开始自动带仓库规则/结构 |
 | 编辑 | `preview_patch` + `apply_patch`（支持逐文件勾选/过滤）+ `rollback`（文件检查点）；确认卡片 diff 逐行着色 | patch 预览、应用/拒绝、回滚 |
 | 执行 | 同步命令最长 600 s；后台 `start_command` + `command_status(cursor)` 增量日志 + `command_list`；UI 700 ms 推增量 | 长任务、后台任务、实时推送 |
 | 测试循环 | **`run_tests` 多语言自动探测 + 失败摘要 + `TestSession` 跨轮对比**（新增/消失/原地重跑） | 自动识别测试命令、失败→修复循环 |
 | 计划 | `update_plan` 有，但不强制 | 计划与执行步骤绑定、可恢复 |
 | 上下文 | token 预算 + 工具结果裁剪 + **被驱逐整对的确定性摘要**；`repo_map` 有界符号索引 | 仓库地图、符号索引、压缩/恢复 |
-| 评测 | **`tools/coding_eval.py` 固定 8 任务**（Python + JavaScript）；云端 DeepSeek **8/8**（339,768 prompt / 4,656 completion）；真实仓库冒烟 1/1（165,877 / 1,689） | 固定任务集 + 真实仓库任务 + 通过率/成本 |
+| 评测 | **`tools/coding_eval.py` 固定 8 任务**（Python + JavaScript）；云端 DeepSeek **8/8**（342,451 prompt / 3,710 completion）；真实仓库冒烟 1/1（195,229 / 1,379） | 固定任务集 + 真实仓库任务 + 通过率/成本 |
 | 模型 | DeepSeek/本地 4B 可选 | 强模型 + 可靠工具调用 |
 
 ## 4. 下一阶段（建议顺序）
@@ -116,7 +117,7 @@ passed 2/3
 1. **工作区模式**：L1 已带工作区/AGENTS 摘要与测试命令，`repo_map` 已给多语言符号索引与快照缓存；下一步补关键清单（README/CI 配置/依赖文件）的自动摘要。
 2. **测试循环**：已落地失败摘要、跨轮 `TestSession`、同轮对比与 `<session_id>.tests.json` 落盘；下一步把“每轮改了什么、失败集合怎么变”也写进逐字稿供回看。
 3. **补丁审查**：已落地 `preview_patch`、逐文件勾选/过滤与 diff 逐行着色；下一步补 hunk 级选择与“应用后立刻显示逐文件结果”。
-4. **LSP**：`find_symbol` 已提供跨语言符号检索，但**真正的 LSP 还没接**；本机没有 pyright/pylsp/typescript-language-server/gopls/clangd 等服务器。下一步是服务器生命周期与 JSON-RPC 桥，不能把声明行正则说成 LSP。
+4. **LSP**：已接可选 JSON-RPC 桥（definition/references/symbols/diagnostics），并有假服务器协议测试；本机没有 pyright/pylsp/typescript-language-server/gopls/clangd 等真实服务器，所以还没有真实语义结果。下一步是选 2–3 个服务器做安装文档与真仓库验证。
 5. **长任务**：已落地后台启动/增量游标/列表/内存清理/UI 实时日志；下一步做独立作业面板与日志保留策略。
 6. **编码评测**：8 个任务（含 JavaScript）、云端 DeepSeek **8/8** 与一个真实仓库冒烟（1/1）已落地；下一步加更多真实仓库任务（不止一个显式 bug），并在有 MSVC build tools 的机器上补 Rust 任务。
 

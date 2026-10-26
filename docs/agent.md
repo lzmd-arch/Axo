@@ -1101,7 +1101,7 @@ L1 会在语音回合写一句事实："你收到的只有文字，原声没有�
 - `read_file` 默认带行号（写 unified diff 用）；工作区/编码：任务语域自动在 L1 带一段只读摘要（`axo.agent.workspace`，最多 3000
   字符）；另有只读的 `git_status` / `git_diff` / `git_log` / `repo_overview` /
   `repo_map`（目录 + 常见语言符号与行号；Python 用 AST，其余声明行匹配；带工作区
-  快照缓存，有界且明确截断）、`find_symbol`（按名字跨语言搜符号，返回文件:行）；
+  快照缓存，有界且明确截断）、`find_symbol`（按名字跨语言搜符号，返回文件:行）；`lsp`（definition / references / symbols / diagnostics，需要本机装好对应语言的 LSP 服务器，没有时明确回退；**每次调用过闸门**，因为服务器可能执行构建脚本）；
   `apply_patch` 接受 unified diff，先 `git apply --check` 再写入；确认卡片可按文件
   勾选/过滤，diff 逐行着色。它们只在配置了可读/可写根时登记。**2026-10-26 修了一处
   接线**：`MainWindow._tools()` 之前漏传 `write_root`/`allow_commands`，真实界面里

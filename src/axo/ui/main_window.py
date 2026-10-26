@@ -89,6 +89,7 @@ from ..agent.background import CommandJobs
 from ..agent.catalog import default_tools
 from ..agent.checkpoints import CheckpointStore
 from ..agent.gate import APPROVAL_TIMEOUT_S
+from ..agent.lsp import LspManager
 from ..agent.proactive import build_reminder_messages
 from ..agent.proactive_chat import (
     DEFAULT_WINDOW_DAYS,
@@ -2330,6 +2331,14 @@ class MainWindow(QMainWindow):
             self._agent_repo_map_cache = cache
         return cache
 
+    def _lsp_manager(self) -> LspManager:
+        """本次进程共用的语言服务器管理器。没有服务器时它不会起任何进程。"""
+        manager = getattr(self, "_agent_lsp", None)
+        if manager is None:
+            manager = LspManager()
+            self._agent_lsp = manager
+        return manager
+
     def _approval_selection(self, call_id: str) -> tuple[str, ...] | None:
         """确认卡片勾选的文件。**在 worker 线程调用**，所以只碰锁和 dict。"""
         with self._approval_lock:
@@ -2772,6 +2781,7 @@ class MainWindow(QMainWindow):
             test_session=self._test_session,
             repo_map_cache=self._repo_map_cache(),
             approval_selection=self._approval_selection,
+            lsp_manager=self._lsp_manager(),
             allow_commands=self._allow_commands,
             cancel=self._agent_cancel,
             net=self._web_backend(),
@@ -5614,6 +5624,9 @@ class MainWindow(QMainWindow):
         timer = getattr(self, "_job_log_timer", None)
         if timer is not None:
             timer.stop()
+        lsp = getattr(self, "_agent_lsp", None)
+        if lsp is not None:
+            lsp.close_all()
         jobs = getattr(self, "_agent_jobs", None)
         if jobs is not None:
             jobs.stop_all()

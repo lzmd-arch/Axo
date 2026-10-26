@@ -206,6 +206,7 @@ def test_agent_turn_context_carries_a_test_session() -> None:
     for name, attribute in (
         ("test_session", "_test_session"),
         ("repo_map_cache", "_repo_map_cache"),
+        ("lsp_manager", "_lsp_manager"),
     ):
         keyword = next((item for item in calls[0].keywords if item.arg == name), None)
         assert keyword is not None, f"ToolContext(...) 漏了 {name}"
