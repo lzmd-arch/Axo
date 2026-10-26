@@ -14,6 +14,7 @@ import fnmatch
 import json
 import os
 import subprocess
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -74,13 +75,13 @@ def detect_test_command(root: Path) -> str:
     """
     # Python 生态：先认最常见的组合，再看专用 runner。
     if (root / "pyproject.toml").is_file() and (root / "tests").is_dir():
-        return "python -m pytest -q"
+        return f'"{sys.executable}" -m pytest -q'
     if (root / "tox.ini").is_file():
-        return "python -m tox"
+        return f'"{sys.executable}" -m tox'
     if (root / "noxfile.py").is_file():
-        return "python -m nox"
+        return f'"{sys.executable}" -m nox'
     if (root / "pytest.ini").is_file() or (root / "conftest.py").is_file():
-        return "python -m pytest -q"
+        return f'"{sys.executable}" -m pytest -q'
 
     # Node / Deno。
     if (root / "deno.json").is_file() or (root / "deno.jsonc").is_file():

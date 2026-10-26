@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 from axo.agent.workspace import build_workspace_context
@@ -47,7 +48,7 @@ def test_test_command_is_detected_for_python_project(tmp_path: Path) -> None:
     (tmp_path / "tests").mkdir()
     (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
     text = build_workspace_context((tmp_path,))
-    assert "测试命令（自动探测）：python -m pytest -q" in text
+    assert f'测试命令（自动探测）："{sys.executable}" -m pytest -q' in text
 
 
 def test_test_files_are_listed(tmp_path: Path) -> None:

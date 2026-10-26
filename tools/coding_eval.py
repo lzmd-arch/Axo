@@ -13,6 +13,7 @@ import argparse
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -204,6 +205,13 @@ def _prepare(task: Task, root: Path) -> None:
     subprocess.run(["git", "-C", str(root), "commit", "-q", "-m", "initial"], check=True)
 
 
+def _scrub_paths(text: str, root: Path, base: Path) -> str:
+    """把结果里的本机绝对路径换掉，保留可读的占位。"""
+    text = text.replace(str(root), "<repo>").replace(str(base), "<tmp>")
+    text = re.sub(r"[A-Za-z]:\\[^\s\"']+", "<path>", text)
+    return re.sub(r"/(?:home|Users)/[^\s\"']+", "<path>", text)
+
+
 def _run_tests(root: Path, command: str = "") -> tuple[bool, str]:
     # **不要继承整个环境**：DEEPSEEK_API_KEY 等凭据不该进入 agent 生成代码的子进程。
     env = _minimal_env()
@@ -293,12 +301,8 @@ def run_task(task: Task, *, backend, keep: bool) -> dict[str, Any]:
         protected_after = {name: _sha(root / name) for name in task.protected}
         protected_ok = protected_before == protected_after
         # 结果文件可能被提交/公开：把临时绝对路径换成占位符，别让本机用户名进仓库。
-        test_output = test_output.replace(str(root), "<repo>").replace(str(base), "<tmp>")
-        final_text = (
-            (done.final_text[-1200:] if done else "")
-            .replace(str(root), "<repo>")
-            .replace(str(base), "<tmp>")
-        )
+        test_output = _scrub_paths(test_output, root, base)
+        final_text = _scrub_paths(done.final_text[-1200:] if done else "", root, base)
         return {
             "task": task.name,
             "passed": bool(passed and protected_ok),
@@ -321,7 +325,7 @@ def run_task(task: Task, *, backend, keep: bool) -> dict[str, Any]:
             else "",
         }
     except Exception as exc:  # noqa: BLE001 — 一条任务失败不应终止整轮评测
-        detail = f"{type(exc).__name__}: {exc}".replace(str(base), "<tmp>")
+        detail = _scrub_paths(f"{type(exc).__name__}: {exc}", root, base)
         return {"task": task.name, "passed": False, "error": detail}
     finally:
         if not keep:
@@ -388,7 +392,11 @@ def main() -> None:
         )
     else:
         # 用 Axo 里已经配置的云端 key（DPAPI）；**只在进程内交给后端，不打印**。
-        # 需要 PySide6；模型名不持久化，默认按 DeepSeek 聊天模型。
+        # 需要 PySide6；DPAPI 是 Windows 能力，其它平台明确指向环境变量后端。
+        if os.name != "nt":
+            raise SystemExit(
+                "axo-settings 后端依赖 Windows DPAPI；请用 --backend openai --api-key-env NAME。"
+            )
         from PySide6.QtCore import QSettings
 
         from axo.ui.settings_store import SETTINGS_APP, SETTINGS_ORG, SettingsStore

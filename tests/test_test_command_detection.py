@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -21,11 +22,11 @@ def _touch(root: Path, name: str, text: str = "") -> None:
     [
         (
             lambda root: (_touch(root, "pyproject.toml"), (root / "tests").mkdir()),
-            "python -m pytest -q",
+            f'"{sys.executable}" -m pytest -q',
         ),
-        (lambda root: _touch(root, "pytest.ini"), "python -m pytest -q"),
-        (lambda root: _touch(root, "tox.ini"), "python -m tox"),
-        (lambda root: _touch(root, "noxfile.py"), "python -m nox"),
+        (lambda root: _touch(root, "pytest.ini"), f'"{sys.executable}" -m pytest -q'),
+        (lambda root: _touch(root, "tox.ini"), f'"{sys.executable}" -m tox'),
+        (lambda root: _touch(root, "noxfile.py"), f'"{sys.executable}" -m nox'),
         (
             lambda root: _touch(root, "package.json", '{"scripts": {"test": "jest"}}'),
             "npm test",

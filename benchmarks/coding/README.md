@@ -27,7 +27,7 @@ Rust 已进基准：本机 Build Tools 18 装好但不在 PATH，`_minimal_env()
 python tools/coding_eval.py --model qwen3-4b
 python tools/coding_eval.py --model qwen3-4b --task bugfix_add --keep
 
-# 直接用 Axo 设置里已配置的云端 DeepSeek key（不打印）
+# 直接用 Axo 设置里已配置的云端 DeepSeek key（Windows DPAPI；不打印）
 python tools/coding_eval.py --backend axo-settings --model deepseek-chat
 
 # 或从环境变量读

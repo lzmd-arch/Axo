@@ -344,11 +344,13 @@ def test_benchmark_results_have_no_credentials_or_personal_paths() -> None:
     root = Path(__file__).resolve().parents[1]
     key = re.compile(r"sk-[A-Za-z0-9_-]{20,}")
     user_path = "C:" + chr(92) + "Users" + chr(92)
+    drive_path = re.compile(r"[A-Za-z]:\\")
     for path in (root / "benchmarks" / "coding").glob("results*.json"):
         text = path.read_text(encoding="utf-8")
         assert not key.search(text), f"{path.name} 含 key 形状"
         assert "api_key" not in text, f"{path.name} 含 api_key 字段"
         assert user_path not in text, f"{path.name} 含本机用户路径"
+        assert not drive_path.search(text), f"{path.name} 含本机盘符路径"
 
 
 def test_dpapi_source_module_is_not_ignored() -> None:

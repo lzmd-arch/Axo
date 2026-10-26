@@ -31,7 +31,7 @@ def test_snapshot_ignores_caches_and_detects_source_changes(tmp_path: Path) -> N
     (cache / "a.cpython-312.pyc").write_bytes(b"noise")
     assert snapshot_tree(tmp_path).digest == first.digest
 
-    source.write_text("x = 2\n", encoding="utf-8")
+    source.write_text("x = 222\n", encoding="utf-8")
     assert snapshot_tree(tmp_path).digest != first.digest
 
 

@@ -144,7 +144,7 @@ passed 2/3
 C#、Shell、Lua、Svelte、Perl、Dart。Rust 还跑了完整 `cargo test` 基准。
 
 没装真实服务器/运行时的：Ruby（RubyGems 缺 MSYS2）、Kotlin（Kotlin LS 不兼容 Java 25）、
-Swift、R、PowerShell、Vue 之外的其余生态等。用：
+Swift、R、PowerShell、Elixir、Haskell、Clojure、Scala；Vue 服务器可启动但符号为空。用：
 
 ```powershell
 python tools/language_doctor.py
