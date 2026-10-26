@@ -31,7 +31,9 @@ jobs:
           enable-cache: true
 
       - name: 装依赖（含 PySide6 / vosk / PyInstaller）
-        run: uv sync --locked --all-extras
+        # 钉 3.12 而不是让 runner 选最新：PySide6 的 abi3 wheel 虽然能上 3.14，
+        # 但 PyInstaller/vosk 的兼容性没有在 3.14 上验过，构建矩阵该跟 Windows 一致。
+        run: uv sync --python 3.12 --locked --all-extras
 
       - name: 先在 macOS 上跑几条平台相关的守卫
         # QPA 在 runner 上没有显示器；这些文件不建窗口。Keychain 的真通道也不碰：

@@ -46,6 +46,13 @@ def _isolate_local_appdata(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     monkeypatch.delenv("AXO_DATA", raising=False)
 
 
+def _default_root(tmp_path: Path) -> Path:
+    """当前平台的默认根。Windows 看 ``LOCALAPPDATA``，macOS 看 HOME。"""
+    if sys.platform == "darwin":
+        return tmp_path / "home" / "Library" / "Application Support" / "axo"
+    return tmp_path / "localappdata" / "axo"
+
+
 def _write_pointer(monkeypatch: pytest.MonkeyPatch, path: Path, text: str) -> None:
     """把便携指针文件放到 `path`，并让 `paths` 去那里找。
 
@@ -105,11 +112,7 @@ def test_the_stored_pointer_wins_over_the_default(tmp_path: Path) -> None:
 def test_the_default_is_used_when_nothing_is_set(tmp_path: Path) -> None:
     """什么都没设时回到平台默认：Windows ``%LOCALAPPDATA%\\axo``、
     macOS ``~/Library/Application Support/axo``。"""
-    if sys.platform == "darwin":
-        expected = tmp_path / "home" / "Library" / "Application Support" / "axo"
-    else:
-        expected = tmp_path / "localappdata" / "axo"
-    assert paths.data_dir() == expected
+    assert paths.data_dir() == _default_root(tmp_path)
     assert paths.data_root_source() == "default"
 
 
@@ -154,7 +157,7 @@ def test_resetting_puts_it_back(tmp_path: Path) -> None:
     assert paths.data_dir() == tmp_path / "chosen"
 
     paths.set_data_root(None)
-    assert paths.data_dir() == tmp_path / "localappdata" / "axo"
+    assert paths.data_dir() == _default_root(tmp_path)
     assert paths.data_root_source() == "default"
 
 
@@ -177,7 +180,7 @@ def test_a_portable_file_with_no_usable_line_is_ignored(
     _write_pointer(monkeypatch, tmp_path / "axo-data.txt", text)
 
     assert paths.portable_data_root() is None
-    assert paths.data_dir() == tmp_path / "localappdata" / "axo"
+    assert paths.data_dir() == _default_root(tmp_path)
     assert paths.data_root_source() == "default"
 
 

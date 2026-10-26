@@ -10,10 +10,15 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 _ROOT = Path(__file__).resolve().parents[1]
 
 
 def _load_build_macos():
+    # build_exe/build_macos 用 tomllib；Python 3.10 没有它。构建工具本身按 3.12 用，
+    # 但核心测试矩阵里有 3.10——跳过这一条，而不是让整个文件在收集阶段红。
+    pytest.importorskip("tomllib", reason="build_exe.py 要 tomllib（3.11+）")
     path = _ROOT / "tools" / "build_macos.py"
     spec = importlib.util.spec_from_file_location("_build_macos_under_test", path)
     assert spec is not None and spec.loader is not None
