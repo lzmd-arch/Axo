@@ -10,11 +10,13 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 from dataclasses import dataclass, field, replace
@@ -51,7 +53,14 @@ class Task:
     protected: tuple[str, ...] = ()
     hidden: dict[str, str] = field(default_factory=dict)
     test_command: str = ""
-    """最终判据跑的测试命令。空串 = Python pytest（仓库自带 tests/ 时）。"""
+    """最终判据跑的测试命令。空串 = Python pytest（仓库自带 tests/ 时）。
+
+    可用 ``{python}`` 占位当前解释器；真实仓库任务用它避免依赖 PATH 里的 ``python``。
+    """
+    source: str = ""
+    """非空 = 从真实 git 仓库的 HEAD 复制一份到临时目录，而不是写 ``files``。"""
+    mutations: dict[str, tuple[str, str]] = field(default_factory=dict)
+    """真实仓库任务注入的 bug：``路径 -> (原文, 替换)``，每处必须恰好出现一次。"""
 
 
 TASKS: tuple[Task, ...] = (
@@ -150,11 +159,44 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _git_head(source: Path) -> str:
+    return subprocess.run(
+        ["git", "-C", str(source), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _copy_git_tree(source: Path, root: Path) -> None:
+    """把真实仓库的 **HEAD 归档** 展开到临时目录（不含 .git / 未跟踪文件）。"""
+    archive = subprocess.run(
+        ["git", "-C", str(source), "archive", "--format=tar", "HEAD"],
+        check=True,
+        capture_output=True,
+    ).stdout
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as tar:
+        if sys.version_info >= (3, 12):
+            tar.extractall(root, filter="data")
+        else:
+            tar.extractall(root)
+
+
 def _prepare(task: Task, root: Path) -> None:
-    for name, text in task.files.items():
-        p = root / name
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(text, encoding="utf-8", newline="\n")
+    if task.source:
+        _copy_git_tree(Path(task.source).expanduser().resolve(), root)
+    else:
+        for name, text in task.files.items():
+            p = root / name
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text, encoding="utf-8", newline="\n")
+    for name, (old, new) in task.mutations.items():
+        path = root / name
+        text = path.read_text(encoding="utf-8")
+        occurrences = text.count(old)
+        if occurrences != 1:
+            raise ValueError(f"{name}: 注入点应恰好出现一次，实际 {occurrences} 次")
+        path.write_text(text.replace(old, new, 1), encoding="utf-8", newline="\n")
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     subprocess.run(["git", "-C", str(root), "config", "user.email", "eval@example.com"], check=True)
     subprocess.run(["git", "-C", str(root), "config", "user.name", "Eval"], check=True)
@@ -169,7 +211,11 @@ def _run_tests(root: Path, command: str = "") -> tuple[bool, str]:
     # 评测的临时仓库不需要宿主项目的 pytest 插件。CI 核心腿里 PySide6 没装，
     # 而 pytest-qt 被自动加载时会 ImportError: libEGL.so.1——那不是任务失败。
     env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
-    resolved = command or f'"{sys.executable}" -m pytest -q'
+    resolved = (
+        command.replace("{python}", f'"{sys.executable}"')
+        if command
+        else f'"{sys.executable}" -m pytest -q'
+    )
     proc = subprocess.run(
         resolved,
         shell=True,
@@ -270,6 +316,9 @@ def run_task(task: Task, *, backend, keep: bool) -> dict[str, Any]:
             "final_text": final_text,
             "test_output": test_output,
             "repo": "<repo>" if keep else "",
+            "source_commit": _git_head(Path(task.source).expanduser().resolve())
+            if task.source
+            else "",
         }
     except Exception as exc:  # noqa: BLE001 — 一条任务失败不应终止整轮评测
         detail = f"{type(exc).__name__}: {exc}".replace(str(base), "<tmp>")
@@ -279,6 +328,43 @@ def run_task(task: Task, *, backend, keep: bool) -> dict[str, Any]:
             shutil.rmtree(base, ignore_errors=True)
 
 
+def _real_task(repo: Path) -> Task:
+    """真实仓库任务：复制 HEAD，注入一个已知 bug，让 agent 在真实结构里定位。
+
+    它不是标准 8 题的一部分——真实仓库会变，必须连同 `source_commit` 一起看。
+    """
+    return Task(
+        name="real_axo_snapshot",
+        files={},
+        prompt=(
+            "这是 Axo 的真实源码快照。tests/test_test_session.py 里 snapshot 截断测试失败："
+            "snapshot_tree(max_files=2) 扫了 3 个文件。先运行 "
+            "`python -m pytest -q tests/test_test_session.py` 看失败，再找到实现并修复；"
+            "不要修改测试文件。"
+        ),
+        source=str(repo),
+        mutations={
+            "src/axo/agent/snapshot.py": (
+                "                if count >= max_files:",
+                "                if count > max_files:",
+            )
+        },
+        protected=("tests/test_test_session.py", "tests/test_repo_map.py"),
+        hidden={
+            "tests/test_hidden_snapshot.py": (
+                "from axo.agent.snapshot import snapshot_tree\n\n\n"
+                "def test_max_files_is_a_cap(tmp_path):\n"
+                "    for index in range(5):\n"
+                "        (tmp_path / f'f{index}.txt').write_text('x', encoding='utf-8')\n"
+                "    snap = snapshot_tree(tmp_path, max_files=2)\n"
+                "    assert snap.files == 2\n"
+                "    assert snap.truncated\n"
+            )
+        },
+        test_command="{python} -m pytest -q tests/test_hidden_snapshot.py",
+    )
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--backend", choices=["ollama", "openai", "axo-settings"], default="ollama")
@@ -286,6 +372,7 @@ def main() -> None:
     ap.add_argument("--base-url", default=None)
     ap.add_argument("--api-key-env", default="DEEPSEEK_API_KEY")
     ap.add_argument("--task", default=None)
+    ap.add_argument("--real-repo", default=None, help="追加一个真实仓库任务（复制其 HEAD）")
     ap.add_argument("--keep", action="store_true", help="保留临时仓库用于排查")
     ap.add_argument("--out", default=str(ROOT / "benchmarks/coding/results.json"))
     a = ap.parse_args()
@@ -318,7 +405,10 @@ def main() -> None:
             model=model, base_url=configured.cloud_base_url, api_key=configured.api_key
         )
     backend = _Counting(backend)
-    tasks = [t for t in (*TASKS, *_extra_tasks()) if a.task is None or t.name == a.task]
+    available = list(TASKS) + _extra_tasks()
+    if a.real_repo:
+        available.append(_real_task(Path(a.real_repo)))
+    tasks = [t for t in available if a.task is None or t.name == a.task]
     results = [run_task(t, backend=backend, keep=a.keep) for t in tasks]
     for r in results:
         print(

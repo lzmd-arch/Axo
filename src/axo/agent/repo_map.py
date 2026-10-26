@@ -529,6 +529,38 @@ def build_repo_map(
     return _clip("\n".join(lines))
 
 
+_LINE_SUFFIX = re.compile(r"\(L(\d+)\)\s*$")
+
+
+def iter_symbols(
+    root: Path, *, max_files: int = 400, max_symbols: int = 2000
+) -> tuple[list[tuple[str, int, str]], bool]:
+    """把符号索引摊平成 ``(相对路径, 行号, 声明)``，供 ``find_symbol`` 检索。
+
+    与 :func:`build_repo_map` 共用同一套语言表和上限；不生成展示文本，所以
+    ``max_symbols`` 可以比地图大。返回 ``(符号, 是否截断)``。
+    """
+    root = root.expanduser().resolve()
+    files, _scanned, truncated = _scan(root, max(1, min(max_files, 400)))
+    hits: list[tuple[str, int, str]] = []
+    for path in files:
+        if _SUFFIX_LANGUAGE.get(path.suffix.lower()) is None:
+            continue
+        try:
+            relative = path.relative_to(root).as_posix()
+        except ValueError:
+            continue
+        for line in _symbols(path):
+            match = _LINE_SUFFIX.search(line)
+            if not match:
+                continue
+            declaration = _LINE_SUFFIX.sub("", line).strip()
+            hits.append((relative, int(match.group(1)), declaration))
+            if len(hits) >= max_symbols:
+                return hits, True
+    return hits, truncated
+
+
 class RepoMapCache:
     """一个小 LRU：同一根、同一参数、同一工作区快照就复用上次的地图。
 
@@ -632,3 +664,69 @@ class RepoMapTool:
             assert snapshot.digest is not None
             cache.put(root, max_files, max_symbols, snapshot.digest, body)
         return ToolOutcome.success(body, replayable=False)
+
+
+class FindSymbolTool:
+    """按名字搜符号索引。**只读、不过闸门；不是 LSP。**"""
+
+    spec: ClassVar[ToolSpec] = ToolSpec(
+        name="find_symbol",
+        description=(
+            "在允许目录的符号索引里按名字搜索类/函数/方法（多语言，大小写不敏感），"
+            "返回文件、行号与声明。适合“某个函数在哪定义”。它是静态索引，不是 LSP；"
+            "找不到时再用 search_files 搜文本。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "要搜索的符号名或其中一段。"},
+                "path": {"type": "string", "description": "相对可读目录的路径；默认第一个。"},
+                "max_results": {
+                    "type": "integer",
+                    "description": "最多返回几条，1–50，默认 20。",
+                },
+            },
+            "required": ["name"],
+        },
+    )
+    requires_approval: ClassVar[bool] = False
+    parallel_safe: ClassVar[bool] = True
+
+    def run(self, arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+        if not ctx.read_root:
+            return ToolOutcome.failure("没有配置可读目录。")
+        query = argument_str(arguments, "name").strip()
+        if not query:
+            return ToolOutcome.failure("name 是空的。")
+        max_results = argument_int(arguments, "max_results", default=20, minimum=1, maximum=50)
+        assert max_results is not None
+        try:
+            root = resolve_within(
+                ctx.read_root, argument_str(arguments, "path", required=False) or "."
+            )
+        except ReadFileError as exc:
+            return ToolOutcome.failure(str(exc))
+        if root.is_file():
+            root = root.parent
+        if not root.is_dir():
+            return ToolOutcome.failure(f"{root} 不是目录。")
+        try:
+            hits, truncated = iter_symbols(root)
+        except OSError as exc:
+            return ToolOutcome.failure(f"搜索符号失败：{exc}")
+        needle = query.casefold()
+        matched = [hit for hit in hits if needle in hit[2].casefold()]
+        if not matched:
+            return ToolOutcome.success(
+                f"没有找到包含 {query!r} 的符号（索引了 {len(hits)} 个）。"
+                "可以换更短的词，或用 search_files 搜文本。",
+                replayable=False,
+            )
+        shown = matched[:max_results]
+        lines = [f"找到 {len(matched)} 个符号（显示前 {len(shown)} 个）："]
+        lines.extend(f"{path}:{line}: {text}" for path, line, text in shown)
+        if len(matched) > len(shown):
+            lines.append(f"…（还有 {len(matched) - len(shown)} 个；缩小 name 或加 path）")
+        if truncated:
+            lines.append("（符号索引已截断；结果不是全仓库全集。）")
+        return ToolOutcome.success("\n".join(lines), replayable=False)

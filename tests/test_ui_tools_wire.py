@@ -221,7 +221,7 @@ def test_new_session_resets_test_history() -> None:
     import inspect
 
     for method in (MainWindow._new_session, MainWindow._on_session_selected):
-        assert "self._test_session = TestSession()" in inspect.getsource(method)
+        assert "TestSession(self._test_session_path())" in inspect.getsource(method)
 
 
 def test_workspace_context_injects_last_test_brief(tmp_path: Path) -> None:

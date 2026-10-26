@@ -252,6 +252,7 @@ def test_read_file_appears_once_a_root_is_configured(tmp_path: Path) -> None:
         "git_log",
         "repo_overview",
         "repo_map",
+        "find_symbol",
     ]
 
 

@@ -103,7 +103,7 @@ from .reminders import (
     repeat_label,
     weekday_name,
 )
-from .repo_map import RepoMapTool
+from .repo_map import FindSymbolTool, RepoMapTool
 from .shell import DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S, run_command
 from .test_tools import RunTestsTool
 from .tools import (
@@ -1842,7 +1842,14 @@ def default_tools(
         # 工作区/编码工具追加在最后：只读 git 工具要有可读根，apply_patch 要有可写根。
         # 追加在末尾是为了让原有工具声明的稳定前缀不变（提示缓存）；模型仍能看见。
         *(
-            (GitStatusTool(), GitDiffTool(), GitLogTool(), RepoOverviewTool(), RepoMapTool())
+            (
+                GitStatusTool(),
+                GitDiffTool(),
+                GitLogTool(),
+                RepoOverviewTool(),
+                RepoMapTool(),
+                FindSymbolTool(),
+            )
             if read_root
             else ()
         ),

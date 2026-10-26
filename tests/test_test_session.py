@@ -264,3 +264,53 @@ def test_run_tests_without_session_keeps_old_shape(tmp_path: Path) -> None:
     )
     assert outcome.ok
     assert "第 1 次" not in outcome.content
+
+
+def test_history_persists_and_reloads(tmp_path: Path) -> None:
+    path = tmp_path / "s.tests.json"
+    first = TestSession(path)
+    first.finish(
+        command="pytest",
+        cwd=tmp_path,
+        ok=False,
+        exit_code=1,
+        failures=("FAILED a",),
+        before=Snapshot("d1", 1),
+    )
+
+    loaded = TestSession(path)
+    assert len(loaded.runs) == 1
+    assert loaded.runs[0].command == "pytest"
+    assert "上次测试" in loaded.brief()
+    assert "FAILED a" in loaded.brief()
+
+    loaded.finish(
+        command="pytest",
+        cwd=tmp_path,
+        ok=True,
+        exit_code=0,
+        failures=(),
+        before=Snapshot("d2", 1),
+    )
+    assert "第 2 次" in TestSession(path).brief()
+
+
+def test_corrupt_history_is_ignored(tmp_path: Path) -> None:
+    path = tmp_path / "s.tests.json"
+    path.write_text("{not json", encoding="utf-8", newline="\n")
+    session = TestSession(path)
+    assert session.runs == ()
+    assert session.brief() == ""
+
+
+def test_unwritable_history_does_not_break_finish(tmp_path: Path) -> None:
+    session = TestSession(tmp_path)  # 路径是目录，写入必然失败
+    text = session.finish(
+        command="pytest",
+        cwd=tmp_path,
+        ok=True,
+        exit_code=0,
+        failures=(),
+        before=Snapshot("d1", 1),
+    )
+    assert "第 1 次" in text

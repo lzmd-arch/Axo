@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
 import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -48,20 +50,104 @@ def _preview(lines: Sequence[str], limit: int = 3) -> str:
 
 
 class TestSession:
-    """同一会话里的测试历史。**只活在内存里**，新会话/退出即丢。
+    """同一会话里的测试历史。**有 path 时落盘，重启后能接着比。**
 
     跨用户回合复用：上一轮的失败集合与文件快照留在这里，下一轮第一次 ``run_tests``
     就能立刻说出“与上次相比新增/消失/仍失败”，而不是从“第 1 次”重新开始。
+    落盘文件与会话同目录（``<session_id>.tests.json``），损坏/不存在时按空历史处理。
     """
 
     # pytest 会把任何 ``Test*`` 类当测试收集；这个类有 ``__init__``，会报一条
     # 无用警告。``__test__ = False`` 是 pytest 认的显式退出标记。
     __test__ = False
 
-    def __init__(self) -> None:
+    def __init__(self, path: Path | None = None) -> None:
+        self._path = Path(path) if path is not None else None
         self._runs: list[TestRun] = []
         self._total = 0
         self._lock = threading.Lock()
+        if self._path is not None:
+            self._load()
+
+    def _load(self) -> None:
+        assert self._path is not None
+        try:
+            payload = json.loads(self._path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        if not isinstance(payload, dict):
+            return
+        raw_runs = payload.get("runs")
+        if not isinstance(raw_runs, list):
+            return
+        runs: list[TestRun] = []
+        for item in raw_runs:
+            if not isinstance(item, dict):
+                continue
+            try:
+                snapshot = item.get("snapshot") or {}
+                digest = snapshot.get("digest")
+                run = TestRun(
+                    index=int(item["index"]),
+                    command=str(item["command"]),
+                    cwd=str(item["cwd"]),
+                    ok=bool(item["ok"]),
+                    exit_code=(
+                        int(item["exit_code"]) if item.get("exit_code") is not None else None
+                    ),
+                    failures=tuple(str(one) for one in item.get("failures", [])),
+                    snapshot=Snapshot(
+                        str(digest) if digest is not None else None,
+                        int(snapshot.get("files", 0)),
+                        bool(snapshot.get("truncated", False)),
+                    ),
+                )
+            except (AttributeError, KeyError, TypeError, ValueError):
+                continue
+            runs.append(run)
+        self._runs = runs[-_MAX_RUNS:]
+        fallback = self._runs[-1].index if self._runs else 0
+        try:
+            self._total = max(int(payload.get("total", fallback)), fallback)
+        except (TypeError, ValueError):
+            self._total = fallback
+
+    def _save_locked(self) -> None:
+        """调用方已持锁。落盘失败只吞掉——测试历史坏了不该反过来弄坏主流程。"""
+        if self._path is None:
+            return
+        payload = {
+            "schema": 1,
+            "total": self._total,
+            "runs": [
+                {
+                    "index": run.index,
+                    "command": run.command,
+                    "cwd": run.cwd,
+                    "ok": run.ok,
+                    "exit_code": run.exit_code,
+                    "failures": list(run.failures),
+                    "snapshot": {
+                        "digest": run.snapshot.digest,
+                        "files": run.snapshot.files,
+                        "truncated": run.snapshot.truncated,
+                    },
+                }
+                for run in self._runs
+            ],
+        }
+        temp = self._path.with_name(self._path.name + ".tmp")
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            temp.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=1) + "\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+            temp.replace(self._path)
+        except OSError:
+            with contextlib.suppress(OSError):
+                temp.unlink(missing_ok=True)
 
     @property
     def runs(self) -> tuple[TestRun, ...]:
@@ -114,6 +200,7 @@ class TestSession:
             self._runs.append(run)
             if len(self._runs) > _MAX_RUNS:
                 del self._runs[0]
+            self._save_locked()
         if previous is None:
             return f"本会话第 {run.index} 次测试（没有上次可对比）。"
 

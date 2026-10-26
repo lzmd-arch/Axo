@@ -33,28 +33,50 @@ python tools/coding_eval.py --backend axo-settings --model deepseek-chat
 DEEPSEEK_API_KEY=... python tools/coding_eval.py --backend openai --model deepseek-chat --base-url https://api.deepseek.com/v1
 ```
 
-结果：`benchmarks/coding/results-deepseek.json`（云端）与 `results.json`（本机 fallback），含 tools 序列、轮数、耗时、token、测试输出。
+结果：`benchmarks/coding/results-deepseek-8tasks.json`（8 题云端）与 `results.json`（本机 fallback），含 tools 序列、轮数、耗时、token、测试输出。旧的 6 题云端结果留在 `results-deepseek.json`，不要和新基线混用。
 
-## 2026-10-26 云端 DeepSeek 基线（实际 agent 模型）
+## 2026-10-26 云端 DeepSeek 基线（实际 agent 模型，8 题）
 
 ```text
 backend=axo-settings  model=deepseek-chat
-bugfix_add       passed=True   tools=8  rounds=6  elapsed=8.63s   prompt 35,709 / completion 534
-feature_slugify  passed=True   tools=8  rounds=6  elapsed=7.47s   prompt 35,183 / completion 363
-bugfix_cli       passed=True   tools=8  rounds=6  elapsed=8.41s   prompt 35,926 / completion 493
-multi_file_tax   passed=True   tools=8  rounds=6  elapsed=6.70s   prompt 34,964 / completion 355
-multi_file_limiter passed=True tools=10 rounds=7 elapsed=8.81s  prompt 41,324 / completion 439
-parse_duration   passed=True  tools=14 rounds=12 elapsed=15.65s  prompt 68,203 / completion 1,321
-passed 6/6；总 token：prompt 251,309 / completion 3,505
+bugfix_add       passed=True   tools=7  rounds=6  elapsed=6.31s   prompt 39,259 / completion 311
+feature_slugify  passed=True   tools=7  rounds=5  elapsed=6.25s   prompt 34,201 / completion 369
+bugfix_cli       passed=True   tools=7  rounds=5  elapsed=6.12s   prompt 34,945 / completion 487
+multi_file_tax   passed=True   tools=10 rounds=7  elapsed=8.23s   prompt 46,138 / completion 398
+multi_file_limiter passed=True tools=9 rounds=6  elapsed=8.54s   prompt 41,808 / completion 746
+parse_duration   passed=True  tools=14 rounds=12 elapsed=15.85s  prompt 80,076 / completion 1,566
+js_calc          passed=True   tools=8  rounds=5  elapsed=7.95s   prompt 34,357 / completion 332
+multi_file_locate passed=True  tools=7  rounds=4  elapsed=5.40s   prompt 28,984 / completion 447
+passed 8/8；总 token：prompt 339,768 / completion 4,656
 ```
 
-结果：`benchmarks/coding/results-deepseek.json`。云端 6/6 说明这套 harness 与工具面可用；任务仍偏小，
-不能据此宣称达到 Codex。
+结果：`benchmarks/coding/results-deepseek-8tasks.json`。8/8 说明当前工具面、8 个任务与云端
+DeepSeek 的组合可用；任务仍偏小，不能据此宣称达到 Codex。
 
-> **口径说明**：这份基线测于 `repo_map` / `command_list` 与 `js_calc` /
-> `multi_file_locate` 两个任务加入之前。工具声明与任务集变大后，单轮 prompt token
-> 与总题数都会变；本表数字不要当成当前代码的成本。通过率未重测（结论仍以
-> `results-deepseek.json` 里那次运行的 `tools` 序列为准）。
+## 真实仓库任务（单个冒烟，不是完整基准）
+
+```bash
+python tools/coding_eval.py --backend axo-settings --model deepseek-chat \
+  --real-repo D:\Projects\BioSNN-MemoryTerminal --task real_axo_snapshot \
+  --out benchmarks/coding/results-deepseek-real.json
+```
+
+任务把 Axo 的 **HEAD 快照**复制到临时目录，在 `src/axo/agent/snapshot.py` 注入一个
+`count >= max_files` → `count > max_files` 的 off-by-one，让公开测试
+`tests/test_test_session.py` 失败；隐藏测试再检查 `max_files` 是硬上限。保护
+`tests/test_test_session.py` 与 `tests/test_repo_map.py`，改测试记失败。
+
+```text
+source_commit=6a9ed7d  model=deepseek-chat
+real_axo_snapshot passed=True tools=15 rounds=12 elapsed=21.75s
+prompt 165,877 / completion 1,689
+tools: repo_overview → run_tests → read_file → find_symbol → read_file×2 →
+       search_files×3 → edit_file → read_file → apply_patch → edit_file×2 → run_tests
+```
+
+结果：`benchmarks/coding/results-deepseek-real.json`。用例只有 1 个、且是恶意注入的
+显式 bug，**不能代表真实仓库的整体能力**；它证明的是“在真实目录结构里定位—读—
+改—跑测试—看 diff”这条链能走通。
 
 ## 本机 fallback 基线（qwen3-4b，Ollama，think=false）
 

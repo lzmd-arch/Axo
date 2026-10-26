@@ -775,7 +775,7 @@ class MainWindow(QMainWindow):
 
         self._session: Session = Session(session_id=new_session_id())
         # 测试历史跨用户回合复用；换会话时重置（见 _new_session / _on_session_selected）。
-        self._test_session = TestSession()
+        self._test_session = TestSession(self._test_session_path())
         #: 确认卡片上按文件勾选的结果：call_id -> 选中路径。工具线程只读，锁保护。
         self._approval_files: dict[str, tuple[str, ...]] = {}
         self._approval_lock = threading.Lock()
@@ -1537,7 +1537,7 @@ class MainWindow(QMainWindow):
         if self._streaming:
             return
         self._session = Session(session_id=new_session_id(), model_ref=self._current_model_id())
-        self._test_session = TestSession()
+        self._test_session = TestSession(self._test_session_path())
         self.chat_view.clear()
         self.session_list.setCurrentItem(None)
         self.chat_view.set_status("新会话")
@@ -1550,7 +1550,7 @@ class MainWindow(QMainWindow):
         session_id = current.data(Qt.ItemDataRole.UserRole)
         self._session = self._store.load(session_id)
         # 测试历史只在内存里，不随会话文件恢复；切会话就重新开始。
-        self._test_session = TestSession()
+        self._test_session = TestSession(self._test_session_path())
         self.chat_view.load_history(display_rows(self._session.messages))
         self.chat_view.set_status(f"已载入会话 {session_id}")
         # 记忆窗口要按会话区分一条早退路径：属于当前会话的记忆会被召回当作"逐字稿
@@ -2254,6 +2254,10 @@ class MainWindow(QMainWindow):
         self._track(thread, worker, what="生成线程", slot="chat")
         self.chat_view.set_status("正在生成…")
         thread.start()
+
+    def _test_session_path(self) -> Path:
+        """测试历史与会话同目录：``<session_id>.tests.json``。"""
+        return self._store.root / f"{self._session.session_id}.tests.json"
 
     def _command_jobs_store(self) -> CommandJobs:
         """本次进程共用的后台命令管理器。懒建。"""
