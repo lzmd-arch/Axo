@@ -91,6 +91,7 @@ _K_WEATHER_ENABLED = "tools/weather_enabled"
 _K_SPEECH_ENABLED = "speech/enabled"
 _K_SPEECH_VOLUME = "speech/volume"
 _K_SPEECH_VOICE = "speech/voice"
+_K_SPEECH_BUNDLED = "speech/bundled"
 _K_SPEECH_BASE_URL = "speech/base_url"
 _K_SPEECH_AUTOSTART = "speech/autostart"
 _K_SPEECH_COMMAND = "speech/launch_command"
@@ -361,10 +362,12 @@ class SpeechSettings:
             （``ReminderSettings.speak_on_alert`` 默认开是同一个理由）。
         volume: 0–100。**应用级**（不是每次朗读级）：音量是这台机器的事，不是这条
             消息的事；做成每次级的话，"她当时多大声"会变成一条无从判断的历史事实。
-        voice: 音色名（``models/voices/`` 下的目录名）。空串 = 组件自己的默认音色。
+        voice: 音色名（``models/voices/`` 下的目录名）。空串 = 随包千岁音色。
             **用户自己选**（设计里那条"要不要让用户选声音"的待决：要——「她」的声音是
             这个产品的脸之一，而 ``getVoices()`` 那种系统清单在不同机器上差得远，
             自己放参考音才可预期）。
+        bundled: 优先使用随包 ZipVoice（默认开）。关掉才连外部组件；包内没有 TTS 资产
+            时这一位没有作用，仍然走 ``base_url``。
         base_url: 语音组件（离线克隆 TTS 那个独立程序）的根地址。
         autostart: **程序启动时把组件拉起来**（默认关）。组件仍是独立进程，这一项只是
             "替你按一下启动"：先探端口，没在跑才拉；退出时只收自己拉的那个。
@@ -382,6 +385,7 @@ class SpeechSettings:
     enabled: bool = True
     volume: int = 80
     voice: str = ""
+    bundled: bool = True
     base_url: str = DEFAULT_SPEECH_ENDPOINT
     autostart: bool = False
     launch_command: str = ""
@@ -718,6 +722,7 @@ class SettingsStore:
             enabled=_as_bool(self._backend.value(_K_SPEECH_ENABLED, True)),
             volume=volume,
             voice=self._text(_K_SPEECH_VOICE),
+            bundled=_as_bool(self._backend.value(_K_SPEECH_BUNDLED, True), True),
             base_url=base_url,
             autostart=_as_bool(self._backend.value(_K_SPEECH_AUTOSTART, False), False),
             launch_command=self._text(_K_SPEECH_COMMAND),
@@ -732,6 +737,7 @@ class SettingsStore:
         self._backend.setValue(_K_SPEECH_ENABLED, settings.enabled)
         self._backend.setValue(_K_SPEECH_VOLUME, settings.volume)
         self._backend.setValue(_K_SPEECH_VOICE, settings.voice)
+        self._backend.setValue(_K_SPEECH_BUNDLED, bool(settings.bundled))
         self._backend.setValue(_K_SPEECH_BASE_URL, settings.base_url)
         self._backend.setValue(_K_SPEECH_AUTOSTART, bool(settings.autostart))
         self._backend.setValue(_K_SPEECH_COMMAND, settings.launch_command)

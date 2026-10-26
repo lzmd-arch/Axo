@@ -35,11 +35,14 @@ _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from build_exe import (  # noqa: E402
     _BUILD,
+    _BUNDLE_ASSETS,
     _DIST,
     DATAS,
     ENTRY,
     HIDDEN_IMPORTS,
     ICON_SOURCE,
+    _bundle_datas,
+    _bundle_missing,
 )
 
 APP_NAME = "Axo"
@@ -161,10 +164,14 @@ def _build_command(*, model: Path | None, icon: Path | None) -> list[str]:
         "--collect-binaries",
         "vosk",
     ]
+    for package in ("sherpa_onnx", "onnxruntime", "soundfile", "tokenizers"):
+        command += ["--collect-binaries", package]
     for module in HIDDEN_IMPORTS:
         command += ["--hidden-import", module]
     for source, target in DATAS:
         command += ["--add-data", f"{_ROOT / source}:{target}"]
+    for source, target in _bundle_datas():
+        command += ["--add-data", f"{source}:{target}"]
     vosk_library = _vosk_library()
     if vosk_library is not None:
         command += ["--add-data", f"{vosk_library}:vosk"]
@@ -398,8 +405,18 @@ def main(argv: list[str] | None = None) -> int:
     model = Path(args.bundle_vosk_model).expanduser().resolve() if args.bundle_vosk_model else None
     if model is not None and not model.is_dir():
         raise SystemExit(f"--bundle-vosk-model 不是目录：{model}")
-    if args.release and model is None:
+    # 构建资产里已经有 vosk 模型时，不再要一个重复的 --bundle-vosk-model。
+    bundled_vosk = _BUNDLE_ASSETS / "vosk" / _VOSK_MODEL
+    model_expected = model is not None or bundled_vosk.is_dir()
+    if args.release and not model_expected:
         raise SystemExit("--release 需要 --bundle-vosk-model（macOS 包的语音输入要开箱可用）")
+    if args.release:
+        missing = _bundle_missing()
+        if missing:
+            raise SystemExit(
+                "发布版缺随包模型，先跑 uv run python tools/fetch_bundle_assets.py；缺："
+                + "、".join(missing)
+            )
 
     icon = ICNS if ICNS.is_file() else None
     command = _build_command(model=model, icon=icon)
@@ -428,7 +445,7 @@ def main(argv: list[str] | None = None) -> int:
 
     _write_info_plist(APP, version)
     _sign(APP)
-    problems = _check_bundle(APP, version, require_model=model is not None)
+    problems = _check_bundle(APP, version, require_model=model_expected)
     if problems:
         raise SystemExit("产物检查不通过：\n- " + "\n- ".join(problems))
     _smoke(APP)

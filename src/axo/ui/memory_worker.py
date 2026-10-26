@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QObject, Signal, Slot
@@ -32,6 +33,8 @@ from memcore.recall import RecallConfig, recall
 from memcore.store import MemoryStore
 from memcore.types import now_ts
 
+from ..llm.base import EmbeddingBackend
+from ..llm.local_embed import LocalEmbeddingBackend
 from ..llm.ollama import (
     DEFAULT_OLLAMA_HOST,
     OllamaEmbeddingBackend,
@@ -112,7 +115,7 @@ class EmbeddingSetup:
     一模一样。
     """
 
-    backend: OllamaEmbeddingBackend | None = None
+    backend: EmbeddingBackend | None = None
     synced: int = 0
     dim: int = 0
     note: str = ""
@@ -141,6 +144,7 @@ class MemorySyncWorker(QObject):
         host: str = DEFAULT_OLLAMA_HOST,
         allow_remote: bool = False,
         limit: int | None = None,
+        local_dir: Path | None = None,
     ) -> None:
         super().__init__()
         self._store = store
@@ -148,28 +152,41 @@ class MemorySyncWorker(QObject):
         self._host = host
         self._allow_remote = allow_remote
         self._limit = limit
+        #: 随包嵌入模型目录。**它优先于 Ollama**：分发版没有 Ollama 也能召回。
+        self._local_dir = Path(local_dir) if local_dir is not None else None
 
     @Slot()
     def run(self) -> None:
         """**异常绝不外泄。** PySide6 会吞掉槽里抛出的异常——那意味着如果这里
         炸了，界面拿不到任何信号，于是"语义通道永远没接上"且没有任何提示。"""
-        if not self._model:
-            self.ready.emit(EmbeddingSetup(note="没有可用的嵌入模型，记忆只用语汇匹配"))
-            return
-
-        try:
-            dim = probe_embedding_dim(self._model, self._host, allow_remote=self._allow_remote)
-            backend = OllamaEmbeddingBackend(
-                model=self._model,
-                dim=dim,
-                host=self._host,
-                allow_remote=self._allow_remote,
-            )
-        except Exception as exc:  # noqa: BLE001 — 没有嵌入模型是配置问题，不是崩溃
-            self.ready.emit(
-                EmbeddingSetup(note=f"嵌入模型 {self._model} 不可用（{exc}），记忆只用语汇匹配")
-            )
-            return
+        backend: EmbeddingBackend | None = None
+        dim = 0
+        local_error = ""
+        if self._local_dir is not None:
+            try:
+                local = LocalEmbeddingBackend(self._local_dir)
+                dim = local.dim
+                backend = local
+            except Exception as exc:  # noqa: BLE001 — 模型坏了退回 Ollama，不炸 UI
+                local_error = f"随包嵌入模型不可用（{type(exc).__name__}：{exc}）"
+        if backend is None:
+            if not self._model:
+                note = local_error or "没有可用的嵌入模型，记忆只用语汇匹配"
+                self.ready.emit(EmbeddingSetup(note=note))
+                return
+            try:
+                dim = probe_embedding_dim(self._model, self._host, allow_remote=self._allow_remote)
+                backend = OllamaEmbeddingBackend(
+                    model=self._model,
+                    dim=dim,
+                    host=self._host,
+                    allow_remote=self._allow_remote,
+                )
+            except Exception as exc:  # noqa: BLE001 — 没有嵌入模型是配置问题，不是崩溃
+                self.ready.emit(
+                    EmbeddingSetup(note=f"嵌入模型 {self._model} 不可用（{exc}），记忆只用语汇匹配")
+                )
+                return
 
         try:
             synced = sync_embeddings(self._store, backend, limit=self._limit)
@@ -183,7 +200,8 @@ class MemorySyncWorker(QObject):
             )
             return
 
-        note = f"语义通道就绪 · {dim} 维"
+        kind = "随包嵌入模型" if isinstance(backend, LocalEmbeddingBackend) else "语义通道"
+        note = f"{kind}就绪 · {dim} 维"
         note += f"，补了 {synced} 条向量" if synced else "，没有待补的向量"
         self.ready.emit(EmbeddingSetup(backend=backend, synced=synced, dim=dim, note=note))
 
@@ -212,7 +230,7 @@ class AssemblyWorker(QObject):
         history: Sequence[Message],
         current: str,
         environment: str,
-        embedding: OllamaEmbeddingBackend | None = None,
+        embedding: EmbeddingBackend | None = None,
         session_id: str = "",
         recall_config: RecallConfig | None = None,
         graph: GraphIndex | None = None,
@@ -345,7 +363,7 @@ class MemoryProbeWorker(QObject):
         *,
         store: MemoryStore,
         content: str,
-        embedding: OllamaEmbeddingBackend | None = None,
+        embedding: EmbeddingBackend | None = None,
         config: RecallConfig | None = None,
     ) -> None:
         super().__init__()

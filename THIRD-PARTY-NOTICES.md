@@ -52,6 +52,12 @@
 | typing_extensions | 4.16.0 | PSF-2.0 |
 | urllib3 | 2.8.0 | MIT |
 | vosk | 0.3.44 | Apache-2.0 |
+| onnxruntime | 1.31.0 | MIT |
+| tokenizers | 0.23.3 | Apache-2.0 |
+| sherpa-onnx | 2.0.0 | Apache-2.0 |
+| sherpa-onnx-core | 2.0.0 | Apache-2.0 |
+| soundfile | 0.14.0 | BSD-3-Clause |
+| click | 8.5.0 | BSD-3-Clause |
 | pyinstaller | 6.22.3 | GPL-2.0-or-later WITH Bootloader-exception |
 <!-- frozen-set:end -->
 
@@ -66,6 +72,10 @@
   全文都取自 Apache 官网（<https://www.apache.org/licenses/LICENSE-2.0>），不取自 wheel。
   构建那边由 `_EXPECTED_WITHOUT_LICENSES` 盯着——**"少了一份许可"永远是一个要解释的状态**，
   哪天冒出一个新的第三家，构建当场红。
+- **`onnxruntime`、`tokenizers`、`sherpa-onnx-core` 的 dist-info 里也没有许可正文。**
+  它们的正文分别取自上游仓库（MIT / Apache-2.0 / Apache-2.0），全文在
+  `licenses/MIT-onnxruntime.txt` 与 `licenses/Apache-2.0.txt`；构建那边同样由
+  `_EXPECTED_WITHOUT_LICENSES` 盯着。`click` 是 `huggingface-hub` 带进来的传递依赖。
 - **`vosk` 拉进来八行。** 它自己的 `__init__.py` 在模块顶层就 `import srt` /
   `import requests` / `from tqdm import tqdm`（那是它自带的命令行转写工具用的），于是
   `srt`、`requests`（连带 `urllib3` / `charset-normalizer` / `idna` / `certifi`）、
@@ -96,10 +106,21 @@
   本项目**只用到 `vosk.Model` / `vosk.KaldiRecognizer` 两个类**——但"实际用没用到"不是
   这张表的判据，"被冻结了"才是（同上面 `pytest` 那一条）。`vosk` 本身按 Apache-2.0，
   它那几家的许可见上表。
-- **`vosk-model-small-cn-0.22`（中文小模型，约 42 MB）在 macOS 包里随附**，按
-  Apache-2.0 分发，来源是 <https://alphacephei.com/vosk/models>。它不在 PyPI 表里，
-  因为没有 Python dist-info；Windows zip 不带它，使用者自己放到数据根下的 `models/`。
-  两份产物都只使用它做离线语音识别，模型的许可不改变本项目自身许可。
+- **`vosk-model-small-cn-0.22`（中文小模型，约 66 MB 文件树）在两份分发版里随附**，
+  按 Apache-2.0 分发，来源是 <https://alphacephei.com/vosk/models>。它不在 PyPI 表里，
+  因为没有 Python dist-info；`tools/fetch_bundle_assets.py` 下载并校验后由构建脚本
+  放进 `models/`。两份产物都只使用它做离线语音识别，模型的许可不改变本项目自身许可。
+- **随包嵌入模型 `bge-small-zh-v1.5`（ONNX，约 95 MB）**：`BAAI/bge-small-zh-v1.5`
+  按 **MIT** 发布；ONNX 文件取自 `Qdrant/bge-small-zh-v1.5`（同一模型的转换版）。
+  两份产物都带它，用于没有 Ollama 时的中文语义召回。它不在 PyPI 表里，因为没有
+  Python dist-info；`tools/fetch_bundle_assets.py` 按固定 SHA256 下载。
+- **随包 TTS：ZipVoice distill-int8（约 110 MB）与 vocos 24 kHz（约 54 MB）**。
+  ZipVoice 代码按 Apache-2.0、**预训练权重按 CC-BY-NC-4.0**（训练数据 Emilia 的限制，
+  见 <https://huggingface.co/k2-fsa/ZipVoice>），因此带这份权重的分发包**只可按
+  非商业用途再分发**；全文在 `licenses/CC-BY-NC-4.0.txt`。vocos 按 MIT；参考音
+  `tts/voices/qiansui/ref.wav` 来自 AxoVoiceLab 的 axo-1 参考（源数据 AISHELL-3，
+  Apache-2.0），只用于零样本音色克隆。模型由 `tools/fetch_bundle_assets.py` 下载，
+  不取 ZipVoice 归档里的 `espeak-ng-data`（那是 GPL 数据；中英两条路只用 lexicon）。
 - **`pyinstaller` 进产物的是 bootloader**（那几 MB 的 exe 头部），不是它的 Python 包。
   它按 GPL-2.0-or-later 发布，**带一个明文例外**：允许用它构建并分发非自由程序，
   被构建的程序本身不受 GPL 约束。例外原文在它的 `COPYING.txt` 里。

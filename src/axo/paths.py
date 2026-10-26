@@ -34,6 +34,8 @@ __all__ = [
     "consolidation_last_path",
     "data_dir",
     "data_root_source",
+    "bundled_embedding_dir",
+    "bundled_tts_dir",
     "bundled_voice_model_dir",
     "default_data_dir",
     "env_data_root",
@@ -355,6 +357,55 @@ def voice_model_dir() -> Path:
     "目录在、模型不在"与"什么都没有"变成两种要分开处理的状态。
     """
     return data_dir() / "models" / VOICE_MODEL_NAME
+
+
+EMBEDDING_MODEL_NAME = "bge-small-zh-v1.5"
+"""随包嵌入模型的目录名（与构建资产的目录一致）。"""
+
+
+def _bundled_base_dirs() -> list[Path]:
+    """冻结产物里放随包资产的那几个根。**先找 Resources，再找 _MEIPASS**。"""
+    bases: list[Path] = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        bases.append(Path(meipass))
+    if getattr(sys, "frozen", False):
+        bases.append(Path(sys.executable).resolve().parent.parent / "Resources")
+    return bases
+
+
+def bundled_embedding_dir() -> Path | None:
+    """随包的 BGE 中文嵌入模型目录；没有就 ``None``。
+
+    打包态在 ``<bundle>/embedding/bge-small-zh-v1.5``；源码态允许把同一套文件放到
+    数据根的 ``models/embedding/bge-small-zh-v1.5``，或用 ``AXO_EMBEDDING_DIR`` 指过去。
+    **数据根里的那一份优先于包内**吗？不：包内是随版本走的默认，用户放的那份只在
+    没有随包模型时兜底——否则一次旧目录会悄悄盖掉新版本修好的模型。
+    """
+    raw = os.environ.get("AXO_EMBEDDING_DIR", "").strip()
+    candidates = [Path(raw).expanduser()] if raw else []
+    candidates += [base / "embedding" / EMBEDDING_MODEL_NAME for base in _bundled_base_dirs()]
+    if not getattr(sys, "frozen", False):
+        candidates.append(data_dir() / "models" / "embedding" / EMBEDDING_MODEL_NAME)
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def bundled_tts_dir() -> Path | None:
+    """随包的千岁 TTS 资产目录（ZipVoice 模型 + 参考音）；没有就 ``None``。
+
+    打包态在 ``<bundle>/tts``；源码态用 ``AXO_TTS_DIR`` 指向构建出来的
+    ``build/bundle/tts``。
+    """
+    raw = os.environ.get("AXO_TTS_DIR", "").strip()
+    candidates = [Path(raw).expanduser()] if raw else []
+    candidates += [base / "tts" for base in _bundled_base_dirs()]
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    return None
 
 
 def bundled_voice_model_dir() -> Path | None:

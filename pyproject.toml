@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "axo"
-version = "0.12.0"
+version = "0.13.0"
 description = "Axo：把长期记忆与性格放在终端侧，独立于所调用的大模型"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -46,11 +46,20 @@ llm = ["httpx>=0.27"]
 # 打包（P6a 起用；构建入口是 tools/build_exe.py）。装它要跑 `uv sync --all-extras`
 # 而不是 `--extra pack`：uv sync 是精确同步，只给 pack 会把 PySide6 与 httpx 摘掉。
 pack = ["pyinstaller>=6.0"]
-# 语音输入（离线识别）。**这一个是"库随产物发、模型用户自己放"里的那一半库**：
-# 冻结产物里装不了 pip 包，不随产物发的话，打包版的语音输入根本不可能工作；而模型
-# （约 42 MB）不进仓也不进包，由用户解压到数据根下的 `models/`（见 `axo/asr.py` 的
-# 模块文档与 README「从源码跑」那一节）。
-voice = ["vosk>=0.3.44,<0.3.45"]
+# 语音：离线识别（vosk）+ 随包 ZipVoice 合成（sherpa-onnx）。**库随产物发**：
+# 冻结产物里装不了 pip 包。macOS 包还带 vosk 模型；Windows 的识别模型仍由用户放。
+# `soundfile` 只用于读参考音（wav/flac/mp3），不拉 torch。
+voice = [
+  "vosk>=0.3.44,<0.3.45",
+  "sherpa-onnx>=2.0,<2.1",
+  "soundfile>=0.13,<0.15",
+]
+# 随包中文嵌入模型（BGE-small-zh-v1.5 ONNX）。只给"分发版没有 Ollama"那条路；
+# 源码检出可以完全不装，仍会退回 Ollama 嵌入。
+embed = [
+  "onnxruntime>=1.20,<2",
+  "tokenizers>=0.21,<0.24",
+]
 # 用户拖进来的文件。**只有 PDF 需要它**：文本类与图片都是 stdlib 就能读的，而 PDF
 # 里抽文字绕不开一个解析器。选 pypdf 是因为它纯 Python、BSD-3-Clause、体积小——
 # 与 torch 那一族不同，它进得了产物（`axo/attachments.py` 里是**函数内 import**，
@@ -82,6 +91,10 @@ dev = [
   # 只在函数内 import 它——装不装都不影响那几条测试（它们塞的是假件），但本机开发
   # 与打包自检都要有它。
   "vosk>=0.3.44,<0.3.45",
+  "sherpa-onnx>=2.0,<2.1",
+  "soundfile>=0.13,<0.15",
+  "onnxruntime>=1.20,<2",
+  "tokenizers>=0.21,<0.24",
   "cryptography>=42",
   "qrcode>=7.4",
 ]

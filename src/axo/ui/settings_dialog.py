@@ -65,7 +65,7 @@ from PySide6.QtWidgets import (
 from .. import autostart
 from ..llm import openai_compat
 from ..llm.ollama import probe
-from ..paths import voices_dir, wallpapers_dir
+from ..paths import bundled_tts_dir, voices_dir, wallpapers_dir
 from ..tts import voices_in
 from .color import parse_hex, readable_foreground
 from .data_root import data_root_description
@@ -2250,6 +2250,19 @@ class SpeechPage(QWidget):
             )
         )
 
+        self.bundled_box = QCheckBox("优先使用随包千岁语音（ZipVoice）", self)
+        self.bundled_box.setObjectName("speechBundledBox")
+        self.bundled_box.setChecked(self._snapshot.bundled)
+        self.bundled_box.setEnabled(bundled_tts_dir() is not None)
+        self.bundled_box.toggled.connect(self._on_toggled)
+        outer.addWidget(self.bundled_box)
+        outer.addWidget(
+            _hint(
+                "分发版自带千岁的 ZipVoice 与参考音，离线、不用装 torch。关掉它才连下面的"
+                "外部组件（需要你自己装 F5-TTS 等）。"
+            )
+        )
+
         outer.addWidget(_section("语音组件"))
         self.endpoint_edit = QLineEdit(self._snapshot.base_url, self)
         self.endpoint_edit.setObjectName("speechEndpoint")
@@ -2257,7 +2270,8 @@ class SpeechPage(QWidget):
         outer.addWidget(self.endpoint_edit)
         outer.addWidget(
             _hint(
-                "离线克隆 TTS 那个独立程序的地址（默认 http://127.0.0.1:8800）。"
+                "外部离线克隆 TTS 那个独立程序的地址（默认 http://127.0.0.1:8800）。"
+                "默认走随包 ZipVoice；只有关掉上面的随包开关时才会用这个地址。"
                 "它没在跑时**不出声，但会说一句原因**——对话照常，只是不出声。"
             )
         )
@@ -2327,7 +2341,9 @@ class SpeechPage(QWidget):
     def _fill_voices(self, selected: str) -> None:
         self.voice_combo.blockSignals(True)
         self.voice_combo.clear()
-        self.voice_combo.addItem("组件默认音色", "")
+        self.voice_combo.addItem(
+            "千岁（随包）" if bundled_tts_dir() is not None else "组件默认音色", ""
+        )
         for voice in voices_in(voices_dir()):
             self.voice_combo.addItem(voice.name, voice.name)
         index = self.voice_combo.findData(selected)
@@ -2341,6 +2357,7 @@ class SpeechPage(QWidget):
         self.enabled_box.setChecked(settings.enabled)
         self.volume_box.setValue(settings.volume)
         self._fill_voices(settings.voice)
+        self.bundled_box.setChecked(settings.bundled)
         self.endpoint_edit.setText(settings.base_url)
         self.autostart_box.setChecked(settings.autostart)
         self.command_edit.setText(settings.launch_command)
@@ -2354,6 +2371,7 @@ class SpeechPage(QWidget):
             enabled=self.enabled_box.isChecked(),
             volume=self.volume_box.value(),
             voice=str(self.voice_combo.currentData() or ""),
+            bundled=self.bundled_box.isChecked() if self.bundled_box.isEnabled() else True,
             base_url=self.endpoint_edit.text().strip(),
             autostart=self.autostart_box.isChecked(),
             launch_command=self.command_edit.text().strip(),

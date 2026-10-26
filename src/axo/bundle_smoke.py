@@ -38,6 +38,12 @@ _MODULES = (
     "axo.agent.lsp_install",
     "axo.agent.language_doctor",
     "axo.ui.main_window",
+    "axo.llm.local_embed",
+    "axo.llm.local_speech",
+    "onnxruntime",
+    "tokenizers",
+    "sherpa_onnx",
+    "soundfile",
 )
 
 
@@ -50,7 +56,7 @@ def _resource_root() -> Path:
 
 def run_checks() -> dict[str, object]:
     from axo import __version__
-    from axo.paths import bundled_voice_model_dir
+    from axo.paths import bundled_embedding_dir, bundled_tts_dir, bundled_voice_model_dir
 
     root = _resource_root()
     errors: list[str] = []
@@ -76,6 +82,38 @@ def run_checks() -> dict[str, object]:
     if not model_ok:
         errors.append("随包语音模型不在（构建时应传 --bundle-vosk-model）")
 
+    embedding = bundled_embedding_dir()
+    embedding_ok = bool(embedding and (embedding / "model_optimized.onnx").is_file())
+    if not embedding_ok:
+        errors.append("随包嵌入模型不在（构建前跑 tools/fetch_bundle_assets.py）")
+    embedding_inference = False
+    if embedding_ok:
+        try:
+            from axo.llm.local_embed import LocalEmbeddingBackend
+
+            vector = LocalEmbeddingBackend(embedding).embed(["测试"])[0]
+            embedding_inference = vector.shape == (512,)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"随包嵌入推理失败：{type(exc).__name__}: {exc}")
+        if not embedding_inference:
+            errors.append("随包嵌入模型没有产出 512 维向量")
+
+    tts = bundled_tts_dir()
+    tts_ok = bool(tts and (tts / "zipvoice" / "decoder.int8.onnx").is_file())
+    if not tts_ok:
+        errors.append("随包 TTS 模型不在（构建前跑 tools/fetch_bundle_assets.py）")
+    tts_inference = False
+    if tts_ok:
+        try:
+            from axo.llm.local_speech import LocalSpeech
+
+            spoken = LocalSpeech(tts, tts / "voices").synthesize("你好")
+            tts_inference = bool(spoken.ok and spoken.wav[:4] == b"RIFF")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"随包 TTS 推理失败：{type(exc).__name__}: {exc}")
+        if not tts_inference:
+            errors.append("随包 TTS 没有产出 WAV")
+
     return {
         "ok": not errors,
         "frozen": bool(getattr(sys, "frozen", False)),
@@ -87,6 +125,12 @@ def run_checks() -> dict[str, object]:
         "modules": modules,
         "voice_model": str(model) if model is not None else "",
         "voice_model_ok": model_ok,
+        "embedding_model": str(embedding) if embedding is not None else "",
+        "embedding_model_ok": embedding_ok,
+        "embedding_inference": embedding_inference,
+        "tts_model": str(tts) if tts is not None else "",
+        "tts_model_ok": tts_ok,
+        "tts_inference": tts_inference,
         "errors": errors,
     }
 

@@ -49,7 +49,7 @@ from memcore.graph import GraphIndex, graph_heat
 from memcore.store import MemoryStore
 from memcore.types import MemoryItem, MemoryKind, MemorySummary, Tier
 
-from ..llm.ollama import OllamaEmbeddingBackend
+from ..llm.base import EmbeddingBackend
 from ..memory.browse import (
     MemoryFilter,
     MemoryStatus,
@@ -134,7 +134,7 @@ class MemoryWindow(QMainWindow):
 
         self._memory = memory
         self._spaces = memory.spaces()
-        self._embedding: OllamaEmbeddingBackend | None = None
+        self._embedding: EmbeddingBackend | None = None
         self._current_session_id = ""
         self._ledger: RecallLedger | None = None
         self._summaries: list[MemorySummary] = []
@@ -184,7 +184,7 @@ class MemoryWindow(QMainWindow):
         if self._motion:
             fade_window(self)
 
-    def set_embedding(self, embedding: OllamaEmbeddingBackend | None) -> None:
+    def set_embedding(self, embedding: EmbeddingBackend | None) -> None:
         """接上当前的嵌入后端（``None`` = 这一轮没有语义通道）。
 
         只用来标"这条记忆在当前空间里有没有向量"，**不在这里跑嵌入**：那个动作

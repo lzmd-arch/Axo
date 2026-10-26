@@ -43,6 +43,26 @@ _FROZEN: list[tuple[str, str, str, str]] = [
         "https://www.gnu.org/licenses/lgpl-3.0.txt",
         "2026-10-12",
     ),
+    # 下面三份不是 FSF 的许可，而是**随包模型/原生库**的全文：打包时它们没有
+    # dist-info 许可正文（或模型根本不是 Python 包），所以必须自己存一份。
+    (
+        "Apache-2.0.txt",
+        "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "https://www.apache.org/licenses/LICENSE-2.0.txt",
+        "2026-10-26",
+    ),
+    (
+        "MIT-onnxruntime.txt",
+        "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
+        "https://github.com/microsoft/onnxruntime/blob/main/LICENSE",
+        "2026-10-26",
+    ),
+    (
+        "CC-BY-NC-4.0.txt",
+        "41003d4a74749c0220e33dd415042164b5a1093ed401f36277234f772d22d3d0",
+        "https://creativecommons.org/licenses/by-nc/4.0/legalcode.txt",
+        "2026-10-26",
+    ),
 ]
 
 #: 正文里必须出现的字串。哈希已经能拦住任何改动，这两条是给**人**看的：断言红了的时候
@@ -84,10 +104,13 @@ def test_the_text_is_recognisable_as_that_license(name: str, marker: str) -> Non
 def test_no_stray_files_in_the_licenses_dir() -> None:
     """``licenses/`` 只放**全文**，不放别的东西。
 
-    第三方那份短许可（numpy 的 BSD、certifi 的 MPL-2.0……）不 vendoring——打包时
-    从 ``.venv/Lib/site-packages/*.dist-info/licenses/`` 现取，那才是实际随包的那一份。
-    这条挡的是"顺手把某个第三方许可也丢进来"：那样一来库里就有了两处副本，而其中一处
-    没人保证跟得上版本。
+    第三方 Python 包的短许可（numpy 的 BSD、certifi 的 MPL-2.0……）不 vendoring——
+    打包时从 ``.venv/Lib/site-packages/*.dist-info/licenses/`` 现取，那才是实际随包的
+    那一份。这条挡的是"顺手把某个第三方许可也丢进来"。
+
+    **例外是随包模型/没有 dist-info 的原生库**：onnxruntime、tokenizers、
+    sherpa-onnx-core 的 wheel 里没有正文，ZipVoice 权重与 vocos 也不是 Python 发行包；
+    它们的全文只能放在这里，并由 ``_FROZEN`` 逐字节钉住。
     """
     names = sorted(path.name for path in _LICENSES.iterdir() if path.is_file())
     assert names == sorted(name for name, _, _, _ in _FROZEN), (

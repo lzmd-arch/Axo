@@ -123,8 +123,44 @@ HIDDEN_IMPORTS = (
     "axo.agent.language_doctor",
     # macOS 的 bundle 自检入口也是函数内 import。
     "axo.bundle_smoke",
+    # 随包嵌入与 TTS 都是函数内/惰性 import；静态分析看不到它们。
+    "axo.llm.local_embed",
+    "axo.llm.local_speech",
+    "onnxruntime",
+    "tokenizers",
+    "sherpa_onnx",
+    "soundfile",
 )
 """两条构建流水线（Windows / macOS）共用的 hidden imports。"""
+
+_BUNDLE_ASSETS = _ROOT / "build" / "bundle"
+"""`tools/fetch_bundle_assets.py` 的落点（模型不进仓，构建前现抓）。"""
+
+
+def _bundle_datas() -> tuple[tuple[str, str], ...]:
+    """随包模型目录 → PyInstaller 目标。没有抓过资产时返回空。"""
+    found: list[tuple[str, str]] = []
+    for name, target in (("embedding", "embedding"), ("tts", "tts"), ("vosk", "models")):
+        source = _BUNDLE_ASSETS / name
+        if source.is_dir():
+            found.append((str(source), target))
+    return tuple(found)
+
+
+def _bundle_missing() -> list[str]:
+    """发布版必须带的两套模型；返回缺的文件（空 = 齐）。"""
+    required = (
+        "embedding/bge-small-zh-v1.5/model_optimized.onnx",
+        "embedding/bge-small-zh-v1.5/tokenizer.json",
+        "tts/zipvoice/encoder.int8.onnx",
+        "tts/zipvoice/decoder.int8.onnx",
+        "tts/zipvoice/vocos_24khz.onnx",
+        "tts/voices/qiansui/ref.wav",
+        "tts/voices/qiansui/ref.txt",
+        "vosk/vosk-model-small-cn-0.22/am/final.mdl",
+    )
+    return [name for name in required if not (_BUNDLE_ASSETS / name).is_file()]
+
 
 ICON_SIZES = (256, 64, 48, 32, 24, 16)
 """手工拼进 ``.ico`` 的档位，从大到小。
@@ -353,10 +389,14 @@ def _command(*, name: str, console: bool, icon: Path | None, clean: bool) -> lis
         command.append("--clean")
     # 见上面那段：vosk 的 C 库靠一个运行时拼出来的路径加载，静态分析找不到它。
     command += ["--collect-binaries", "vosk"]
+    for package in ("sherpa_onnx", "onnxruntime", "soundfile", "tokenizers"):
+        command += ["--collect-binaries", package]
     for module in HIDDEN_IMPORTS:
         command += ["--hidden-import", module]
     for source, target in DATAS:
         command += ["--add-data", f"{_ROOT / source}{os.pathsep}{target}"]
+    for source, target in _bundle_datas():
+        command += ["--add-data", f"{source}{os.pathsep}{target}"]
     if icon is not None:
         command += ["--icon", str(icon)]
     command.append(str(_ROOT / ENTRY))
@@ -563,6 +603,17 @@ def _check_layout(name: str) -> list[str]:
                 f"语音识别的原生库不在：{path.relative_to(_ROOT).as_posix()}"
                 "（多半是 --collect-binaries vosk 那一步失效了）"
             )
+    if _BUNDLE_ASSETS.is_dir():
+        for relative in (
+            "embedding/bge-small-zh-v1.5/model_optimized.onnx",
+            "embedding/bge-small-zh-v1.5/tokenizer.json",
+            "tts/zipvoice/decoder.int8.onnx",
+            "tts/voices/qiansui/ref.wav",
+            "models/vosk-model-small-cn-0.22/am/final.mdl",
+        ):
+            path = internal / relative
+            if not path.exists():
+                problems.append(f"随包模型资产不在：{path.relative_to(_ROOT).as_posix()}")
     return problems
 
 
@@ -1185,7 +1236,13 @@ Python 包一个模块都没进去。表里列它的理由是"随产物分发"�
 因为"随产物分发"成立；PYZ 里找不到它是事实，不是表写错了。
 """
 
-_EXPECTED_WITHOUT_LICENSES = ("biosnn-bus", "vosk")
+_EXPECTED_WITHOUT_LICENSES = (
+    "biosnn-bus",
+    "vosk",
+    "onnxruntime",
+    "tokenizers",
+    "sherpa-onnx-core",
+)
 """dist-info 里确实没有许可正文的那几个，**必须是已知的**。
 
 ``biosnn-bus`` 的 PyPI 元数据声明 Apache-2.0，但 wheel 里没带正文，所以它的许可是从
@@ -1838,6 +1895,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.release and args.console:
         print("--release 不与 --console 同用：发给别人的是那个无控制台的产物。", file=sys.stderr)
         return 2
+    if args.release:
+        missing = _bundle_missing()
+        if missing:
+            print(
+                "发布版缺随包模型，先跑：\n\n"
+                "    uv run python tools/fetch_bundle_assets.py\n\n"
+                "缺：" + "、".join(missing),
+                file=sys.stderr,
+            )
+            return 2
 
     name = CONSOLE_NAME if args.console else NAME
     icon_path = _BUILD / f"{name}.ico"

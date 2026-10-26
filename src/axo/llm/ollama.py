@@ -95,6 +95,11 @@ _FALLBACK_CONTEXT_WINDOW = 8192
 # （本地模型在 8 GB 显存上吐第一个 token 可能要好几秒）。
 _TIMEOUT = httpx.Timeout(connect=5.0, read=300.0, write=30.0, pool=5.0)
 
+#: **嵌入不能沿用对话的 300 秒读超时。** 对话在等模型吐字，等三分钟是合理的；嵌入
+#: 只是召回前的一次短请求，它挂住就意味着用户卡在“正在检索记忆…”，连新会话/停止
+#: 都像坏了一样。20 秒足够本地模型排队；超时就降级词法，不把整轮拖死。
+_EMBED_TIMEOUT = httpx.Timeout(connect=3.0, read=20.0, write=10.0, pool=3.0)
+
 
 # ── 护栏 ────────────────────────────────────────────────────────────────────
 
@@ -121,7 +126,7 @@ def check_host_is_local(host: str) -> bool:
     return address.is_loopback or address.is_unspecified
 
 
-def _client(host: str, allow_remote: bool) -> httpx.Client:
+def _client(host: str, allow_remote: bool, *, timeout: httpx.Timeout | None = None) -> httpx.Client:
     if not allow_remote and not check_host_is_local(host):
         raise ChatBackendError(
             f"后端地址 {host!r} 不是本机地址。本终端的记忆库设计假设对话内容不出设备，"
@@ -130,7 +135,7 @@ def _client(host: str, allow_remote: bool) -> httpx.Client:
         )
     # **本机不走代理**（同 ``llm/speech.py`` 那条）：``allow_remote`` 为假时地址
     # 必须是本机，而本机的请求被送去代理的结局是一个空正文的 502。
-    return httpx.Client(base_url=host, timeout=_TIMEOUT, trust_env=allow_remote)
+    return httpx.Client(base_url=host, timeout=timeout or _TIMEOUT, trust_env=allow_remote)
 
 
 def _raise_for_status(response: httpx.Response, *, what: str) -> None:
@@ -769,7 +774,7 @@ def probe_embedding_dim(
         EmbeddingBackendError: 连不上、模型不存在、或响应形状不对。**没有兜底值**
             ——猜一个维度比报错糟得多（见上）。
     """
-    with _client(host, allow_remote) as client:
+    with _client(host, allow_remote, timeout=_EMBED_TIMEOUT) as client:
         try:
             response = client.post("/api/embed", json={"model": model, "input": [_DIM_PROBE_TEXT]})
         except (httpx.RequestError, ssl.SSLError) as exc:
@@ -848,7 +853,7 @@ class OllamaEmbeddingBackend:
             return np.zeros((0, self.dim), dtype=np.float32)
 
         batches: list[np.ndarray] = []
-        with _client(self.host, self.allow_remote) as client:
+        with _client(self.host, self.allow_remote, timeout=_EMBED_TIMEOUT) as client:
             for start in range(0, len(texts), self.batch_size):
                 window = list(texts[start : start + self.batch_size])
                 try:

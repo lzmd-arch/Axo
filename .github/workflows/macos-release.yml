@@ -35,12 +35,16 @@ jobs:
         # 但 PyInstaller/vosk 的兼容性没有在 3.14 上验过，构建矩阵该跟 Windows 一致。
         run: uv sync --python 3.12 --locked --all-extras
 
+      - name: 取随包的嵌入、识别与千岁 TTS 模型
+        # 模型不进仓；脚本按固定 SHA256 下载，失败就停在构建前，不产出半包。
+        run: uv run python tools/fetch_bundle_assets.py
+
       - name: 先在 macOS 上跑几条平台相关的守卫
         # QPA 在 runner 上没有显示器；这些文件不建窗口。钥匙串的真通道在下一步单独验。
         run: >
           uv run pytest -p no:pytest-qt
           tests/test_secrets.py tests/test_autostart.py tests/test_paths_root.py
-          tests/test_portability.py
+          tests/test_portability.py tests/test_local_models.py
 
       - name: 验证 macOS 钥匙串往返（假 key，写完即删）
         run: |
@@ -57,18 +61,9 @@ jobs:
           print("keychain round-trip ok")
           PY
 
-      - name: 取随包的中文语音模型（Apache-2.0）
-        run: |
-          curl -L --fail --retry 5 --retry-delay 5 \
-            -o "$RUNNER_TEMP/vosk-model.zip" \
-            https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip
-          unzip -q "$RUNNER_TEMP/vosk-model.zip" -d "$RUNNER_TEMP/vosk"
-          test -d "$RUNNER_TEMP/vosk/vosk-model-small-cn-0.22"
-
       - name: 构建 .app、ad-hoc 签名、自检、打包
         run: >
           uv run python tools/build_macos.py --release
-          --bundle-vosk-model "$RUNNER_TEMP/vosk/vosk-model-small-cn-0.22"
 
       - name: 上传安装包
         uses: actions/upload-artifact@v4

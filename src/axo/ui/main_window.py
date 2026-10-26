@@ -118,13 +118,14 @@ from ..agent.workspace import build_workspace_context
 from ..asr import Transcription
 from ..attachments import Attachment, attachment_for, body_of
 from ..busd.launcher import launch_blocked_reason, spawn_daemon, stop_daemon
-from ..llm.base import ChatBackendError, ChatRequest
+from ..llm.base import ChatBackendError, ChatRequest, EmbeddingBackend
+from ..llm.local_speech import LocalSpeech
+from ..llm.local_speech import is_available as local_tts_available
 from ..llm.ollama import (
     MODEL_ID_PREFIX as OLLAMA_MODEL_ID_PREFIX,
 )
 from ..llm.ollama import (
     OllamaChatBackend,
-    OllamaEmbeddingBackend,
     is_chat_capable,
     pick_embedding_model,
 )
@@ -158,6 +159,8 @@ from ..memory.browse import format_ts
 from ..memory.consolidation import ConsolidationRun, last_run, summary_line
 from ..net import MAX_FETCH_CHARS, DeepSeekWeb, WebError
 from ..paths import (
+    bundled_embedding_dir,
+    bundled_tts_dir,
     data_dir,
     data_root_source,
     default_data_dir,
@@ -170,6 +173,7 @@ from ..paths import (
     reminders_path,
     sessions_dir,
     stickers_dir,
+    voices_dir,
 )
 from ..plugins import PluginIssue, load_plugins
 from ..secrets import protect, unprotect
@@ -197,6 +201,7 @@ from .glass import AuroraBackdrop
 from .layout import plan_pane_sizes
 from .memory_window import MemoryWindow
 from .memory_worker import (
+    AUTO_GRAPH_MAX,
     LEXINDEX_WARM_MIN,
     AssemblyWorker,
     ConsolidationWorker,
@@ -788,7 +793,7 @@ class MainWindow(QMainWindow):
         self._job_log_timer.timeout.connect(self._poll_job_logs)
         self._job_log_timer.start()
         self._backend: OllamaChatBackend | None = None
-        self._embedding: OllamaEmbeddingBackend | None = None
+        self._embedding: EmbeddingBackend | None = None
         self._embedding_model: str = ""
         self._chat_thread: QThread | None = None
         self._chat_worker: ChatWorker | None = None
@@ -915,7 +920,7 @@ class MainWindow(QMainWindow):
         self._voice_settings = self._settings_store.load_voice()
         self._speech_player = SpeechPlayer(parent=self)
         self._speech_player.finished.connect(self._on_speech_played)
-        self._speech_backend = RemoteSpeech(self._voice_settings.base_url)
+        self._speech_backend = self._make_speech_backend()
         #: 合成的一对（线程, worker），形状照 ``_speak_*`` 那一套。
         self._tts_thread: QThread | None = None
         self._tts_worker: Any = None
@@ -1017,6 +1022,9 @@ class MainWindow(QMainWindow):
         if app is not None:
             app.aboutToQuit.connect(self._shutdown)
         self._refresh_models()
+        # 随包嵌入不依赖 Ollama；有它就先把语义通道接上，不能等模型列表拉回来。
+        if bundled_embedding_dir() is not None:
+            self._start_memory_setup([])
         self._refresh_stickers()
         self.chat_view.set_status("正在探测本地模型服务…")
 
@@ -1092,6 +1100,13 @@ class MainWindow(QMainWindow):
         # 时候。阈值见 :data:`~.memory_worker.LEXINDEX_WARM_MIN`。
         if self._memory.count() >= LEXINDEX_WARM_MIN:
             self._start_lexical_index_warmup()
+
+        # **小库启动时把关联图预热出来。** 它不再是“只有打开记忆窗口才有”的东西：
+        # SNN 热度、周期巩固与（用户打开联想通道时的）召回都读它。166 条这种库是
+        # 毫秒到几秒级，放在后台线程；大库仍只在用户主动打开记忆窗口时建，避免每次
+        # 启动白等几分钟（同一阈值 AUTO_GRAPH_MAX）。
+        if self._memory.count() <= AUTO_GRAPH_MAX:
+            self._start_graph_build(force=False)
 
     # ── 外观 ────────────────────────────────────────────────────────────────
 
@@ -1536,7 +1551,13 @@ class MainWindow(QMainWindow):
 
     def _new_session(self) -> None:
         if self._streaming:
-            return
+            # **准备阶段卡在“正在检索记忆…”时，新会话必须仍然可用。** 以前这里
+            # 直接 return，用户看到的是按钮没反应；而准备阶段还没有发出任何请求，
+            # 取消它是立即生效的（见 ``_on_stop``）。生成阶段仍保持原语义：先把
+            # 当前这句说完，避免迟到的回复落进新会话。
+            if not self._preparing:
+                return
+            self._on_stop()
         self._session = Session(session_id=new_session_id(), model_ref=self._current_model_id())
         self._test_session = TestSession(self._test_session_path())
         self.chat_view.clear()
@@ -1824,6 +1845,7 @@ class MainWindow(QMainWindow):
             model=pick_embedding_model(models),
             host=self._host,
             allow_remote=self._allow_remote,
+            local_dir=bundled_embedding_dir(),
         )
         worker.ready.connect(self._on_embedding_ready)
         worker.ready.connect(thread.quit)
@@ -1834,7 +1856,11 @@ class MainWindow(QMainWindow):
     def _on_embedding_ready(self, setup: EmbeddingSetup) -> None:
         """语义通道接好了（或者接不上）。**两种情况都必须说话。**"""
         self._embedding = setup.backend
-        self._embedding_model = setup.backend.model if setup.backend is not None else ""
+        self._embedding_model = (
+            getattr(setup.backend, "model", "") or getattr(setup.backend, "space_id", "")
+            if setup.backend is not None
+            else ""
+        )
         self._embedding_note = setup.note
         # 换嵌入模型 = 换一个语义空间，记忆窗口要按**空间**逐条标注"这条有没有
         # 向量"。推晚了它会把新空间按旧后端标注，而那看起来完全正常。
@@ -4740,7 +4766,7 @@ class MainWindow(QMainWindow):
         """
         self._voice_settings = settings
         self._settings_store.save_voice(settings)
-        self._speech_backend = RemoteSpeech(settings.base_url)
+        self._speech_backend = self._make_speech_backend()
         if self._speech_pipeline is not None:
             self._speech_pipeline.reconfigure(self._speech_backend, voice=settings.voice)
         self._speech_player.set_volume(settings.volume)
@@ -5464,6 +5490,22 @@ class MainWindow(QMainWindow):
         )
         return answer == QMessageBox.StandardButton.Yes
 
+    def _make_speech_backend(self) -> Any:
+        """优先用随包 ZipVoice；没有资产或用户关掉时才连外部组件。
+
+        **随包这条路不经过 8800 端口**，所以 ``_autostart_speech`` 也不该替它拉起
+        一个外部进程。返回的对象只要满足 ``synthesize(text, voice=...)``。
+        """
+        assets = bundled_tts_dir()
+        if assets is not None and local_tts_available(assets) and self._voice_settings.bundled:
+            try:
+                return LocalSpeech(assets_dir=assets, voices_dir=voices_dir())
+            except Exception:  # noqa: BLE001 — 资产坏了退回外部组件，不拦启动
+                # 构造期 chat_view 还不一定存在；状态会在设置页/第一轮合成时
+                # 由后端自己的收条说出来，不在这里碰界面。
+                pass
+        return RemoteSpeech(self._voice_settings.base_url)
+
     def _autostart_speech(self) -> None:
         """程序起来时把语音组件拉起来（设置里开着、且配了命令的话）。
 
@@ -5472,6 +5514,8 @@ class MainWindow(QMainWindow):
         的应该是一个解释而不是一段沉默。
         """
         settings = self._voice_settings
+        if isinstance(getattr(self, "_speech_backend", None), LocalSpeech):
+            return
         command = settings.launch_command.strip()
         if not settings.autostart or not command:
             return

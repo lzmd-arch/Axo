@@ -1,0 +1,5 @@
+Qiansui reference voice for the bundled ZipVoice TTS.
+
+Source: AxoVoiceLab axo-1 reference, derived from AISHELL-3 (Apache-2.0).
+The reference audio is used only for zero-shot timbre cloning; no personal recording
+and no third-party singer voice is included.
