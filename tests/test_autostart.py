@@ -229,3 +229,45 @@ def test_a_non_windows_machine_is_a_no_op(monkeypatch: pytest.MonkeyPatch) -> No
     assert autostart.sync(autostart.command_for(EXE)) is False
     assert autostart.remove() is False
     assert autostart.apply(True) is False
+
+
+# ── macOS LaunchAgent ───────────────────────────────────────────────────────
+
+
+def test_macos_writes_and_removes_a_launch_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """macOS 用 LaunchAgent 完成同一件事：一个 plist、RunAtLoad、一条 --remind。
+
+    **不真写 ``~/Library/LaunchAgents``。** 测试给出的路径换成临时目录；真正要断言的
+    是 plist 里的 ``ProgramArguments`` 与"值一样就不重写"这两个行为。
+    """
+    import plistlib
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(autostart, "_launch_agent_path", lambda: tmp_path / "reminders.plist")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "Axo.app/Contents/MacOS/Axo"))
+    command = autostart.command_for(sys.executable)
+
+    assert autostart.is_supported() is True
+    assert autostart.unavailable_reason() == ""
+    assert autostart.sync(command) is True
+    record = plistlib.loads((tmp_path / "reminders.plist").read_bytes())
+    assert record["ProgramArguments"] == [sys.executable, autostart.REMIND_FLAG]
+    assert record["RunAtLoad"] is True
+    assert autostart.read_command() == command
+    assert autostart.sync(command) is False, "值一样时不该重写 plist"
+    assert autostart.remove() is True
+    assert autostart.read_command() is None
+    assert autostart.remove() is False
+
+
+def test_macos_source_checkout_says_it_cannot_autostart(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    monkeypatch.setattr(sys, "executable", "/usr/bin/python3")
+
+    assert autostart.current_exe() is None
+    assert "打包" in autostart.unavailable_reason()
+    assert autostart.apply(True) is False

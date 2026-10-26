@@ -51,7 +51,7 @@
 | tinytag | 2.3.2 | MIT |
 | typing_extensions | 4.16.0 | PSF-2.0 |
 | urllib3 | 2.8.0 | MIT |
-| vosk | 0.3.45 | Apache-2.0 |
+| vosk | 0.3.44 | Apache-2.0 |
 | pyinstaller | 6.22.3 | GPL-2.0-or-later WITH Bootloader-exception |
 <!-- frozen-set:end -->
 
@@ -95,8 +95,11 @@
   那个命令行转写工具用的），所以只要 `axo/asr.py` import 了 vosk，这几家就一起进产物。
   本项目**只用到 `vosk.Model` / `vosk.KaldiRecognizer` 两个类**——但"实际用没用到"不是
   这张表的判据，"被冻结了"才是（同上面 `pytest` 那一条）。`vosk` 本身按 Apache-2.0，
-  它那几家的许可见上表。**`vosk` 与 Qt 一样是随产物发的，模型不是**：模型（约 42 MB）
-  由使用者自己放到数据根下的 `models/`。
+  它那几家的许可见上表。
+- **`vosk-model-small-cn-0.22`（中文小模型，约 42 MB）在 macOS 包里随附**，按
+  Apache-2.0 分发，来源是 <https://alphacephei.com/vosk/models>。它不在 PyPI 表里，
+  因为没有 Python dist-info；Windows zip 不带它，使用者自己放到数据根下的 `models/`。
+  两份产物都只使用它做离线语音识别，模型的许可不改变本项目自身许可。
 - **`pyinstaller` 进产物的是 bootloader**（那几 MB 的 exe 头部），不是它的 Python 包。
   它按 GPL-2.0-or-later 发布，**带一个明文例外**：允许用它构建并分发非自由程序，
   被构建的程序本身不受 GPL 约束。例外原文在它的 `COPYING.txt` 里。

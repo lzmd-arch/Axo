@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .audio import AudioClip
-from .paths import VOICE_MODEL_NAME, voice_model_dir
+from .paths import VOICE_MODEL_NAME, bundled_voice_model_dir, voice_model_dir
 
 __all__ = ["SAMPLE_RATE", "Recognizer", "Transcription", "recognize"]
 
@@ -131,7 +131,14 @@ class Recognizer:
 
     def __init__(self, *, sample_rate: int = SAMPLE_RATE, model_dir: Path | None = None) -> None:
         self._sample_rate = sample_rate
-        self._model_dir = Path(model_dir) if model_dir is not None else voice_model_dir()
+        if model_dir is not None:
+            self._model_dir = Path(model_dir)
+        else:
+            # 数据根里的那一份代表用户的选择；只有它不存在时才用包里的兜底。
+            # macOS 包带着模型（"开箱能说话"），源码检出与 Windows zip 不带。
+            configured = voice_model_dir()
+            bundled = bundled_voice_model_dir()
+            self._model_dir = configured if configured.is_dir() or bundled is None else bundled
         self._problem = _library_problem() or _model_problem(self._model_dir)
         self._model: object | None = None
         self._session: object | None = None

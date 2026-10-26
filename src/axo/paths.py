@@ -34,6 +34,7 @@ __all__ = [
     "consolidation_last_path",
     "data_dir",
     "data_root_source",
+    "bundled_voice_model_dir",
     "default_data_dir",
     "env_data_root",
     "graph_path",
@@ -91,10 +92,13 @@ def default_data_dir() -> Path:
     """不含任何覆盖的默认根目录（第 4 档）。
 
     Windows: ``%LOCALAPPDATA%``（不进漫游配置——记忆库可能有几百 MB，跟着域账号
-    漫游会把登录拖垮）；其它平台按 XDG 惯例。
+    漫游会把登录拖垮）。macOS: ``~/Library/Application Support/Axo``。其它平台按
+    XDG 惯例。
 
     单列出来是为了让界面能说"恢复默认位置"而**不必猜**默认值是什么。
     """
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / _APP_DIR_NAME
     local_appdata = os.environ.get("LOCALAPPDATA")
     if local_appdata:
         return Path(local_appdata) / _APP_DIR_NAME
@@ -351,6 +355,31 @@ def voice_model_dir() -> Path:
     "目录在、模型不在"与"什么都没有"变成两种要分开处理的状态。
     """
     return data_dir() / "models" / VOICE_MODEL_NAME
+
+
+def bundled_voice_model_dir() -> Path | None:
+    """随产物带进来的语音模型；没有就 ``None``。
+
+    macOS 包把 ``vosk-model-small-cn-0.22`` 放进 ``Contents/Resources/models/``，
+    PyInstaller 会把它交叉链进 ``sys._MEIPASS``（``Contents/Frameworks``），所以
+    冻结态用 ``_MEIPASS`` 找得到；源码态没有这个目录，返回 ``None``。
+
+    **数据根里的模型优先。** 这是 :class:`~axo.asr.Recognizer` 的选择：用户自己放进
+    ``models/`` 的那一份代表"我要换模型/换版本"，包的兜底不该盖过它。
+    """
+    bases: list[Path] = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        bases.append(Path(meipass))
+    if getattr(sys, "frozen", False):
+        # .app 的 Resources 是数据的真身，_MEIPASS 下的是交叉链接；两条都列出来，
+        # 以防某个 PyInstaller 版本改了链接布局。
+        bases.append(Path(sys.executable).resolve().parent.parent / "Resources")
+    for base in bases:
+        candidate = base / "models" / VOICE_MODEL_NAME
+        if candidate.is_dir():
+            return candidate
+    return None
 
 
 def plugins_dir() -> Path:

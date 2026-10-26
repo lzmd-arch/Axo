@@ -1,15 +1,17 @@
-"""提醒到点时**开机自启的那一条路**：Windows 的 Run 键。
+"""提醒到点时**开机自启的那一条路**：Windows 的 Run 键、macOS 的 LaunchAgent。
 
-用户在设置页勾上「开机时自动运行」之后，这个模块往
-``HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run`` 写一个值，于是下次登录
-Windows 会自己把 :mod:`axo.headless` 那一次跑起来。
+用户在设置页勾上「开机时自动运行」之后，这一层把 :mod:`axo.headless` 那一次挂到
+登录流程上：
 
-## 为什么是那个键，不是启动文件夹
+* Windows：``HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run`` 里一个值。
+* macOS：``~/Library/LaunchAgents/com.axo.memoryterminal.reminders.plist``，登录时
+  由 launchd 跑一次 ``Axo --remind``。
 
-两个地方都能做同一件事，选注册表键的理由是**它精确地只有一件事**：
+## 为什么是这两个系统位置，不是启动文件夹
 
-* 可读可验——打开注册表编辑器就看得见程序写了什么，"自启到底设上没有"有一个客观答案；
-* 开关就是写一个值 / 删一个值：**幂等、可逆、不留垃圾**（启动文件夹里会留下一个
+* 可读可验——注册表编辑器 / ``launchctl`` 都看得见程序写了什么，"自启到底设上没有"
+  有一个客观答案；
+* 开关就是写一个值 / 删一个文件：**幂等、可逆、不留垃圾**（启动文件夹里会留下一个
   ``.lnk``，删漏了就是一个指向不存在路径的死快捷方式）；
 * 不需要 PowerShell 或 COM。``tools/build_exe.py`` 为了在桌面上放一个快捷方式已经
   绕过一次 COM（中文路径要过控制台代码页），能不再绕就不绕。
@@ -18,9 +20,9 @@ Windows 会自己把 :mod:`axo.headless` 那一次跑起来。
 
 理由与 :mod:`axo.secrets` 一模一样：**平台相关的代码集中在一个模块**，而"它自己不
 import Qt"因此是一条可断言的事实（``test_layering`` 钉着）。这一层也不弹任何 UI——
-要不要写这个键是设置页的事。
+要不要写这一项是设置页的事。
 
-## 非 Windows 一律返回"不支持"，绝不抛
+## 非 Windows / 非 macOS 一律返回"不支持"，绝不抛
 
 它要在 Linux 的 CI 上被 import 到（``winreg`` 在那儿根本不存在），所以那个 import
 是**推迟到函数里**的。返回值一律是"做成了没有"，而不是异常：调用方是设置页，它要把
@@ -29,6 +31,8 @@ import Qt"因此是一条可断言的事实（``test_layering`` 钉着）。这�
 
 from __future__ import annotations
 
+import plistlib
+import shlex
 import sys
 from pathlib import Path
 
@@ -47,32 +51,40 @@ __all__ = [
 ]
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-"""自启那条值住在哪儿。**``HKCU``（当前用户）**，不是 ``HKLM``：让程序开机自启是
+"""Windows 自启那条值住在哪儿。**``HKCU``（当前用户）**，不是 ``HKLM``：让程序开机自启是
 这台机器上这个用户的选择，改全局的那一份要管理员权限、还会影响别的账户。
 """
 
 VALUE_NAME = "Axo"
-"""值的名字。用**界面上的显示名**（同 ``tools/build_exe.py`` 的 ``SHORTCUT_NAME``）：
-用户在注册表里看到的那一行要跟托盘提示、窗口标题对得上。"""
+"""Windows 值的名字。用**界面上的显示名**（同 ``tools/build_exe.py`` 的
+``SHORTCUT_NAME``）：用户在注册表里看到的那一行要跟托盘提示、窗口标题对得上。
+"""
 
 REMIND_FLAG = "--remind"
 """命令行上那个开关。**与 ``ui/app.py`` 里那句逐字相同**（``test_packaging.py`` 断言），
-因为它写进注册表之后就固定在那儿了：改了它，已经设过自启的机器会在下次登录时把一个
+因为它写进系统自启项之后就固定在那儿了：改了它，已经设过自启的机器会在下次登录时把一个
 不认识的参数交给程序，而那看起来像"程序自己启动了一个窗口"。
 """
 
+_LAUNCH_AGENT_LABEL = "com.axo.memoryterminal.reminders"
+"""macOS LaunchAgent 的标签。反向域名 + 用途，固定不变。"""
+
+
+def _launch_agent_path() -> Path:
+    return Path.home() / "Library" / "LaunchAgents" / f"{_LAUNCH_AGENT_LABEL}.plist"
+
 
 def is_supported() -> bool:
-    """这台机器上能不能设自启。非 Windows 是假（那个键不存在）。"""
-    return sys.platform == "win32"
+    """这台机器上能不能设自启。"""
+    return sys.platform in ("win32", "darwin")
 
 
 def current_exe() -> Path | None:
-    """要写进注册表的那个 exe。**只有冻结产物才算**，否则是 ``None``。
+    """要写进自启项的那个可执行文件。**只有冻结产物才算**，否则是 ``None``。
 
-    源码检出下 ``sys.executable`` 是 ``python.exe``——把它写进去，"开机自启"启动的
-    是一个**没有脚本可跑的 Python**（它会开一个交互解释器，或者什么都没发生，取决于
-    怎么被拉起）。而那个症状只会在下次登录时出现一次，且看起来与这个设置毫无关系。
+    源码检出下 ``sys.executable`` 是 ``python.exe`` / ``python3``——把它写进去，
+    "开机自启"启动的是一个**没有脚本可跑的 Python**（它会开一个交互解释器，或者什么都
+    没发生）。而那个症状只会在下次登录时出现一次，且看起来与这个设置毫无关系。
     """
     if not getattr(sys, "frozen", False):
         return None
@@ -86,20 +98,18 @@ def unavailable_reason() -> str:
     得多**，而这里两种情形都说得清（见 :func:`current_exe` 与 :func:`is_supported`）。
     """
     if not is_supported():
-        return "这台机器不是 Windows，没有那个开机自启的注册表项。"
+        return "这台机器既不是 Windows 也不是 macOS，没有可用的开机自启入口。"
     if current_exe() is None:
-        return "现在跑的是源码、不是打包出来的 exe，设不了开机自启——打包之后才有这一项。"
+        return "现在跑的是源码、不是打包出来的程序，设不了开机自启——打包之后才有这一项。"
     return ""
 
 
 def apply(enabled: bool) -> bool:
-    """按设置把自启那条值对齐：勾上 → 写，取消 → 删。返回**有没有动过注册表**。
+    """按设置把自启项对齐：勾上 → 写，取消 → 删。返回**有没有动过系统设置**。
 
     **"只在用户显式勾选时写"这条对策就落在这一句上**：``enabled`` 为假时走的是
-    :func:`remove`（它只会删自己那一个值），而源码检出下 :func:`current_exe` 是
+    :func:`remove`（它只会删自己那一项），而源码检出下 :func:`current_exe` 是
     ``None``，于是这里什么都不写——那台机器上根本没有可自启的东西。
-
-    **不动别的程序的值**，也不删 ``Run`` 这个键（见 :func:`remove`）。
     """
     if not enabled:
         return remove()
@@ -110,23 +120,43 @@ def apply(enabled: bool) -> bool:
 
 
 def command_for(exe: Path | str) -> str:
-    """写进注册表的完整命令行。
+    """写进自启项的那一行命令。
 
-    **路径带引号**，而且是**全路径**：Run 键里的命令行由 Windows 自己拼，工作目录
-    不是程序所在的目录，而用户的安装路径里带空格是常态（``C:\\Program Files\\...``）。
-    不带引号的话，Windows 会拿第一个空格去断命令行——症状是"设了自启，登录时什么都没
-    发生"，而注册表里那一行看起来完全正常。
+    **路径带引号，而且是全路径。** Windows 的 Run 键里命令行由系统自己拼，工作目录
+    不是程序所在的目录；macOS 这一边虽然最终写的是 ``ProgramArguments`` 数组，保留
+    同一个字符串让两个平台共用 ``read_command`` 的比较逻辑。
     """
     return f'"{Path(exe)}" {REMIND_FLAG}'
+
+
+def _launch_agent_record(command: str) -> dict[str, object]:
+    args = shlex.split(command)
+    return {
+        "Label": _LAUNCH_AGENT_LABEL,
+        "ProgramArguments": args,
+        "RunAtLoad": True,
+        "ProcessType": "Background",
+    }
 
 
 def read_command() -> str | None:
     """现在写的是什么。没有、不支持、或读不动都是 ``None``。
 
     **读不出来不等于没设**——但对调用方来说两者要做的事一样（写一遍），所以这里不
-    区分。真正的"没设"与"值坏了"在注册表编辑器里是两回事，那是给人看的，不是给这一层
-    看的。
+    区分。
     """
+    if sys.platform == "darwin":
+        path = _launch_agent_path()
+        try:
+            record = plistlib.loads(path.read_bytes())
+        except (OSError, ValueError, plistlib.InvalidFileException):
+            return None
+        args = record.get("ProgramArguments") if isinstance(record, dict) else None
+        if not isinstance(args, list) or not args or not all(isinstance(a, str) for a in args):
+            return None
+        if len(args) == 2 and args[1] == REMIND_FLAG:
+            return command_for(args[0])
+        return shlex.join(args)
     if not is_supported():
         return None
     import winreg
@@ -141,11 +171,11 @@ def read_command() -> str | None:
 
 
 def sync(command: str) -> bool:
-    """把自启那条值对齐到 ``command``。**值真的一样就什么都不做**，返回有没有动过。
+    """把自启项对齐到 ``command``。**值真的一样就什么都不做**，返回有没有动过。
 
-    "不无脑重写"是三条对策里最要紧的一条：每次启动都去动那个键，会让杀软与用户都
-    觉得这个程序在做可疑的事（它每天改一次注册表，而界面上什么都没发生）。所以先读、
-    一样就返回——**搬家之后的自愈**（exe 换了位置）也走这一条路：值不一样才写。
+    "不无脑重写"是三条对策里最要紧的一条：每次启动都去改系统设置，会让用户（以及
+    安全软件）觉得这个程序在做可疑的事。所以先读、一样就返回——**搬家之后的自愈**
+    （程序换了位置）也走这一条路：值不一样才写。
 
     **只在用户显式勾选时被调用**（见设置页），这一层不做那个决定。
     """
@@ -153,6 +183,19 @@ def sync(command: str) -> bool:
         return False
     if read_command() == command:
         return False
+    if sys.platform == "darwin":
+        try:
+            record = _launch_agent_record(command)
+            if not record["ProgramArguments"]:
+                return False
+            path = _launch_agent_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_suffix(".tmp")
+            temporary.write_bytes(plistlib.dumps(record))
+            temporary.replace(path)
+        except (OSError, ValueError):
+            return False
+        return True
     import winreg
 
     with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
@@ -161,11 +204,20 @@ def sync(command: str) -> bool:
 
 
 def remove() -> bool:
-    """把自启那条值删掉。删过、本来就没有、不支持都是假，真删掉了是真。
+    """把自启项删掉。删过、本来就没有、不支持都是假，真删掉了是真。
 
-    **只删自己那一个值，不删那个键**：``Run`` 这个键是 Windows 的，里面还住着别的
-    程序；删它等于顺手把别人的自启也关掉。
+    **只删自己那一项**：Windows 的 ``Run`` 键里还住着别的程序，删它等于顺手把别人的
+    自启也关掉；macOS 只删自己那个 plist。
     """
+    if sys.platform == "darwin":
+        path = _launch_agent_path()
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return False
+        return True
     if not is_supported():
         return False
     import winreg

@@ -1,0 +1,65 @@
+name: macOS 构建
+
+# PyInstaller 不能交叉编译：`.app` 只能在 macOS 上生成。这条腿由 GitHub 的
+# macos-14（Apple Silicon）runner 构建，产物作为 artifact 下载；Windows 的
+# Release 流水线（tools/build_exe.py）一个字都不动。
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*-macos"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  UV_LINK_MODE: copy
+
+jobs:
+  build:
+    name: macOS arm64（.app / zip / dmg）
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: 装依赖（含 PySide6 / vosk / PyInstaller）
+        run: uv sync --locked --all-extras
+
+      - name: 先在 macOS 上跑几条平台相关的守卫
+        # QPA 在 runner 上没有显示器；这些文件不建窗口。Keychain 的真通道也不碰：
+        # macOS 的测试用替身断言设置里只留标记。
+        run: >
+          uv run pytest -p no:pytest-qt
+          tests/test_secrets.py tests/test_autostart.py tests/test_paths_root.py
+          tests/test_portability.py
+
+      - name: 取随包的中文语音模型（Apache-2.0）
+        run: |
+          curl -L --fail --retry 5 --retry-delay 5 \
+            -o "$RUNNER_TEMP/vosk-model.zip" \
+            https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip
+          unzip -q "$RUNNER_TEMP/vosk-model.zip" -d "$RUNNER_TEMP/vosk"
+          test -d "$RUNNER_TEMP/vosk/vosk-model-small-cn-0.22"
+
+      - name: 构建 .app、ad-hoc 签名、自检、打包
+        run: >
+          uv run python tools/build_macos.py --release
+          --bundle-vosk-model "$RUNNER_TEMP/vosk/vosk-model-small-cn-0.22"
+
+      - name: 上传安装包
+        uses: actions/upload-artifact@v4
+        with:
+          name: axo-macos-arm64
+          if-no-files-found: error
+          path: |
+            dist/*.zip
+            dist/*.dmg
+            dist/*.sha256

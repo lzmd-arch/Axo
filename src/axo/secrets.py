@@ -1,40 +1,57 @@
-"""Windows DPAPI 的一层薄封装：把一小段明文（云端 API key）变成能写进设置里的一串。
+"""把云端 API key 变成能写进设置里的一串，并在读回时还原。
 
-**为什么需要它。** 云端后端的 key 是一笔能直接花钱的凭据，而它的落点是 Windows 注册表
-（``QSettings`` 的原生格式）。注册表不是保险柜：同机的另一个账户、一次"导出设置"、
-一份被拷走的注册表分支，都能把它读走。DPAPI（``CryptProtectData``）把密文绑在
-**当前 Windows 账户 + 当前机器**上——拷到别处就是一堆解不开的字节。它随系统提供，
-所以这一层不需要任何新依赖。
+**为什么需要它。** 云端后端的 key 是一笔能直接花钱的凭据，而它的落点是系统的设置存储
+（Windows 注册表、macOS plist）。那不是保险柜：同机的另一个账户、一次"导出设置"、
+一份被拷走的文件，都能把它读走。
+
+## 两个平台，两条系统通道
+
+* **Windows：DPAPI**（``CryptProtectData``）。密文绑在**当前 Windows 账户 + 当前机器**上，
+  拷到别处就是一堆解不开的字节。随系统提供，不需要新依赖。
+* **macOS：Keychain**。用系统自带的 ``security`` 写一条 generic password，设置里只留一个
+  :data:`KEYCHAIN_MARKER`。key 本身不落在 plist 里，跟着登录钥匙串的访问控制走。
+  ``security`` 是 macOS 自带件，同样不需要新依赖。
 
 **为什么不是自己写加密。** 自己拼一套对称加密就得自己管密钥，而密钥又得存在某处，
-于是问题只是换了个地方——DPAPI 把"密钥存哪"整个问题交给了操作系统。
+于是问题只是换了个地方——DPAPI 与 Keychain 把"密钥存哪"整个问题交给了操作系统。
 
-**为什么不在 ``ui/settings_store.py`` 里。** 不是因为它是纯层（``ctypes`` 与 ``base64``
+**为什么不在 ``ui/settings_store.py`` 里。** 不是因为它是纯层（``ctypes``/``subprocess``
 都是标准库，不在 ``test_layering._PURE_FORBIDDEN`` 里），而是因为**平台相关的代码该集中
 在一个模块**：``paths.py`` 管操作系统的目录，这里管操作系统的凭据，两者并列。
 
 **它只做加解密，不做"要不要加密"的决定。** 调用方（``ui/settings_store.py``）是唯一知道
 "盘上那一串是密文、内存里这个字段是明文"的地方——两处解密点迟早会漂。
 
-**降级一律是空串，绝不抛。** 换机器、换 Windows 账户、注册表被手改、密文损坏、非
-Windows——这五种情况下正确的行为都是"当作没配"，让用户重填一个，而不是让整个程序起不来。
+**降级一律是空串，绝不抛。** 换机器、换系统账户、设置被手改、密文损坏、Keychain 被锁、
+平台不支持——这些情况下正确的行为都是"当作没配"，让用户重填一个，而不是让整个程序
+起不来。
 """
 
 from __future__ import annotations
 
 import base64
 import ctypes
+import shutil
+import subprocess
 import sys
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
-__all__ = ["is_available", "protect", "unprotect"]
+__all__ = ["KEYCHAIN_MARKER", "is_available", "protect", "unprotect"]
 
 #: ``CRYPTPROTECT_UI_FORBIDDEN``——**绝不让系统弹 UI**。没有它，某些配置下加密会弹一个
 #: 授权对话框；对一个后台线程里跑的设置保存来说，那就是一次无声的挂起。
 _CRYPTPROTECT_UI_FORBIDDEN = 0x01
 
 _WINDOWS = sys.platform == "win32"
+_DARWIN = sys.platform == "darwin"
+
+KEYCHAIN_MARKER = "keychain:v1"
+"""macOS 上写进设置的那一串。**它不含 key**，只是"去 Keychain 取"的指针。"""
+
+_KEYCHAIN_SERVICE = "Axo"
+_KEYCHAIN_ACCOUNT = "cloud-api-key"
 
 
 class _DataBlob(ctypes.Structure):
@@ -99,43 +116,161 @@ def _blob_from(data: bytes) -> _DataBlob:
     return blob
 
 
+@lru_cache(maxsize=1)
+def _security_binary() -> str:
+    """macOS 自带的 ``security``。缓存一次，避免每次保存都查 PATH。"""
+    if not _DARWIN:
+        return ""
+    found = shutil.which("security")
+    if found:
+        return found
+    fallback = Path("/usr/bin/security")
+    return str(fallback) if fallback.is_file() else ""
+
+
+def _keychain_available() -> bool:
+    return bool(_security_binary())
+
+
+def _keychain_store(secret: str) -> bool:
+    """把 key 写进登录钥匙串。**失败返回 ``False``，不抛。**
+
+    ``-U`` 是"已有就更新"：用户换了一个 key 时不能留下两条同名记录，否则 ``find``
+    取到哪一条取决于钥匙串内部的顺序。``-w`` 的明文会出现在本进程的 argv 里几百毫秒；
+    同一账户下的进程本来就能读这只钥匙串，且 ``security`` 没有从 stdin 收密码的开关，
+    所以这里接受这个窗口，而不是为了它引一个第三方 keyring 包。
+    """
+    security = _security_binary()
+    if not security:
+        return False
+    try:
+        done = subprocess.run(
+            [
+                security,
+                "add-generic-password",
+                "-U",
+                "-s",
+                _KEYCHAIN_SERVICE,
+                "-a",
+                _KEYCHAIN_ACCOUNT,
+                "-w",
+                secret,
+            ],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return done.returncode == 0
+
+
+def _keychain_load() -> str:
+    security = _security_binary()
+    if not security:
+        return ""
+    try:
+        done = subprocess.run(
+            [
+                security,
+                "find-generic-password",
+                "-s",
+                _KEYCHAIN_SERVICE,
+                "-a",
+                _KEYCHAIN_ACCOUNT,
+                "-w",
+            ],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if done.returncode != 0:
+        return ""
+    return done.stdout.rstrip("\r\n")
+
+
+def _keychain_delete() -> bool:
+    security = _security_binary()
+    if not security:
+        return False
+    try:
+        done = subprocess.run(
+            [
+                security,
+                "delete-generic-password",
+                "-s",
+                _KEYCHAIN_SERVICE,
+                "-a",
+                _KEYCHAIN_ACCOUNT,
+            ],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return done.returncode == 0
+
+
 def is_available() -> bool:
-    """这台机器上能不能用（非 Windows 一律 False）。"""
-    return _crypt32() is not None
+    """这台机器上有没有一条可用的系统凭据通道。"""
+    return _crypt32() is not None or _keychain_available()
 
 
 def protect(plaintext: str) -> str:
-    """明文 → 写进设置里的一串（base64）。空串进、空串出；失败也是空串。"""
+    """明文 → 写进设置里的一串。空串进、空串出；失败也是空串。
+
+    macOS 上还会顺手清掉旧记录：``protect("")`` 是"用户把 key 删了"，留着钥匙串里
+    那条记录只会让下一次 ``find`` 找出一个用户以为已经删掉的 key。
+    """
     if not plaintext:
+        if _keychain_available():
+            _keychain_delete()
         return ""
-    loaded = _crypt32()
-    if loaded is None:
-        return ""
-    crypt32, kernel32 = loaded
-    source = _blob_from(plaintext.encode("utf-8"))
-    out = _DataBlob()
-    ok = crypt32.CryptProtectData(
-        ctypes.byref(source),
-        None,
-        None,
-        None,
-        None,
-        _CRYPTPROTECT_UI_FORBIDDEN,
-        ctypes.byref(out),
-    )
-    if not ok:
-        return ""
-    try:
-        cipher = ctypes.string_at(out.pbData, out.cbData)
-    finally:
-        # **DPAPI 分配的内存只能用它自己的 LocalFree 还**，不能用 Python 的释放器。
-        kernel32.LocalFree(out.pbData)
-    return base64.b64encode(cipher).decode("ascii")
+    if _WINDOWS:
+        loaded = _crypt32()
+        if loaded is None:
+            return ""
+        crypt32, kernel32 = loaded
+        source = _blob_from(plaintext.encode("utf-8"))
+        out = _DataBlob()
+        ok = crypt32.CryptProtectData(
+            ctypes.byref(source),
+            None,
+            None,
+            None,
+            None,
+            _CRYPTPROTECT_UI_FORBIDDEN,
+            ctypes.byref(out),
+        )
+        if not ok:
+            return ""
+        try:
+            cipher = ctypes.string_at(out.pbData, out.cbData)
+        finally:
+            # **DPAPI 分配的内存只能用它自己的 LocalFree 还**，不能用 Python 的释放器。
+            kernel32.LocalFree(out.pbData)
+        return base64.b64encode(cipher).decode("ascii")
+    if _keychain_available() and _keychain_store(plaintext):
+        return KEYCHAIN_MARKER
+    return ""
 
 
 def unprotect(stored: str) -> str:
     """设置里那一串 → 明文。**任何一步不对都返回空串，绝不抛**（见模块 docstring）。"""
     if not stored:
+        return ""
+    if stored == KEYCHAIN_MARKER:
+        return _keychain_load() if _keychain_available() else ""
+    if not _WINDOWS:
         return ""
     loaded = _crypt32()
     if loaded is None:

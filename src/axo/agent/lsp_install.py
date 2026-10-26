@@ -7,7 +7,8 @@
 * ``rustup component add rust-analyzer``
 * ``go install .../gopls``
 * ``dotnet tool install csharp-ls``（用户目录 ``~/.dotnet/tools``）
-* ``winget install --scope user``（LuaLS、Dart SDK、LLVM/clangd；可能触发 UAC）
+* ``brew install``（macOS：LuaLS、Dart、LLVM/clangd、gopls）
+* ``winget install --scope user``（Windows：LuaLS、Dart SDK、LLVM/clangd；可能触发 UAC）
 
 装不上的语言会明确列出“需要什么运行时/手工配置”，不会假装成功。装完用
 ``python tools/language_doctor.py`` 复核；新开的 Axo 进程才会读到新 PATH。
@@ -18,7 +19,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -89,38 +89,57 @@ _PLANS: tuple[Plan, ...] = (
         "go",
         "Go",
         ("gopls",),
-        (Method("go", package="golang.org/x/tools/gopls@latest"),),
+        (
+            Method("go", package="golang.org/x/tools/gopls@latest"),
+            Method("brew", packages=("gopls",), note="没有 go 时的 macOS 安装通道"),
+        ),
     ),
     Plan(
         "csharp",
         "C#",
         ("csharp-ls",),
         (Method("dotnet", package="csharp-ls", version="0.13.0"),),
+        manual="先装 .NET SDK（macOS 可 brew install --cask dotnet-sdk），"
+        "再 dotnet tool install --global csharp-ls。",
     ),
     Plan(
         "lua",
         "Lua",
         ("lua-language-server",),
-        (Method("winget", package="LuaLS.lua-language-server"),),
+        (
+            Method("brew", packages=("lua-language-server",), note="macOS"),
+            Method("winget", package="LuaLS.lua-language-server"),
+        ),
     ),
     Plan(
         "dart",
         "Dart",
         ("dart",),
-        (Method("winget", package="Google.DartSDK"),),
+        (
+            Method("brew", packages=("dart",), note="macOS"),
+            Method("winget", package="Google.DartSDK"),
+        ),
     ),
     Plan(
         "c",
         "C / C++",
         ("clangd",),
-        (Method("winget", package="LLVM.LLVM", note="可能触发 UAC/管理员安装"),),
+        (
+            Method(
+                "brew",
+                packages=("llvm",),
+                note="macOS：keg-only，clangd 在 opt/llvm/bin（已加入 LSP 搜索路径）",
+            ),
+            Method("winget", package="LLVM.LLVM", note="可能触发 UAC/管理员安装"),
+        ),
     ),
     Plan(
         "java",
         "Java",
         ("jdtls",),
         (),
-        manual="下载 jdtls 后设 AXO_JDTLS_HOME（便携目录需含 plugins/ 与 config_win）。",
+        manual="下载 jdtls 后设 AXO_JDTLS_HOME（便携目录需含 plugins/ 与 config_win/"
+        "config_mac/config_linux 中对应的那个）。",
     ),
     Plan(
         "ruby",
@@ -164,6 +183,7 @@ def _prereq(kind: str) -> str:
         "rustup": "rustup",
         "go": "go",
         "dotnet": "dotnet",
+        "brew": "Homebrew",
         "winget": "winget",
     }.get(kind, kind)
 
@@ -172,16 +192,18 @@ def _command(method: Method) -> list[str] | None:
     if method.kind == "npm":
         return _launch_command(("npm", "install", "-g", *method.packages))
     if method.kind == "rustup":
-        rustup = shutil.which("rustup")
+        rustup = _resolve_executable("rustup")
         return [rustup, "component", "add", method.component] if rustup else None
     if method.kind == "go":
-        go = shutil.which("go")
+        go = _resolve_executable("go")
         return [go, "install", method.package] if go else None
     if method.kind == "dotnet":
         root = os.environ.get("DOTNET_ROOT", "").strip()
         portable = Path(root) / ("dotnet.exe" if os.name == "nt" else "dotnet") if root else None
         dotnet = (
-            str(portable) if portable is not None and portable.is_file() else shutil.which("dotnet")
+            str(portable)
+            if portable is not None and portable.is_file()
+            else _resolve_executable("dotnet")
         )
         if not dotnet:
             return None
@@ -196,8 +218,11 @@ def _command(method: Method) -> list[str] | None:
             "--version",
             method.version,
         ]
+    if method.kind == "brew":
+        brew = _resolve_executable("brew")
+        return [brew, "install", *method.packages] if brew else None
     if method.kind == "winget":
-        winget = shutil.which("winget")
+        winget = _resolve_executable("winget")
         if not winget:
             return None
         return [
@@ -234,6 +259,7 @@ def build_plans(languages: list[str] | None = None) -> list[dict[str, object]]:
                 command = _command(method)
                 if command is not None:
                     chosen = method
+                    reason = ""
                     break
                 reason = f"缺少 {_prereq(method.kind)}"
             if not plan.methods:

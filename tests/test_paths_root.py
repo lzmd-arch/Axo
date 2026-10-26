@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -41,6 +42,7 @@ def _isolate_local_appdata(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     真的 `%LOCALAPPDATA%\\axo`。
     """
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.delenv("AXO_DATA", raising=False)
 
 
@@ -101,8 +103,13 @@ def test_the_stored_pointer_wins_over_the_default(tmp_path: Path) -> None:
 
 
 def test_the_default_is_used_when_nothing_is_set(tmp_path: Path) -> None:
-    """什么都没设时回到 `%LOCALAPPDATA%\\axo`，与改动前一字不差。"""
-    assert paths.data_dir() == tmp_path / "localappdata" / "axo"
+    """什么都没设时回到平台默认：Windows ``%LOCALAPPDATA%\\axo``、
+    macOS ``~/Library/Application Support/axo``。"""
+    if sys.platform == "darwin":
+        expected = tmp_path / "home" / "Library" / "Application Support" / "axo"
+    else:
+        expected = tmp_path / "localappdata" / "axo"
+    assert paths.data_dir() == expected
     assert paths.data_root_source() == "default"
 
 

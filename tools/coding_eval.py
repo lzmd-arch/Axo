@@ -391,11 +391,12 @@ def main() -> None:
             model=model, base_url=a.base_url or DEFAULT_OPENAI_BASE_URL, api_key=key
         )
     else:
-        # 用 Axo 里已经配置的云端 key（DPAPI）；**只在进程内交给后端，不打印**。
-        # 需要 PySide6；DPAPI 是 Windows 能力，其它平台明确指向环境变量后端。
-        if os.name != "nt":
+        # 用 Axo 里已经配置的云端 key（Windows DPAPI / macOS Keychain）；
+        # **只在进程内交给后端，不打印**。其它平台明确指向环境变量后端。
+        if sys.platform not in ("win32", "darwin"):
             raise SystemExit(
-                "axo-settings 后端依赖 Windows DPAPI；请用 --backend openai --api-key-env NAME。"
+                "axo-settings 后端依赖 Windows DPAPI 或 macOS Keychain；"
+                "请用 --backend openai --api-key-env NAME。"
             )
         from PySide6.QtCore import QSettings
 

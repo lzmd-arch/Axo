@@ -22,13 +22,13 @@
         bench          量具层：读语料、跑被测对象、算子项
         ui             PySide6 壳 + 嵌在里面的网页对话区
         paths          数据目录解析
-        secrets        密钥加解密（Windows DPAPI，**平台相关的东西集中在这一处**）
+        secrets        密钥加解密（Windows DPAPI / macOS Keychain，**平台相关的东西集中在这一处**）
 
 依赖方向单向：:mod:`axo` 依赖 :mod:`memcore`，反过来不成立。
 """
 
 from __future__ import annotations
 
-__version__ = "0.11.1"
+__version__ = "0.12.0"
 
 __all__ = ["__version__"]

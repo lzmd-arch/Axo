@@ -111,6 +111,21 @@ DATAS = (
 不会出现"新加了一个 js 而产物里没有"这种只在交付物里才看得见的坏法。
 """
 
+HIDDEN_IMPORTS = (
+    # 同步是懒 import 的（没装 sync extra 也能启动主程序），静态分析看不到它们。
+    "cryptography",
+    "qrcode",
+    "qrcode.image.svg",
+    # 音乐标签是函数内 import 的（没装 music extra 也能启动主程序）。
+    "tinytag",
+    # 语言服务器安装/体检：设置页的对话框在函数内 import，静态分析看不到。
+    "axo.agent.lsp_install",
+    "axo.agent.language_doctor",
+    # macOS 的 bundle 自检入口也是函数内 import。
+    "axo.bundle_smoke",
+)
+"""两条构建流水线（Windows / macOS）共用的 hidden imports。"""
+
 ICON_SIZES = (256, 64, 48, 32, 24, 16)
 """手工拼进 ``.ico`` 的档位，从大到小。
 
@@ -338,23 +353,8 @@ def _command(*, name: str, console: bool, icon: Path | None, clean: bool) -> lis
         command.append("--clean")
     # 见上面那段：vosk 的 C 库靠一个运行时拼出来的路径加载，静态分析找不到它。
     command += ["--collect-binaries", "vosk"]
-    # 同步是懒 import 的（没装 sync extra 也能启动主程序），静态分析看不到它们。
-    command += [
-        "--hidden-import",
-        "cryptography",
-        "--hidden-import",
-        "qrcode",
-        "--hidden-import",
-        "qrcode.image.svg",
-        # 音乐标签是函数内 import 的（没装 music extra 也能启动主程序）。
-        "--hidden-import",
-        "tinytag",
-        # 语言服务器安装/体检：设置页的对话框在函数内 import，静态分析看不到。
-        "--hidden-import",
-        "axo.agent.lsp_install",
-        "--hidden-import",
-        "axo.agent.language_doctor",
-    ]
+    for module in HIDDEN_IMPORTS:
+        command += ["--hidden-import", module]
     for source, target in DATAS:
         command += ["--add-data", f"{_ROOT / source}{os.pathsep}{target}"]
     if icon is not None:

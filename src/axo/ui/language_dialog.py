@@ -67,7 +67,7 @@ class LanguageServersDialog(QDialog):
         outer.addWidget(
             QLabel(
                 "LSP 的语义查询需要对应语言的服务器。先「检查现状」看缺什么；"
-                "「预览计划」只打印命令；「自动安装」会联网调用 npm/rustup/go/dotnet/winget。"
+                "「预览计划」只打印命令；「自动安装」会联网调用 npm/rustup/go/dotnet/Homebrew/winget。"
                 "安装器不提权、不自动同意许可证。",
                 self,
             )
@@ -126,7 +126,7 @@ class LanguageServersDialog(QDialog):
         answer = QMessageBox.question(
             self,
             "自动安装语言服务器",
-            "会联网调用本机已有的 npm/rustup/go/dotnet/winget，并安装缺失的服务器。\n"
+            "会联网调用本机已有的 npm/rustup/go/dotnet/Homebrew/winget，并安装缺失的服务器。\n"
             "不会提权，不会自动同意许可证；可能需要几分钟。继续？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,

@@ -15,6 +15,13 @@ PyInstaller 收的是一份**脚本**——它把入口文件当 ``__main__`` �
 
 from __future__ import annotations
 
+import sys
+
+if __name__ == "__main__" and "--bundle-smoke" in sys.argv[1:]:  # pragma: no cover - 构建自检
+    from axo.bundle_smoke import main as smoke_main
+
+    raise SystemExit(smoke_main(sys.argv[2:]))
+
 from axo.ui.app import main
 
 if __name__ == "__main__":  # pragma: no cover - 进程入口

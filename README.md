@@ -53,6 +53,14 @@
 去 [Releases](https://github.com/lzmd-arch/Axo/releases) 下
 `axo-<版本>-win64.zip`，解开，双击里面的 `axo.exe`。
 
+**macOS（Apple Silicon）** 的包是 `.app` + `.dmg`，由
+[`macos-release.yml`](.github/workflows/macos-release.yml) 在 `macos-14` 上构建
+（PyInstaller 不能交叉编译，所以 Windows 本机做不出 Mac 的包）。从 Actions 那次构建的
+`axo-macos-arm64` artifact 里取 `Axo-<版本>-macos-arm64.zip` 或 `.dmg`，把 `Axo.app`
+拖进「应用程序」。它是 **ad-hoc 签名、没有 Apple 公证**的：第一次右键「打开」一次；
+若系统说"已损坏"，执行 `xattr -dr com.apple.quarantine /Applications/Axo.app`。
+macOS 包**已经带了**中文离线语音模型，下面那段手动放模型只针对 Windows zip。
+
 **首次双击 Windows 会拦一下**——它没有代码签名，所有未签名的 exe 都会被这样拦：
 点「更多信息」→「仍要运行」。
 
@@ -65,9 +73,11 @@
 * **云端**：设置 → 云端后端，填一个 API key（DeepSeek，或任何 OpenAI 兼容的端点）。
   这条路不需要显卡，也不需要 Ollama。
 
-**语音输入还要自己放一个模型。** 输入框旁边那个麦克风按钮是**离线**识别的（声音不出这台
-机器），但识别模型（约 42 MB）不进安装包——它与"Ollama 的模型要你自己 pull"同一个姿态。
-去 [vosk 的模型页](https://alphacephei.com/vosk/models) 下 `vosk-model-small-cn-0.22.zip`
+**语音输入还要自己放一个模型（Windows zip；macOS 包已带）。** 输入框旁边那个麦克风按钮是
+**离线**识别的（声音不出这台机器），但识别模型（约 42 MB）不进 Windows 安装包——它与
+"Ollama 的模型要你自己 pull"同一个姿态。macOS 包把
+`vosk-model-small-cn-0.22` 放在 `Axo.app` 里，开箱可用；其它平台去
+[vosk 的模型页](https://alphacephei.com/vosk/models) 下 `vosk-model-small-cn-0.22.zip`
 （Apache-2.0），解压到数据目录下的 `models/`：
 
 ```
@@ -164,12 +174,14 @@ LSP 语义查询要外部语言服务器。**默认只打印计划**；确认后
 
 ```bash
 uv run axo-lsp-install                 # 计划：哪些已装、哪些可自动装、哪些要手工
-uv run axo-lsp-install --yes           # 用 npm/rustup/go/dotnet/winget 自动装能装的
+uv run axo-lsp-install --yes           # 用 npm/rustup/go/dotnet/Homebrew/winget 自动装能装的
 uv run axo-lsp-install --only python,go,rust --yes
 uv run python tools/language_doctor.py # 装完复核 26 个常见后缀
 ```
 
-它不会提权、不会自动同意许可证、不会改系统 PATH；缺 Node/Go/.NET/winget 时会明确报缺。
+它不会提权、不会自动同意许可证、不会改系统 PATH；缺 Node/Go/.NET/Homebrew/winget
+时会明确报缺。macOS 上从 Finder 启动的 `.app` 看不到 Homebrew 的 PATH，程序已把
+`/opt/homebrew/bin`、`/usr/local/bin` 等目录显式补进语言服务器与命令工具的搜索路径。
 Java/Ruby/Kotlin/Swift/Scala/R/PowerShell/Elixir/Haskell/Clojure 仍需手工装服务器/运行时。
 
 `uv` 会自己把 Python 3.12 拉下来，不需要你预装。`--all-extras` 把五组可选依赖
@@ -517,7 +529,7 @@ def tools():
 
 ## 数据放在哪
 
-默认 `%LOCALAPPDATA%\axo\`。**刻意不放在仓库目录里**——否则
+默认 `%LOCALAPPDATA%\axo\`（macOS：`~/Library/Application Support/axo/`）。**刻意不放在仓库目录里**——否则
 `git clean -xdf` 会抹掉全部记忆，而且有把私人对话提交进版本控制的风险。
 
 **在程序里就能改：设置 → 数据 → 更改位置。** 挑一个新文件夹，程序会把库、逐字稿、
@@ -529,7 +541,7 @@ def tools():
 ——你往里丢一张 `开心.png`，她就多了一个叫「开心」的表情包，下一轮就能发。默认的 12 张只在
 首次启动时播种；之后删掉哪张都不会再补回来，目录归你。
 
-这个选择记在**注册表**里，而注册表与程序所在文件夹毫无关系——所以**删掉解压出来的
+这个选择记在**系统设置**里（Windows 注册表、macOS plist），与程序所在文件夹毫无关系——所以**删掉解压出来的
 那份、重新下载一个新的，它还在**。
 
 另外两种改法：环境变量 `AXO_DATA`（开发与脚本用，**它压过界面里选的那个**，设了它
@@ -539,25 +551,28 @@ def tools():
 选一个里面**已经有一份记忆**的文件夹时，程序会直接接手那一份、一个字节都不复制
 ——那是"我把库拷到 D 盘了"和"U 盘插到另一台机器"的用法。
 
-**卸载要删两处，不是一个目录。** 除了数据目录，外观与后端设置走 `QSettings`，
-而在 Windows 上它的原生格式**是注册表**：
+**卸载要删两处，不是一个目录。** 除了数据目录，外观与后端设置走 `QSettings`：
+Windows 上是注册表，macOS 上是 `~/Library/Preferences/` 下 Qt 的原生 plist。
 
 ```
 HKEY_CURRENT_USER\Software\Axo\axo
 ```
 
 记忆库、逐字稿、壁纸都不在那儿（它们全在数据目录里），那里只有主题、选中的模型、
-工具开关这类设置，以及**云端后端那个 API key 的密文**。密文是用 DPAPI 按「当前
-Windows 账户 + 当前机器」加密的，拷到别的账户或别的机器上解不开——这是 `secrets.py`
-的全部理由，也是"把设置从一台机器搬到另一台"会看到"没配过"的原因。
+工具开关这类设置。**云端 API key 不在这两个地方**：Windows 存的是 DPAPI 密文，
+macOS 只存一个 `keychain:v1` 标记，key 本身在登录钥匙串（服务名 `Axo`）——拷走
+plist 不会带走 key。这是 `secrets.py` 的全部理由，也是"把设置从一台机器搬到另一台"
+会看到"没配过"的原因。
 
-程序本身不留别的东西：没有服务、没有安装到 `Program Files`。**唯一一处例外是用户显式勾选的「开机自启」**（设置 → 提醒，默认关）：它往
-`HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run` 写一个值，让登录时跑一次无头入口（`axo.exe --remind`），把机器关着那段时间里到点的提醒补上；取消勾选就把那个值删掉，别的什么都不留。
+程序本身不留别的东西：没有服务、没有安装到 `Program Files`。**唯一一处例外是用户显式勾选的「开机自启」**（设置 → 提醒，默认关）：Windows 写
+`HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run` 一个值，macOS 写
+`~/Library/LaunchAgents/com.axo.memoryterminal.reminders.plist`；取消勾选就把自己那一项删掉，别的什么都不留。
 
 ## 限制
 
-如实说明的限制：**没有代码签名**（所以有上面那句 SmartScreen）、**只有 Windows
-x64**（它是 PyInstaller 冻结的产物，而冻结只能在目标平台上做）、**没有 Live2D**
+如实说明的限制：**没有代码签名/公证**（Windows 会 SmartScreen 拦一次；macOS 的包是
+ad-hoc 签名，Gatekeeper 要右键打开一次）、**Windows x64 与 macOS arm64**（PyInstaller
+冻结只能在目标平台上做，且 macOS 包当前只有 Apple Silicon）、**没有 Live2D**
 （P6b 在等 Cubism 物料）、**不装 Ollama 也不填 key 就是开得起来但聊不了天**、
 **她开口说话要装语音组件**（独立程序，没装时不出声但会说一句原因，对话照常）。
 另两条与声音有关的已知代价：**识别错的那句会进记忆库**（说话没有「确认一下再发」）；

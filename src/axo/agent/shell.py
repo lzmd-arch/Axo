@@ -222,7 +222,35 @@ def _minimal_env() -> dict[str, str]:
     env = {key: os.environ[key] for key in _ENV_KEYS if key in os.environ}
     env.update(_msvc_env())
     env.setdefault("PYTHONIOENCODING", "utf-8")
+    if sys.platform == "darwin":
+        # Finder 启动的 .app 继承的是 launchd 的极小 PATH（/usr/bin:/bin:/usr/sbin:/sbin），
+        # 看不到 Homebrew、cargo、用户级 npm。工具面里的 `cargo`/`go`/`npm` 会因此在
+        # 打包版里"装了却找不到"，而源码态完全正常。
+        env["PATH"] = _mac_tool_path(env.get("PATH", ""))
     return env
+
+
+def _mac_tool_path(current: str) -> str:
+    """把 macOS 常见的工具目录补到 PATH 前面；已有的不重复。"""
+    home = Path.home()
+    wanted = (
+        home / ".cargo" / "bin",
+        home / "go" / "bin",
+        home / ".dotnet" / "tools",
+        home / ".local" / "bin",
+        Path("/opt/homebrew/bin"),
+        Path("/opt/homebrew/sbin"),
+        Path("/opt/homebrew/opt/llvm/bin"),
+        Path("/usr/local/bin"),
+        Path("/usr/local/sbin"),
+        Path("/usr/local/opt/llvm/bin"),
+    )
+    parts = [part for part in current.split(os.pathsep) if part]
+    for directory in reversed(wanted):
+        text = str(directory)
+        if text not in parts:
+            parts.insert(0, text)
+    return os.pathsep.join(parts)
 
 
 def _kill_tree(process: subprocess.Popen[bytes]) -> None:

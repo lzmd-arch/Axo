@@ -171,6 +171,18 @@ def _user_bin_dirs() -> tuple[Path, ...]:
         home / ".local" / "bin",
         Path(os.environ.get("LOCALAPPDATA", home / "AppData" / "Local")) / "Programs",
     ]
+    if platform.system() == "Darwin":
+        # .app 从 Finder 启动时 PATH 里没有 Homebrew；语言服务器基本都装在这里。
+        dirs.extend(
+            (
+                Path("/opt/homebrew/bin"),
+                Path("/opt/homebrew/sbin"),
+                Path("/opt/homebrew/opt/llvm/bin"),
+                Path("/usr/local/bin"),
+                Path("/usr/local/sbin"),
+                Path("/usr/local/opt/llvm/bin"),
+            )
+        )
     # 便携工具链不一定在系统 PATH；用分号/冒号分隔的显式目录列表补进来。
     for raw in os.environ.get("AXO_LSP_BIN_DIRS", "").split(os.pathsep):
         if raw.strip():
@@ -223,7 +235,7 @@ def _configured_command(language: str) -> list[str] | None:
 
 @functools.lru_cache(maxsize=1)
 def _npm_global_root() -> Path | None:
-    npm = shutil.which("npm")
+    npm = _resolve_executable("npm")
     if not npm:
         return None
     try:
