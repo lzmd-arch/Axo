@@ -166,6 +166,9 @@ def _run_tests(root: Path, command: str = "") -> tuple[bool, str]:
     # **不要继承整个环境**：DEEPSEEK_API_KEY 等凭据不该进入 agent 生成代码的子进程。
     env = _minimal_env()
     env["PYTHONPATH"] = str(root) + os.pathsep + env.get("PYTHONPATH", "")
+    # 评测的临时仓库不需要宿主项目的 pytest 插件。CI 核心腿里 PySide6 没装，
+    # 而 pytest-qt 被自动加载时会 ImportError: libEGL.so.1——那不是任务失败。
+    env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
     resolved = command or f'"{sys.executable}" -m pytest -q'
     proc = subprocess.run(
         resolved,
