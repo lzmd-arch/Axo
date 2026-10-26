@@ -1,7 +1,7 @@
 name: macOS 构建
 
 # PyInstaller 不能交叉编译：`.app` 只能在 macOS 上生成。这条腿由 GitHub 的
-# macos-14（Apple Silicon）runner 构建，产物作为 artifact 下载；Windows 的
+# macos-15（Apple Silicon）runner 构建，产物作为 artifact 下载；Windows 的
 # Release 流水线（tools/build_exe.py）一个字都不动。
 on:
   workflow_dispatch:
@@ -22,7 +22,7 @@ env:
 jobs:
   build:
     name: macOS arm64（.app / zip / dmg）
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -36,12 +36,26 @@ jobs:
         run: uv sync --python 3.12 --locked --all-extras
 
       - name: 先在 macOS 上跑几条平台相关的守卫
-        # QPA 在 runner 上没有显示器；这些文件不建窗口。Keychain 的真通道也不碰：
-        # macOS 的测试用替身断言设置里只留标记。
+        # QPA 在 runner 上没有显示器；这些文件不建窗口。钥匙串的真通道在下一步单独验。
         run: >
           uv run pytest -p no:pytest-qt
           tests/test_secrets.py tests/test_autostart.py tests/test_paths_root.py
           tests/test_portability.py
+
+      - name: 验证 macOS 钥匙串往返（假 key，写完即删）
+        run: |
+          uv run python - <<'PY'
+          from axo import secrets
+
+          key = "sk-axo-ci-keychain-test"
+          assert secrets.is_available(), "macOS 上 security 通道不可用"
+          marker = secrets.protect(key)
+          assert marker == secrets.KEYCHAIN_MARKER, marker
+          assert secrets.unprotect(marker) == key
+          assert secrets.protect("") == ""
+          assert secrets.unprotect(marker) == ""
+          print("keychain round-trip ok")
+          PY
 
       - name: 取随包的中文语音模型（Apache-2.0）
         run: |

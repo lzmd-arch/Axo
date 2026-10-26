@@ -133,7 +133,9 @@ GPL-3.0-only`。**本项目选 LGPL-3.0 那一支**，所以下面三件事必�
    下的独立文件，不是链接进 exe 的。使用者可以自己替换其中任何一个（换成自己构建的
    Qt、或另一个兼容版本）而**不需要重新链接本程序**，也不需要本项目的源码。
    这是选 onedir 而不是 onefile 的一个直接后果——onefile 会把它们压进一个自解压归档，
-   替换就只剩"重新打包"一条路。
+   替换就只剩"重新打包"一条路。macOS 的 `.app` 同一条布局：Qt 的 framework 在
+   `Contents/Frameworks/` 下，是可按文件替换的；`licenses/` 与
+   `THIRD-PARTY-NOTICES.txt` 随 zip/dmg 一起发。
 
 3. **源码可取得（§6）。** Qt 与 PySide6 的对应源码：
    - Qt：<https://download.qt.io/archive/qt/> 与 <https://code.qt.io/>（6.12.0 那一支）

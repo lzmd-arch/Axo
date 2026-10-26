@@ -83,6 +83,13 @@ def _tailscale_cli() -> str | None:
             r"C:\Program Files\Tailscale\tailscale.exe",
             r"C:\Program Files (x86)\Tailscale\tailscale.exe",
         ]
+    elif sys.platform == "darwin":
+        # Finder 启动的 .app 看不到 Homebrew PATH；App Store 版把 CLI 放在 app 里。
+        candidates += [
+            "/opt/homebrew/bin/tailscale",
+            "/usr/local/bin/tailscale",
+            "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+        ]
     for candidate in candidates:
         if os.path.sep in candidate:
             if Path(candidate).is_file():

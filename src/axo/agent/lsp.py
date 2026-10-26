@@ -245,6 +245,7 @@ def _npm_global_root() -> Path | None:
             capture_output=True,
             text=True,
             timeout=10,
+            env=_minimal_env() if platform.system() == "Darwin" else None,
         )
     except (OSError, subprocess.SubprocessError):
         return None

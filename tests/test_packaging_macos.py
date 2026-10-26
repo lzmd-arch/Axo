@@ -51,7 +51,7 @@ def test_info_plist_declares_the_permissions_macos_requires() -> None:
 
 def test_workflow_runs_on_apple_silicon_and_uploads_the_installer() -> None:
     workflow = (_ROOT / ".github" / "workflows" / "macos-release.yml").read_text(encoding="utf-8")
-    assert "runs-on: macos-14" in workflow
+    assert "runs-on: macos-15" in workflow
     assert "vosk-model-small-cn-0.22" in workflow
     assert "tools/build_macos.py --release" in workflow.replace("\n", " ")
     assert "actions/upload-artifact@v4" in workflow

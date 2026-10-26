@@ -6,7 +6,7 @@ API 上；把 macOS 塞进同一组 ``if`` 会让两边都读不懂。共用的�
 imports、图标源）从 ``build_exe`` 取，平台自己的构建与自检留在这里。
 
 **它不是交叉编译器。** PyInstaller 只能为目标平台原生构建：Windows 上跑这个脚本只会
-得到一句"去 macOS 上跑"。本仓的做法是由 GitHub Actions 的 ``macos-14`` runner 构建，
+得到一句"去 macOS 上跑"。本仓的做法是由 GitHub Actions 的 ``macos-15`` runner 构建，
 产物再下载回来（见 ``.github/workflows/macos-release.yml``）。
 
 用法::
@@ -189,7 +189,7 @@ def _write_info_plist(app: Path, version: str) -> None:
             "CFBundleShortVersionString": version,
             "CFBundleVersion": version,
             "CFBundleDevelopmentRegion": "zh_CN",
-            "LSMinimumSystemVersion": "12.0",
+            "LSMinimumSystemVersion": "14.0",
             "LSApplicationCategoryType": "public.app-category.productivity",
             "NSHighResolutionCapable": True,
             "NSHumanReadableCopyright": "Axo / 千岁（阿螈）",
@@ -308,6 +308,9 @@ _README = """Axo（千岁 / 阿螈）macOS 包
 - 语言服务器不随包带（它们体积大、更新快）。设置 → 工具 → 语言服务器 可以体检、
   预览并自动安装；macOS 上走 npm / rustup / go / dotnet / Homebrew。
 - 记忆库、设置与用户文件都在首次启动时新建，包本身是干净的初始状态。
+- 语音输出（TTS）与 Windows 版一样是一个可选的外部组件（F5-TTS）；不装时她不出声，
+  但会在对话里说明原因，文字回答照常。
+- 许可全文在 licenses/，第三方组件清单在 THIRD-PARTY-NOTICES.txt。
 
 第一次启动要知道
 ----------------
@@ -328,6 +331,13 @@ def _package(version: str, arch: str, *, make_dmg: bool = True) -> list[Path]:
     notices = _ROOT / "THIRD-PARTY-NOTICES.md"
     if notices.is_file():
         shutil.copyfile(notices, stage / "THIRD-PARTY-NOTICES.txt")
+    license_file = _ROOT / "LICENSE"
+    if license_file.is_file():
+        shutil.copyfile(license_file, stage / "LICENSE")
+    if (_ROOT / "licenses").is_dir():
+        shutil.copytree(_ROOT / "licenses", stage / "licenses")
+    if not (stage / "LICENSE").is_file() or not (stage / "licenses" / "LGPL-3.0.txt").is_file():
+        raise SystemExit("安装包里少了 LICENSE 或 LGPL-3.0.txt：LGPL §4(b) 的副本义务")
     (stage / "README-macOS.txt").write_text(_README, encoding="utf-8")
 
     stem = f"{APP_NAME}-{version}-macos-{arch}"
@@ -398,7 +408,7 @@ def main(argv: list[str] | None = None) -> int:
     if sys.platform != "darwin":
         raise SystemExit(
             "PyInstaller 不能交叉编译：macOS 的 .app 只能在 macOS 上构建。\n"
-            "本仓用 .github/workflows/macos-release.yml 在 macos-14 上构建。"
+            "本仓用 .github/workflows/macos-release.yml 在 macos-15 上构建。"
         )
 
     try:

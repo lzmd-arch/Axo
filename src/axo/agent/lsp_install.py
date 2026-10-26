@@ -20,10 +20,12 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from .lsp import _launch_command, _resolve_executable
+from .shell import _minimal_env
 
 __all__ = ["Method", "Plan", "build_plans", "main"]
 
@@ -282,7 +284,13 @@ def build_plans(languages: list[str] | None = None) -> list[dict[str, object]]:
 def _run(command: list[str]) -> tuple[bool, str]:
     print("$ " + " ".join(command), flush=True)
     try:
-        proc = subprocess.run(command, capture_output=True, text=True, errors="replace")
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            env=_minimal_env() if sys.platform == "darwin" else None,
+        )
     except OSError as exc:
         return False, str(exc)
     output = (proc.stdout + proc.stderr).strip()

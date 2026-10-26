@@ -75,8 +75,8 @@ _K_ALLOW_REMOTE = "backend/allow_remote"
 _K_PROVIDER = "backend/provider"
 _K_CLOUD_BASE_URL = "backend/cloud_base_url"
 _K_CLOUD_PRESET = "backend/cloud_preset"
-#: **盘上存的是密文**（Windows DPAPI 的 base64），不是 key 本身。见
-#: :mod:`axo.secrets` 与下面 :meth:`SettingsStore.load_backend`。
+#: **盘上存的不是 key 本身**：Windows 是 DPAPI 密文的 base64，macOS 只留一个
+#: ``keychain:v1`` 标记。见 :mod:`axo.secrets` 与下面 :meth:`SettingsStore.load_backend`。
 _K_API_KEY = "backend/api_key"
 
 _K_READ_ROOTS = "tools/read_roots"
@@ -268,7 +268,7 @@ class BackendSettings:
             **不与 ``host`` 复用同一个键**：``host`` 被"只连本机"那道护栏盯着、界面上
             也写着"Ollama 地址"，复用会让"切回 Ollama 时输入框里躺着 DeepSeek 的 URL"
             变成常态。
-        api_key: **明文。** 盘上的是 DPAPI 密文（见 :mod:`axo.secrets`），
+        api_key: **明文。** 盘上是 DPAPI 密文或 Keychain 标记（见 :mod:`axo.secrets`），
             加解密只在 :class:`SettingsStore` 里发生一次——两处解密点迟早会漂。
     """
 
