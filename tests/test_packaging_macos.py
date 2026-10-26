@@ -38,6 +38,19 @@ def test_dry_run_builds_an_app_bundle_with_macos_separators(capsys) -> None:
     assert "Axo.app" in text
 
 
+def test_vosk_model_is_installed_under_its_own_directory(tmp_path: Path) -> None:
+    """``--add-data 目录:目标`` 拷的是目录内容，所以目标要带模型目录名。
+
+    目标写成 ``models`` 时，模型会散成 ``models/am``、``models/conf``，而
+    ``paths.bundled_voice_model_dir()`` 找的是 ``models/vosk-model-small-cn-0.22``。
+    上一轮 macOS 构建正是红在这里。
+    """
+    module = _load_build_macos()
+    command = module._build_command(model=tmp_path, icon=None)
+    target = f"{tmp_path}:models/vosk-model-small-cn-0.22"
+    assert target in command
+
+
 def test_info_plist_declares_the_permissions_macos_requires() -> None:
     text = (_ROOT / "tools" / "build_macos.py").read_text(encoding="utf-8")
     for key in (
