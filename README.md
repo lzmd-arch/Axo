@@ -158,6 +158,20 @@ uv sync --all-extras
 uv run python -m axo.ui.app
 ```
 
+### LSP 语言服务器（可选，自动安装器）
+
+LSP 语义查询要外部语言服务器。**默认只打印计划**；确认后加 `--yes` 才会执行：
+
+```bash
+uv run axo-lsp-install                 # 计划：哪些已装、哪些可自动装、哪些要手工
+uv run axo-lsp-install --yes           # 用 npm/rustup/go/dotnet/winget 自动装能装的
+uv run axo-lsp-install --only python,go,rust --yes
+uv run python tools/language_doctor.py # 装完复核 26 个常见后缀
+```
+
+它不会提权、不会自动同意许可证、不会改系统 PATH；缺 Node/Go/.NET/winget 时会明确报缺。
+Java/Ruby/Kotlin/Swift/Scala/R/PowerShell/Elixir/Haskell/Clojure 仍需手工装服务器/运行时。
+
 `uv` 会自己把 Python 3.12 拉下来，不需要你预装。`--all-extras` 把五组可选依赖
 （`app` 界面、`llm` HTTP 客户端、`pack` 打包器、`voice` 语音识别、`music` 音乐标签）都装上；[operations.md](docs/operations.md)
 里各节写的是更窄的 `--extra app --extra llm`，因为跑测试只要这几组——**但 `uv sync` 是精确同步**，

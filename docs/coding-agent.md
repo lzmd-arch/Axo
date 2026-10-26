@@ -147,11 +147,13 @@ C#、Shell、Lua、Svelte、Perl、Dart。Rust 还跑了完整 `cargo test` 基�
 Swift、R、PowerShell、Elixir、Haskell、Clojure、Scala；Vue 服务器可启动但符号为空。用：
 
 ```powershell
-python tools/language_doctor.py
+python tools/setup_languages.py            # 只打印计划
+python tools/setup_languages.py --yes      # npm/rustup/go/dotnet/winget 自动装
+python tools/language_doctor.py            # 装完复核 26 个常见后缀
 ```
 
-看每个后缀缺哪个服务器；`AXO_LSP_<语言>` 指定命令，`AXO_LSP_BIN_DIRS` 放便携
-工具链目录，`AXO_JDTLS_HOME` 指向便携 jdtls。
+安装器不自动提权、不自动同意许可证；缺运行时（Node/Go/.NET/winget）会明确报缺。
+`AXO_LSP_<语言>` 指定命令，`AXO_LSP_BIN_DIRS` 放便携工具链目录，`AXO_JDTLS_HOME` 指向便携 jdtls。
 
 ## 6. 边界
 

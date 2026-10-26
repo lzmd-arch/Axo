@@ -62,6 +62,10 @@ music = [
     "tinytag>=2.3",
 ]
 
+[project.scripts]
+# 捆绑在 wheel 里的语言服务器安装器：pip 安装后可直接运行。
+axo-lsp-install = "axo.agent.lsp_install:main"
+
 [dependency-groups]
 dev = [
   "pytest>=8.0",

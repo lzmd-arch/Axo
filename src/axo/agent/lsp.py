@@ -167,6 +167,7 @@ def _user_bin_dirs() -> tuple[Path, ...]:
     dirs = [
         home / ".cargo" / "bin",
         home / "go" / "bin",
+        home / ".dotnet" / "tools",
         home / ".local" / "bin",
         Path(os.environ.get("LOCALAPPDATA", home / "AppData" / "Local")) / "Programs",
     ]
