@@ -90,6 +90,11 @@ ONNX/CPU）：`models/voices/<名字>/` 下放一段 10–30 秒参考音（`ref
 需要外部 F5-TTS、torch 或 8800 端口——模型与 vocoder 都在安装包里，第一次合成本地
 加载约一两秒，短句约 4–5 秒（CPU）。
 
+**精简分发可以不带权重。** 用 `python -m axo.tts_fetch --url <https> --sha256 <64 位>
+--dest <目录>`（库入口 `axo.tts_fetch.fetch_weights`）按发布方给出的 URL 与摘要下载并
+校验：只接受 https（本机 http 例外）、sha256 必填、校验不过即删临时文件；**不自动、
+不后台**。发布方需在 release notes 同时给出 URL 与 sha256。
+
 设置 → 语音里可以关掉「优先使用随包千岁语音」，改用外部组件。**F5-TTS 组件的源码现在
 在 [`components/f5-tts/`](components/f5-tts/README.md)**（监听 `http://127.0.0.1:8800`，
 安装/启动/音色目录与许可见那份 README）；它不随安装包发 torch 与权重。
