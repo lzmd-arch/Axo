@@ -124,6 +124,9 @@ class MemoryKind(str, Enum):
     CONCLUSION = "conclusion"
     OPEN_QUESTION = "open_question"
     TOOL_RESULT = "tool_result"
+    VOICE = "voice"
+    """语音来源：由语音通道转写后写入的记忆。与 ``taint`` 正交——taint 说谁说的，
+    这个 kind 说「是说的，不是打的」。"""
     PERSONA_ANCHOR = "persona_anchor"
     """人格锚：内容是纯文本，``pinned=True``，永远进上下文，不参与常规召回。"""
 

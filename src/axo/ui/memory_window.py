@@ -91,6 +91,7 @@ _KIND_ORDER: tuple[MemoryKind, ...] = (
     MemoryKind.CONCLUSION,
     MemoryKind.OPEN_QUESTION,
     MemoryKind.TOOL_RESULT,
+    MemoryKind.VOICE,
 )
 """下拉框里的类别顺序。人格锚放最前：它是这个界面上最该被找到的那一条。"""
 

@@ -175,7 +175,7 @@ from ..paths import (
     stickers_dir,
     voices_dir,
 )
-from ..plugins import PluginIssue, load_plugins
+from ..plugins import PluginIssue, load_enabled_plugins
 from ..secrets import protect, unprotect
 from ..session.assemble import Assembly, stored_rows
 from ..session.budget import TokenBudget, TokenMeter, reserve_for
@@ -2447,7 +2447,11 @@ class MainWindow(QMainWindow):
         # 插件同理每轮现读（改一个插件不必重启），而 ``taken`` 把内置那些名字先占上：
         # **撞名的插件工具会被挡掉并记一条**——两个同名工具会让模型看到一份自相矛盾的
         # 工具表，而它没法自己发现这件事。
-        loaded = load_plugins(plugins_dir(), taken=[tool.spec.name for tool in builtin])
+        loaded = load_enabled_plugins(
+            plugins_dir(),
+            taken=[tool.spec.name for tool in builtin],
+            audit_path=plugins_dir().parent / "plugin_audit.jsonl",
+        )
         self._report_plugin_issues(loaded.issues)
         return ToolRegistry([*builtin, *loaded.tools])
 

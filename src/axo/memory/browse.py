@@ -111,6 +111,7 @@ _KIND_LABELS: dict[MemoryKind, str] = {
     MemoryKind.CONCLUSION: "结论",
     MemoryKind.OPEN_QUESTION: "未决问题",
     MemoryKind.TOOL_RESULT: "工具结果",
+    MemoryKind.VOICE: "语音",
     MemoryKind.PERSONA_ANCHOR: "人格锚",
 }
 

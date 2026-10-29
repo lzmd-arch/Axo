@@ -24,13 +24,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
-from collections.abc import Sequence
+import json
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 __all__ = [
+    "enabled_plugins",
+    "load_enabled_plugins",
+    "set_plugin_enabled",
     "FACTORY_NAME",
     "PLUGIN_MODULE",
     "PluginIssue",
@@ -86,7 +92,9 @@ def plugins_in(root: Path) -> tuple[Path, ...]:
     return tuple(sorted(folders, key=lambda path: (path.name.casefold(), path.name)))
 
 
-def load_plugins(root: Path, *, taken: Sequence[str] = ()) -> PluginLoad:
+def load_plugins(
+    root: Path, *, taken: Sequence[str] = (), only: Collection[str] | None = None
+) -> PluginLoad:
     """把插件目录里的东西装成一批工具。
 
     Args:
@@ -103,27 +111,34 @@ def load_plugins(root: Path, *, taken: Sequence[str] = ()) -> PluginLoad:
     used = set(taken)
 
     for folder in plugins_in(root):
-        source = folder / PLUGIN_MODULE
-        if not source.is_file():
-            issues.append(PluginIssue(folder.name, f"里面没有 {PLUGIN_MODULE}"))
+        if only is not None and folder.name not in only:
             continue
-        try:
-            module = _import(folder.name, source)
-        except Exception as exc:  # noqa: BLE001 —— 插件是别人写的代码，什么都能抛
-            issues.append(PluginIssue(folder.name, _why("运行时出错", exc)))
-            continue
-        factory = getattr(module, FACTORY_NAME, None)
-        if not callable(factory):
-            issues.append(PluginIssue(folder.name, f"没有 {FACTORY_NAME}() 这个函数"))
-            continue
-        try:
-            produced = factory()
-        except Exception as exc:  # noqa: BLE001
-            issues.append(PluginIssue(folder.name, _why(f"{FACTORY_NAME}() 出错", exc)))
-            continue
-        tools.extend(_accept(folder.name, produced, used, issues))
+        tools.extend(_load_folder(folder, used, issues))
 
     return PluginLoad(tools=tuple(tools), issues=tuple(issues))
+
+
+def _load_folder(folder: Path, used: set[str], issues: list[PluginIssue]) -> list[Any]:
+    """装一个插件目录；失败只记 issue，不抛。"""
+    source = folder / PLUGIN_MODULE
+    if not source.is_file():
+        issues.append(PluginIssue(folder.name, f"里面没有 {PLUGIN_MODULE}"))
+        return []
+    try:
+        module = _import(folder.name, source)
+    except Exception as exc:  # noqa: BLE001 —— 插件是别人写的代码，什么都能抛
+        issues.append(PluginIssue(folder.name, _why("运行时出错", exc)))
+        return []
+    factory = getattr(module, FACTORY_NAME, None)
+    if not callable(factory):
+        issues.append(PluginIssue(folder.name, f"没有 {FACTORY_NAME}() 这个函数"))
+        return []
+    try:
+        produced = factory()
+    except Exception as exc:  # noqa: BLE001
+        issues.append(PluginIssue(folder.name, _why(f"{FACTORY_NAME}() 出错", exc)))
+        return []
+    return _accept(folder.name, produced, used, issues)
 
 
 def _import(name: str, source: Path) -> Any:
@@ -172,3 +187,104 @@ def _accept(
 
 def _why(what: str, exc: Exception) -> str:
     return f"{what}：{type(exc).__name__}: {exc}"
+
+
+# ── 默认关 + 审计（对话纪要修订清单 🟢 #12/#14）────────────────────────────
+
+
+def _enabled_file(root: Path) -> Path:
+    return root / "enabled.json"
+
+
+def enabled_plugins(root: Path) -> tuple[str, ...]:
+    """读 ``enabled.json``。**文件不存在 = 一个都不启用**（默认关）。
+
+    坏文件（不是 JSON / 不是字符串列表）也按「一个都不启用」处理，并把原因记进审计——
+    静默地把坏文件当全开，等于默认关这件事没有发生。
+    """
+    path = _enabled_file(root)
+    if not path.is_file():
+        return ()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ()
+    if not isinstance(data, list) or not all(isinstance(name, str) for name in data):
+        return ()
+    return tuple(data)
+
+
+def set_plugin_enabled(root: Path, name: str, enabled: bool = True) -> None:
+    """启用/禁用一个插件，写回 ``enabled.json``（排序、去重）。"""
+    current = set(enabled_plugins(root))
+    if enabled:
+        current.add(name)
+    else:
+        current.discard(name)
+    root.mkdir(parents=True, exist_ok=True)
+    _enabled_file(root).write_text(
+        json.dumps(sorted(current), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
+def _sha256(path: Path) -> str:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
+def _audit(path: Path | None, record: dict) -> None:
+    if path is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def load_enabled_plugins(
+    root: Path, *, taken: Sequence[str] = (), audit_path: Path | None = None
+) -> PluginLoad:
+    """按 ``enabled.json`` 装插件，并把每个插件的结局写进审计。
+
+    与 :func:`load_plugins` 的区别只有两处：**默认关**（没有 enabled.json 就一个都不装），
+    以及**审计**（每个目录一条 JSONL：时间、名字、状态、工具名、plugin.py 的 sha256）。
+    """
+    enabled = set(enabled_plugins(root))
+    tools: list[Any] = []
+    issues: list[PluginIssue] = []
+    used = set(taken)
+    for folder in plugins_in(root):
+        source = folder / PLUGIN_MODULE
+        base = {
+            "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "plugin": folder.name,
+            "sha256": _sha256(source),
+            "enabled": folder.name in enabled,
+        }
+        if folder.name not in enabled:
+            _audit(audit_path, {**base, "status": "disabled", "tools": []})
+            issues.append(
+                PluginIssue(
+                    folder.name,
+                    "未启用（插件默认关：在 <数据根>/plugins/enabled.json 里加上名字）",
+                )
+            )
+            continue
+        before = len(issues)
+        loaded = _load_folder(folder, used, issues)
+        tools.extend(loaded)
+        new_issues = issues[before:]
+        status = "loaded" if loaded else ("error" if new_issues else "empty")
+        _audit(
+            audit_path,
+            {
+                **base,
+                "status": status,
+                "tools": [getattr(getattr(tool, "spec", None), "name", "") for tool in loaded],
+                "detail": "；".join(issue.reason for issue in new_issues),
+            },
+        )
+    return PluginLoad(tools=tuple(tools), issues=tuple(issues))

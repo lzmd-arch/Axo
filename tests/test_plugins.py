@@ -6,10 +6,18 @@
 
 from __future__ import annotations
 
+import json
 import textwrap
 from pathlib import Path
 
-from axo.plugins import PLUGIN_MODULE, load_plugins, plugins_in
+from axo.plugins import (
+    PLUGIN_MODULE,
+    enabled_plugins,
+    load_enabled_plugins,
+    load_plugins,
+    plugins_in,
+    set_plugin_enabled,
+)
 
 GOOD = """
 class _Spec:
@@ -209,3 +217,54 @@ def test_two_plugins_fighting_over_one_name_keep_the_first(tmp_path: Path) -> No
 
     assert len(load.tools) == 1
     assert [issue.plugin for issue in load.issues] == ["甲"]
+
+
+# ── 默认关 + 审计 ───────────────────────────────────────────────────────────
+
+
+def test_plugins_are_disabled_by_default(tmp_path: Path) -> None:
+    write_plugin(tmp_path, "天气", GOOD + FACTORY)
+    assert enabled_plugins(tmp_path) == ()
+    load = load_enabled_plugins(tmp_path, audit_path=tmp_path / "audit.jsonl")
+    assert load.tools == ()
+    record = json.loads((tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert record["plugin"] == "天气"
+    assert record["status"] == "disabled"
+    assert record["enabled"] is False
+
+
+def test_enabling_a_plugin_loads_it_and_audits(tmp_path: Path) -> None:
+    write_plugin(tmp_path, "天气", GOOD + FACTORY)
+    set_plugin_enabled(tmp_path, "天气")
+    assert enabled_plugins(tmp_path) == ("天气",)
+    load = load_enabled_plugins(tmp_path, audit_path=tmp_path / "audit.jsonl")
+    assert [tool.spec.name for tool in load.tools] == ["weather"]
+    record = json.loads((tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert record["status"] == "loaded"
+    assert record["tools"] == ["weather"]
+    assert len(record["sha256"]) == 64
+
+
+def test_disabling_again_removes_it(tmp_path: Path) -> None:
+    write_plugin(tmp_path, "天气", GOOD + FACTORY)
+    set_plugin_enabled(tmp_path, "天气")
+    set_plugin_enabled(tmp_path, "天气", False)
+    assert enabled_plugins(tmp_path) == ()
+    assert load_enabled_plugins(tmp_path).tools == ()
+
+
+def test_broken_enabled_file_means_default_off(tmp_path: Path) -> None:
+    write_plugin(tmp_path, "天气", GOOD + FACTORY)
+    (tmp_path / "enabled.json").write_text("{not json", encoding="utf-8")
+    assert enabled_plugins(tmp_path) == ()
+    assert load_enabled_plugins(tmp_path).tools == ()
+
+
+def test_audit_records_failure_detail(tmp_path: Path) -> None:
+    write_plugin(tmp_path, "坏插件", GOOD)  # 没有 tools()
+    set_plugin_enabled(tmp_path, "坏插件")
+    load = load_enabled_plugins(tmp_path, audit_path=tmp_path / "audit.jsonl")
+    assert load.tools == ()
+    record = json.loads((tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert record["status"] == "error"
+    assert "tools" in record["detail"]

@@ -2223,11 +2223,11 @@ def test_the_tool_table_asks_the_plugin_loader(qapp: Any, monkeypatch: Any) -> N
         run=lambda *_: None,
     )
 
-    def fake_load(root: Any, *, taken: Sequence[str] = ()) -> PluginLoad:
+    def fake_load(root: Any, *, taken: Sequence[str] = (), audit_path: Any = None) -> PluginLoad:
         seen.append((root, tuple(taken)))
         return PluginLoad(tools=(plugin_tool,), issues=())
 
-    monkeypatch.setattr(window_module, "load_plugins", fake_load)
+    monkeypatch.setattr(window_module, "load_enabled_plugins", fake_load)
     monkeypatch.setattr(window_module, "plugins_dir", lambda: Path("插件目录"))
     monkeypatch.setattr(window_module, "stickers_dir", lambda: Path("没有表情包"))
 
