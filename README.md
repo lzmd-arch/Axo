@@ -478,8 +478,10 @@ WAV 等），读标签、内嵌封面与内嵌歌词；同目录的 `.lrc`、`.m
 **后量子加固**：当前版本不声称已经完成；相关算法与迁移细节只在实现与评审中，
 不在公开文档里展开。下一步会在不改变现有加密语义的前提下引入混合方案。
 
-手机版在 `D:\Projects\AxoAndroid`；同步依赖在 `sync` extra 里
-（`uv sync --all-extras` 会装上）。
+手机版在 [AxoAndroid](https://github.com/lzmd-arch/AxoAndroid)（本地检出
+`D:\Projects\AxoAndroid`）；同步依赖在 `sync` extra 里（`uv sync --all-extras` 会装上）。
+桌面端同步协议的实现与测试在 `src/axo/sync/`，手机端在 AxoAndroid 仓的 `sync` 模块——
+两边的设备签名与防重放格式是同一份契约。
 
 ## 插件
 
