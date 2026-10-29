@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "kind": "longitudinal-v0 (synthetic ages)",
+  "captured_at": "2026-10-29T04:40:07Z",
+  "git_commit": "2e13abc",
+  "gold": {
+    "schema_version": 1,
+    "memories": {
+      "count": 208,
+      "sha256": "de0c66cfccb026209c896e32ad5425f826f3c192b13acd78c8643f89c835dd5d"
+    },
+    "queries": {
+      "count": 85,
+      "sha256": "300afc501eb78d8b740850e12184f916fc39184e676881c1e29ba8e80f75f517"
+    }
+  },
+  "ages_months": [
+    0,
+    1,
+    3,
+    6,
+    12
+  ],
+  "metrics_by_age": {
+    "0": {
+      "hit@1": 0.8961038961038961,
+      "hit@3": 0.922077922077922,
+      "recall@3": 0.922077922077922,
+      "mrr": 0.9095238095238095,
+      "false_injection_rate": 0.8679245283018868,
+      "no_answer_injections": 6.5
+    },
+    "1": {
+      "hit@1": 0.8961038961038961,
+      "hit@3": 0.922077922077922,
+      "recall@3": 0.922077922077922,
+      "mrr": 0.9090909090909091,
+      "false_injection_rate": 0.8679245283018868,
+      "no_answer_injections": 6.5
+    },
+    "3": {
+      "hit@1": 0.8961038961038961,
+      "hit@3": 0.9090909090909091,
+      "recall@3": 0.9090909090909091,
+      "mrr": 0.9069264069264069,
+      "false_injection_rate": 0.8679245283018868,
+      "no_answer_injections": 6.5
+    },
+    "6": {
+      "hit@1": 0.8961038961038961,
+      "hit@3": 0.8961038961038961,
+      "recall@3": 0.8961038961038961,
+      "mrr": 0.905194805194805,
+      "false_injection_rate": 0.8679245283018868,
+      "no_answer_injections": 6.5
+    },
+    "12": {
+      "hit@1": 0.8181818181818182,
+      "hit@3": 0.8181818181818182,
+      "recall@3": 0.8181818181818182,
+      "mrr": 0.8269635126777984,
+      "false_injection_rate": 0.8775862068965518,
+      "no_answer_injections": 6.5
+    }
+  }
+}
