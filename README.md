@@ -531,6 +531,33 @@ def tools():
 
 撞名、没有 `tools()`、import 时报错、返回的不是工具——每一种都只影响它自己。
 
+## 给别的程序看（MCP，只读）
+
+`axo-mcp` 是一个 stdio 的 MCP 服务器（JSON-RPC 2.0，无第三方依赖），把记忆库以**三个只读工具**
+暴露给任何 MCP 客户端：
+
+| 工具 | 说明 |
+| :--- | :--- |
+| `state.query` | 条目数、分区、数据根来源 |
+| `memory.search` | 按查询召回（`query`、`top_k`、`budget_tokens`） |
+| `trigger.status` | 本服务器不暴露主动搭话，固定返回未启用 |
+
+```json
+{
+  "mcpServers": {
+    "axo-memory": { "command": "axo-mcp" }
+  }
+}
+```
+
+**它不会改动记忆库——这是硬约束，不是承诺。** 库以 SQLite 的 `mode=ro` 打开，任何写入会被
+引擎直接拒绝（`attempt to write a readonly database`）；库文件不存在时直接报错，**不会顺手
+建一个空库**；召回走 `settle=False`，不落权重、不写访问计数。详见
+[`docs/security.md`](docs/security.md) 的「记忆库的写保护」。
+
+只读连接会在库旁生成 SQLite 自己的运行时索引（`mem.db-shm`、空的 `mem.db-wal`）——WAL 模式下
+读路径需要它，不是数据；不用 `immutable=1` 正是为了在应用同时写入时也能读到最新内容。
+
 ## 数据放在哪
 
 默认 `%LOCALAPPDATA%\axo\`（macOS：`~/Library/Application Support/axo/`）。**刻意不放在仓库目录里**——否则

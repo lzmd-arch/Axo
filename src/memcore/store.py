@@ -177,15 +177,34 @@ class MemoryStore:
 
     Args:
         path: 库文件路径。``":memory:"`` 是合法的（测试用）。
+        read_only: **只读打开**：用 SQLite 的 ``mode=ro`` URI，写操作在**引擎层**被拒绝。
+            供 MCP 适配器这类"只允许看"的调用方使用；要求库文件已存在，且不会建表/迁移。
+
+    Raises:
+        FileNotFoundError: ``read_only=True`` 而库文件不存在。
+        ValueError: ``read_only=True`` 配 ``":memory:"``。
     """
 
-    def __init__(self, path: Path | str) -> None:
+    def __init__(self, path: Path | str, *, read_only: bool = False) -> None:
         self.path = str(path)
-        if self.path != ":memory:":
+        self.read_only = bool(read_only)
+        if self.read_only and self.path == ":memory:":
+            raise ValueError("只读模式不支持 ':memory:'：内存库没有可保护的落盘状态。")
+        if self.read_only:
+            if not Path(self.path).exists():
+                raise FileNotFoundError(
+                    f"只读模式要求记忆库已存在：{self.path}（不会为你新建一个）"
+                )
+        elif self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
 
         self._lock = threading.RLock()
-        self._connection = sqlite3.connect(self.path, check_same_thread=False)
+        if self.read_only:
+            # `mode=ro` 让 SQLite 自己拒绝一切写入——不依赖调用方自觉。
+            uri = f"file:{Path(self.path).as_posix()}?mode=ro"
+            self._connection = sqlite3.connect(uri, uri=True, check_same_thread=False)
+        else:
+            self._connection = sqlite3.connect(self.path, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._configure()
         self._ensure_schema()
@@ -206,6 +225,11 @@ class MemoryStore:
 
     def _configure(self) -> None:
         with self._lock:
+            if self.read_only:
+                # 只读连接上不能改 journal_mode（那是写库头），只设连接级 pragma。
+                self._connection.execute("PRAGMA foreign_keys=ON")
+                self._connection.execute("PRAGMA temp_store=MEMORY")
+                return
             # WAL：读者不挡写者、写者不挡读者。本项目正是"界面线程写、工作线程读"
             # 的形状，回滚日志模式下两者会互相阻塞。
             self._connection.execute("PRAGMA journal_mode=WAL")
@@ -222,6 +246,11 @@ class MemoryStore:
         with self._lock:
             version = int(self._connection.execute("PRAGMA user_version").fetchone()[0])
             if version == 0:
+                if self.read_only:
+                    raise StoreCorruptError(
+                        f"只读模式不会建库：{self.path} 里没有表（user_version=0）。"
+                        "先用正常模式打开一次，或换一个已初始化的库文件。"
+                    )
                 self._connection.executescript(_SCHEMA_SQL)
                 self._connection.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
                 self._connection.commit()

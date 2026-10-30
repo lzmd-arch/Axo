@@ -44,3 +44,24 @@
   agent 上下文而公开”，不是对抗本机恶意程序。
 - 评测对固定任务自动批准写/命令；不要把评测入口用于运行不可信的外部任务。
 - 如果曾经把 key 贴进文件、日志或聊天，立即在服务商侧轮换；删除历史不能撤回已泄露的 key。
+
+## 记忆库的写保护（MCP 只读）
+
+**2026-10-30 用户要求：Axo 侧只允许读，不允许对记忆库做任何更改。** 这条不是靠调用方自觉，
+而是靠 SQLite 的引擎层：
+
+- MCP 适配器（`axo-mcp` / `axo.mcp_server`）用 `MemoryStore(db, read_only=True)` 打开库，
+  连接走 `file:<path>?mode=ro` URI，**任何写入都会被 SQLite 拒绝**
+  （`attempt to write a readonly database`）；不提供任何打开可写的开关；
+- 库文件不存在时直接报错退出（`只读模式要求记忆库已存在`），**不会顺手建一个空库**；
+- 只读连接不改 `journal_mode`（那是写库头）、不建表、不做迁移；
+- `memory.search` 走 `memcore.recall(..., settle=False)`，不落权重、不写访问计数；
+- 工具面只有三个只读项（`state.query` / `memory.search` / `trigger.status`），
+  `tests/test_mcp_server.py` 用**写动词黑名单**守住工具名，用**库文件逐字节哈希**
+  守住"跑完一整轮会话库没变"；
+- WAL 模式下只读连接会生成 SQLite 自己的运行时索引（`mem.db-shm`、空的 `mem.db-wal`）——
+  那是读路径的机制，不是数据；不用 `immutable=1` 就是因为它会忽略 WAL，在应用同时写入时
+  读出旧数据。
+
+测试：`tests/test_store_read_only.py`（引擎层拒写、缺文件报错、`:memory:` 拒绝、
+不建 schema）与 `tests/test_mcp_server.py` 的写保护几条。

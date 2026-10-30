@@ -1,7 +1,11 @@
 """Axo 只读 MCP Server：把本地记忆库以三个只读工具暴露给 MCP 客户端。
 
-红线：`memory.search` 走 `memcore.recall(..., settle=False)`；不写库、不调 LLM、
-不读 key。传输用 stdio 的 JSON-RPC 2.0，无第三方依赖。
+红线（2026-10-30 用户明确要求）：**记忆库只允许读，不允许任何更改**。
+
+* 库以 SQLite 的 ``mode=ro`` 打开（:func:`open_store`）——写入在**引擎层**被拒绝，
+  不依赖调用方自觉；
+* `memory.search` 走 `memcore.recall(..., settle=False)`，不落权重、不写访问计数；
+* 不调 LLM、不读 key；传输用 stdio 的 JSON-RPC 2.0，无第三方依赖。
 """
 
 from __future__ import annotations
@@ -50,6 +54,13 @@ TOOLS: list[dict[str, Any]] = [
 
 class MemoryCore:
     def __init__(self, store: MemoryStore) -> None:
+        # 第二道闸：即使以后有人改了装配，只要传进来的是**可写的落盘库**就直接炸，
+        # 而不是悄悄允许写。内存库（测试用）例外——它碰不到真实记忆库。
+        if not store.read_only and store.path != ":memory:":
+            raise ValueError(
+                "MCP 适配器只接受只读打开的落盘库（用 open_store / "
+                "MemoryStore(..., read_only=True)）；用户要求记忆库只读。"
+            )
         self.store = store
 
     def state(self) -> dict[str, Any]:
@@ -190,6 +201,18 @@ def serve_stdio(
             sink.flush()
 
 
+def open_store(db: Path) -> MemoryStore:
+    """**只读**打开记忆库。写操作会被 SQLite 直接拒绝（``mode=ro``）。
+
+    MCP 适配器是"只允许看"的调用方：用户 2026-10-30 明确要求不得对记忆库做任何更改，
+    所以这里不开放任何可写路径，也不提供开关。
+    """
+    try:
+        return MemoryStore(db, read_only=True)
+    except FileNotFoundError as error:
+        raise SystemExit(f"{error}（只读模式不会新建记忆库）") from error
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Axo read-only memory MCP server")
     parser.add_argument("--data-dir", type=Path, default=None)
@@ -198,7 +221,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.data_dir is not None:
         paths.set_data_root(args.data_dir)
     db = args.db or paths.memory_db_path()
-    serve_stdio(MemoryCore(MemoryStore(db)))
+    serve_stdio(MemoryCore(open_store(db)))
     return 0
 
 
