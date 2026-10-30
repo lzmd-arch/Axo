@@ -103,6 +103,7 @@ _K_SPEECH_SEGMENTED = "speech/segmented"
 _K_SPEECH_CALL_IDLE = "speech/call_idle_hangup_s"
 
 _K_TASK_MEMORY = "memory/task_memory"
+_K_PROPOSE_ENABLED = "memory/propose_enabled"
 _K_GRAPH_CHANNEL = "memory/graph_channel"
 _K_CONSOLIDATION_ENABLED = "memory/consolidation_enabled"
 _K_CONSOLIDATION_INTERVAL_S = "memory/consolidation_interval_s"
@@ -442,6 +443,16 @@ class MemorySettings:
 
             **开关是加法**：打开之后没调工具的轮次照旧逐条记——判据只有"这一轮有没有
             工具轨迹"这一条（见 :class:`TaskPolicy`）。
+        propose_enabled: 允不允许**外部客户端提议写入**（MCP 的 propose 队列）。
+
+            **默认关，而且关着的时候没有任何路径会创建消费者。** 与 task_memory
+            不同，这一项开的不是"记什么"，而是"别人能不能往我的记忆库里放东西"：
+            提议进队列、门控判定、只有 accepted 才落库，但**闸门之外还有一个前提**
+            ——用户得先说要。默认关意味着装好就是只读版，打开它必须是一次显式操作。
+
+            判据与阈值冻结在 BioSNN 侧的计划书 §9.1（2026-10-31），本仓的
+            ``axo/propose_consumer.py`` 抄的是同一组常量；两边改一处不改另一处的
+            症状是"界面上说 0.90，实际按别的数拒"，界面上一点异常都看不出来。
         graph_channel: 召回用不用联想通道（沿关联图扩散一步）。
 
             **默认关，而且这一版建议就让它关着。** 与上面那一项不同，这一条不是
@@ -473,6 +484,7 @@ class MemorySettings:
     """
 
     task_memory: bool = False
+    propose_enabled: bool = False
     graph_channel: bool = False
     consolidation_enabled: bool = True
     consolidation_interval_s: int = 86_400
@@ -791,6 +803,7 @@ class SettingsStore:
         """
         return MemorySettings(
             task_memory=_as_bool(self._backend.value(_K_TASK_MEMORY, False)),
+            propose_enabled=_as_bool(self._backend.value(_K_PROPOSE_ENABLED, False)),
             graph_channel=_as_bool(self._backend.value(_K_GRAPH_CHANNEL, False)),
             consolidation_enabled=_as_bool(
                 self._backend.value(_K_CONSOLIDATION_ENABLED, True), True
@@ -803,6 +816,7 @@ class SettingsStore:
     def save_memory(self, settings: MemorySettings) -> None:
         """写回。存真 bool，读取侧仍然按 :func:`_as_bool` 收一遍（同后端那一节）。"""
         self._backend.setValue(_K_TASK_MEMORY, bool(settings.task_memory))
+        self._backend.setValue(_K_PROPOSE_ENABLED, bool(settings.propose_enabled))
         self._backend.setValue(_K_GRAPH_CHANNEL, bool(settings.graph_channel))
         self._backend.setValue(_K_CONSOLIDATION_ENABLED, bool(settings.consolidation_enabled))
         self._backend.setValue(_K_CONSOLIDATION_INTERVAL_S, int(settings.consolidation_interval_s))

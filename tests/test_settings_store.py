@@ -658,6 +658,7 @@ def test_the_memory_keys_live_in_their_own_namespace() -> None:
     SettingsStore(backend).save_memory(MemorySettings(task_memory=True, graph_channel=True))
     assert [key for key, _ in backend.writes] == [
         "memory/task_memory",
+        "memory/propose_enabled",
         "memory/graph_channel",
         "memory/consolidation_enabled",
         "memory/consolidation_interval_s",
@@ -1231,3 +1232,15 @@ def test_custom_url_is_custom() -> None:
     store = SettingsStore(FakeBackend({"backend/cloud_base_url": "https://example.test/v1"}))
     assert store.load_backend().cloud_preset == CLOUD_PRESET_CUSTOM
     assert cloud_preset_for_url("https://example.test/v1") == CLOUD_PRESET_CUSTOM
+
+
+def test_propose_is_off_by_default_and_round_trips():
+    backend = FakeBackend({})
+    store = SettingsStore(backend)
+    assert store.load_memory().propose_enabled is False
+
+    store.save_memory(MemorySettings(propose_enabled=True))
+    assert store.load_memory().propose_enabled is True
+    # 字符串 "true" 也要按真值读回来（QSettings 在 Windows 上会给字符串）
+    backend.setValue("memory/propose_enabled", "true")
+    assert store.load_memory().propose_enabled is True
