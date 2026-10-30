@@ -220,6 +220,29 @@ def memory_db_path() -> Path:
     return path
 
 
+def propose_queue_path() -> Path:
+    """外部提议的队列（``axo.propose_consumer`` 的 SQLite）。
+
+    放在 ``memory/`` 子目录，与 ``mem.db``、``graph.npz`` 并列：**它引用的是记忆
+    的 id**，库搬家而队列留在原地，症状是"撤销按钮指向一条已经不存在的记忆"——
+    而界面上只会显示一次撤销失败。
+    """
+    path = data_dir() / "memory" / "propose.queue.sqlite3"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def propose_audit_path() -> Path:
+    """提议审计：一行一个事件（``proposal.received`` / ``gate.*`` / ``memory.applied``）。
+
+    与队列同级、单独一个文件：审计是**追加**的，队列是**可删可改**的；把两者塞进
+    一个文件，"清空队列"与"清空审计"就再也分不开了，而这两件事的合规含义完全不同。
+    """
+    path = data_dir() / "memory" / "propose_audit.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def graph_path() -> Path:
     """关联图缓存（``memcore.graph.GraphIndex`` 的落盘处）。
 

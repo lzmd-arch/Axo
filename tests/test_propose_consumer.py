@@ -14,6 +14,7 @@ from axo.propose_consumer import (
     GateConfig,
     ProposalQueue,
     ProposeConsumer,
+    build_consumer,
     salience,
 )
 from memcore.store import MemoryStore
@@ -168,3 +169,19 @@ def test_revert_of_a_pending_proposal_is_refused(tmp_path):
     seq = consumer.queue.list()[0]["seq"]
     with pytest.raises(ValueError, match="不是 accepted"):
         consumer.revert(seq, "nope")
+
+
+def test_build_consumer_is_none_when_the_switch_is_off(tmp_path):
+    # 「关着」必须是"不存在"，不是"存在但不写"——后者任何一条忘了检查开关的路径都能写
+    assert (
+        build_consumer(MemoryStore(":memory:"), enabled=False, queue_path=tmp_path / "q.sqlite3")
+        is None
+    )
+
+
+def test_build_consumer_opens_the_queue_when_the_switch_is_on(tmp_path):
+    store = MemoryStore(":memory:")
+    consumer = build_consumer(store, enabled=True, queue_path=tmp_path / "q.sqlite3")
+    assert consumer is not None
+    consumer.ingest("a proposal from the switch-on path", proposal_id="p1", source="user")
+    assert consumer.store.count() == 0

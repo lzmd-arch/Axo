@@ -417,3 +417,20 @@ class ProposeConsumer:
         self._audit_path.parent.mkdir(parents=True, exist_ok=True)
         with self._audit_path.open("a", encoding="utf-8", newline="\n") as handle:
             handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def build_consumer(
+    store: MemoryStore,
+    *,
+    enabled: bool,
+    queue_path: Path | str,
+    audit_path: Path | str | None = None,
+) -> ProposeConsumer | None:
+    """按设置决定要不要建消费者：**关着返回 None，不是返回一个不写库的消费者**。
+
+    "关着"的正确形状是"这个东西不存在"，而不是"存在但什么也不做"——后者一旦有
+    哪条路径忘了检查开关，写就发生了，而所有测试仍然是绿的。
+    """
+    if not enabled:
+        return None
+    return ProposeConsumer(store, queue_path, audit_path=audit_path)

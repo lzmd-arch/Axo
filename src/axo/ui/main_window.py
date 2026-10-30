@@ -168,6 +168,8 @@ from ..paths import (
     llm_meta_path,
     memory_db_path,
     plugins_dir,
+    propose_audit_path,
+    propose_queue_path,
     reminders_cancelled_path,
     reminders_fired_path,
     reminders_path,
@@ -176,6 +178,7 @@ from ..paths import (
     voices_dir,
 )
 from ..plugins import PluginIssue, load_enabled_plugins
+from ..propose_consumer import build_consumer
 from ..secrets import protect, unprotect
 from ..session.assemble import Assembly, stored_rows
 from ..session.budget import TokenBudget, TokenMeter, reserve_for
@@ -769,6 +772,8 @@ class MainWindow(QMainWindow):
         # 记忆库与逐字稿是**两个库**，见 session/store.py 的模块文档：删聊天记录
         # 不该有概率删掉长期记忆。参数可注入是为了让界面能在临时目录上被测试。
         self._memory = memory if memory is not None else MemoryStore(memory_db_path())
+        #: 外部提议的消费者；**默认没有**，只有设置里显式打开才建（P4c）。
+        self._propose_consumer = None
         # **装策略，不装开关。** ``writer.policy`` 是公开可写属性，而策略在**每轮写入
         # 时**被读（见 ``MemoryWriter.record``）——所以换粒度只要赋一个新对象，
         # 不必重建写手（重建会连带丢掉 ``_clock`` 之类的注入）。
@@ -4357,9 +4362,35 @@ class MainWindow(QMainWindow):
 
     # ── 记忆窗口 ────────────────────────────────────────────────────────────
 
+    def _sync_propose_consumer(self) -> None:
+        """开关决定消费者在不在：关着就置空，打开就建一个。
+
+        建不起来的唯一合理原因是库是只读的（``ProposeConsumer`` 直接抛 ValueError），
+        那意味着这个进程本来就不该有写档位——所以吞掉异常并把消费者置空，同时把
+        原因留在按钮的 tooltip 上，而不是让主窗口起不来。
+        """
+        enabled = self._settings_store.load_memory().propose_enabled
+        if not enabled:
+            self._propose_consumer = None
+            if self._memory_window is not None:
+                self._memory_window.set_propose_consumer(None)
+            return
+        if self._propose_consumer is not None:
+            return
+        try:
+            self._propose_consumer = build_consumer(
+                self._memory,
+                enabled=True,
+                queue_path=propose_queue_path(),
+                audit_path=propose_audit_path(),
+            )
+        except ValueError:
+            self._propose_consumer = None
+
     @Slot()
     def _on_open_memory(self) -> None:
         """打开记忆浏览器。**独立窗口，不挤进三格 splitter。**"""
+        self._sync_propose_consumer()
         if self._memory_window is None:
             window = MemoryWindow(
                 memory=self._memory, accent=self._resolved.accent, motion=self._theme.motion
@@ -4374,6 +4405,7 @@ class MainWindow(QMainWindow):
             if self._graph is not None:
                 window.set_graph(self._graph, stale=self._graph_freshness)
             self._memory_window = window
+        self._memory_window.set_propose_consumer(self._propose_consumer)
         # **建图挂在这里，不挂在启动路径上。** 这是全程序唯一需要邻居面板的地方，
         # 而小库一次全量重建要几秒、大库要几分钟（见 ``AUTO_GRAPH_MAX``）。每次
         # 打开都跑一趟是有意的：图可能在建完之后过期了，而"多久算过期"没有便宜的
@@ -4888,6 +4920,7 @@ class MainWindow(QMainWindow):
         self._writer.policy = TaskPolicy() if self._task_memory else PerItemPolicy()
         self._graph_enabled = settings.graph_channel
         self._settings_store.save_memory(settings)
+        self._sync_propose_consumer()
         self._consolidation_enabled = settings.consolidation_enabled
         self._consolidation_interval_s = settings.consolidation_interval_s
         self._consolidation_scheduler.set_interval_s(self._consolidation_interval_s)

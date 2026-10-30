@@ -300,9 +300,18 @@ class MemoryWindow(QMainWindow):
         return bar
 
     def set_propose_consumer(self, consumer) -> None:
-        """由主窗口在开关打开时注入；传 ``None`` 表示没有可写档位。"""
+        """由主窗口在开关打开时注入；传 ``None`` 表示没有可写档位。
+
+        按钮上带一个待审计数：**只有大于 0 才显示数字**——常驻的「0」会让人以为
+        那个数字有别的含义，而它没有。
+        """
         self._propose_consumer = consumer
         self.propose_button.setEnabled(consumer is not None)
+        if consumer is None:
+            self.propose_button.setText("提议台账")
+            return
+        pending = consumer.status()["counts"]["pending"]
+        self.propose_button.setText(f"提议台账（待审 {pending}）" if pending else "提议台账")
 
     def _on_propose_clicked(self) -> None:
         if self._propose_consumer is None:
