@@ -1457,6 +1457,26 @@ class MemoryPage(QWidget):
         self.consolidate_note.setObjectName("consolidateNote")
         outer.addWidget(self.consolidate_note)
 
+        outer.addSpacing(6)
+        outer.addWidget(_section("外部提议"))
+        self.propose_box = QCheckBox("允许外部客户端提议写入记忆（MCP）", self)
+        self.propose_box.setObjectName("proposeBox")
+        self.propose_box.toggled.connect(self._on_toggled)
+        outer.addWidget(self.propose_box)
+        outer.addWidget(
+            _hint(
+                "**默认关。** 关着的时候没有任何路径会创建消费者：外部程序只能看，不能提议。"
+                "打开之后，它们的提议先进队列，由门控判定——与已有记忆太像的、太短的直接拒，"
+                "介于两者之间的挂起等你审，只有判定为接受的才会真的进库。"
+            )
+        )
+        outer.addWidget(
+            _hint(
+                "判定阈值冻结在 BioSNN 侧的计划书 §9.1（相似度 0.90 判重复、显著度 0.60 自动接受、"
+                "0.30 以下拒绝、每小时 20 条、每天 200 条）。提议台账与撤销在「记忆」窗口里。"
+            )
+        )
+
         outer.addStretch(1)
         self.set_graph_note("")
 
@@ -1475,6 +1495,7 @@ class MemoryPage(QWidget):
         self._syncing = True
         try:
             self.task_box.setChecked(settings.task_memory)
+            self.propose_box.setChecked(settings.propose_enabled)
             self.graph_box.setChecked(settings.graph_channel)
             self.consolidation_box.setChecked(settings.consolidation_enabled)
             # **小时 ← 秒，四舍五入到整小时**：手改过的注册表里可以是 3600（正好 1 小时）
@@ -1492,6 +1513,7 @@ class MemoryPage(QWidget):
         """
         return MemorySettings(
             task_memory=self.task_box.isChecked(),
+            propose_enabled=self.propose_box.isChecked(),
             graph_channel=self.graph_box.isChecked(),
             consolidation_enabled=self.consolidation_box.isChecked(),
             consolidation_interval_s=self.consolidation_hours.value() * _SECONDS_PER_HOUR,

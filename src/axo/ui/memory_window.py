@@ -284,7 +284,34 @@ class MemoryWindow(QMainWindow):
         self.refresh_button = QPushButton("刷新", bar)
         self.refresh_button.setToolTip("重新载入列表（记忆是每轮实时写的，这里不会自动跟随）")
         row.addWidget(self.refresh_button)
+
+        # 提议台账：只有"允许外部提议写入"打开、消费者真的存在时才亮。
+        # 关着的时候按钮不是"点了没反应"，而是**不可点**——那才符合事实：
+        # 这个版本根本没有消费者，也就没有台账可看。
+        self.propose_button = QPushButton("提议台账", bar)
+        self.propose_button.setObjectName("proposeLedgerButton")
+        self.propose_button.setEnabled(False)
+        self.propose_button.setToolTip(
+            "外部客户端提了什么、门控怎么判的（需要先在设置里打开「允许外部提议写入」）"
+        )
+        self.propose_button.clicked.connect(self._on_propose_clicked)
+        row.addWidget(self.propose_button)
+        self._propose_consumer = None
         return bar
+
+    def set_propose_consumer(self, consumer) -> None:
+        """由主窗口在开关打开时注入；传 ``None`` 表示没有可写档位。"""
+        self._propose_consumer = consumer
+        self.propose_button.setEnabled(consumer is not None)
+
+    def _on_propose_clicked(self) -> None:
+        if self._propose_consumer is None:
+            return
+        from .propose_ledger import ProposeLedgerWindow
+
+        window = ProposeLedgerWindow(self._propose_consumer, self)
+        window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        window.exec()
 
     def _build_list_pane(self) -> QWidget:
         pane = QFrame(self)

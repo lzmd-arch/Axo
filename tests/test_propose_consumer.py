@@ -133,3 +133,38 @@ def test_queue_schema_is_the_shared_protocol(tmp_path):
     assert created and queue.get(seq)["payload"]["text"] == "a"
     queue.decide(seq, "accepted", "fine")
     assert queue.counts()["accepted"] == 1
+
+
+def test_a3_revert_takes_the_store_back(tmp_path):
+    consumer = _consumer(tmp_path)
+    before = consumer.store.count()
+    consumer.ingest(
+        "a proposal that will be accepted and then undone", proposal_id="p1", source="user"
+    )
+    consumer.decide_pending()
+    assert consumer.store.count() == before + 1
+
+    seq = consumer.queue.list()[0]["seq"]
+    payload = consumer.revert(seq, "A3 rollback")
+    assert payload["reverted"] is True
+    assert consumer.store.count() == before
+    assert consumer.queue.get(seq)["status"] == "reverted"
+
+
+def test_revert_twice_is_refused(tmp_path):
+    consumer = _consumer(tmp_path)
+    consumer.ingest("an entry that is reverted exactly once", proposal_id="p1", source="user")
+    consumer.decide_pending()
+    seq = consumer.queue.list()[0]["seq"]
+    consumer.revert(seq, "first")
+    with pytest.raises(ValueError, match="已经撤销过"):
+        consumer.revert(seq, "second")
+
+
+def test_revert_of_a_pending_proposal_is_refused(tmp_path):
+    consumer = _consumer(tmp_path)
+    consumer.ingest("ok", proposal_id="p1", source="llm")
+    consumer.decide_pending()
+    seq = consumer.queue.list()[0]["seq"]
+    with pytest.raises(ValueError, match="不是 accepted"):
+        consumer.revert(seq, "nope")

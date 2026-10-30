@@ -58,6 +58,11 @@ CREATE TABLE IF NOT EXISTS proposals (
     created_at   TEXT    NOT NULL,
     decided_at   TEXT
 );
+CREATE TABLE IF NOT EXISTS applied (
+    seq         INTEGER PRIMARY KEY,
+    memory_id   TEXT    NOT NULL,
+    reverted_at TEXT
+);
 """
 
 
@@ -163,6 +168,39 @@ class ProposalQueue:
             "UPDATE proposals SET status = ?, reason = ?, salience = ?, max_cosine = ?, "
             "decided_at = ? WHERE seq = ?",
             (status, reason, salience_score, max_similarity, _now(), seq),
+        )
+        self._db.commit()
+
+    def list(self, *, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        sql = "SELECT seq FROM proposals"
+        params: list[Any] = []
+        if status is not None:
+            sql += " WHERE status = ?"
+            params.append(status)
+        sql += " ORDER BY seq DESC LIMIT ?"
+        params.append(max(1, int(limit)))
+        return [self.get(int(row["seq"])) for row in self._db.execute(sql, params)]
+
+    def record_apply(self, seq: int, *, memory_id: str) -> None:
+        self._db.execute(
+            "INSERT OR REPLACE INTO applied (seq, memory_id) VALUES (?, ?)", (seq, memory_id)
+        )
+        self._db.commit()
+
+    def applied_memory_id(self, seq: int) -> str | None:
+        row = self._db.execute(
+            "SELECT memory_id, reverted_at FROM applied WHERE seq = ?", (seq,)
+        ).fetchone()
+        if row is None or row["reverted_at"] is not None:
+            return None
+        return str(row["memory_id"])
+
+    def mark_reverted(self, seq: int) -> None:
+        stamp = _now()
+        self._db.execute("UPDATE applied SET reverted_at = ? WHERE seq = ?", (stamp, seq))
+        self._db.execute(
+            "UPDATE proposals SET status = 'reverted', decided_at = ? WHERE seq = ?",
+            (stamp, seq),
         )
         self._db.commit()
 
@@ -311,6 +349,7 @@ class ProposeConsumer:
         status = "accepted"
         reason = f"salience {score:.3f} ≥ {self.config.accept_salience:.2f}, quota free"
         self.queue.decide(seq, status, reason, salience_score=score, max_similarity=similarity)
+        self.queue.record_apply(seq, memory_id=item.memory_id)
         self._audit("gate.accepted", {"seq": seq, "reason": reason, "source": source})
         self._audit(
             "memory.applied",
@@ -324,6 +363,33 @@ class ProposeConsumer:
         self.queue.decide(seq, status, reason, salience_score=score, max_similarity=similarity)
         self._audit(f"gate.{status}", {"seq": seq, "reason": reason, "salience": score})
         return self.queue.get(seq)
+
+    def revert(self, seq: int, reason: str) -> dict[str, Any]:
+        """撤销一条 accepted：把那次写进去的记忆删掉，库回到写前。"""
+        why = (reason or "").strip()
+        if not why:
+            raise ValueError("reason 必须是非空字符串。")
+        row = self.queue.get(seq)
+        if row["status"] == "reverted":
+            raise ValueError(f"第 {seq} 条已经撤销过。")
+        if row["status"] != "accepted":
+            raise ValueError(f"第 {seq} 条不是 accepted，撤销无从谈起。")
+        memory_id = self.queue.applied_memory_id(seq)
+        if memory_id is None:
+            raise ValueError(f"第 {seq} 条找不到落库记录，拒绝撤销（宁可报错也不猜）。")
+        deleted = self.store.delete(memory_id)
+        self.queue.mark_reverted(seq)
+        self._audit(
+            "memory.revert",
+            {"seq": seq, "reason": why, "memory_id": memory_id, "deleted": deleted},
+        )
+        return {
+            "seq": seq,
+            "reverted": True,
+            "memory_id": memory_id,
+            "entries": self.store.count(),
+            "reason": why,
+        }
 
     # ------------------------------------------------------------ 辅助
     def _max_similarity(self, text: str) -> float:
