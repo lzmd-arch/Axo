@@ -558,6 +558,33 @@ def tools():
 只读连接会在库旁生成 SQLite 自己的运行时索引（`mem.db-shm`、空的 `mem.db-wal`）——WAL 模式下
 读路径需要它，不是数据；不用 `immutable=1` 正是为了在应用同时写入时也能读到最新内容。
 
+### 可写档位：提议消费者（组件已就位，界面未接线）
+
+上面那三个工具是**只读版**的全部。可写版不是把 `axo-mcp` 放开，而是多加一个消费者：
+外部客户端只能**提议**，提议进队列，由门控决定要不要成为记忆。
+
+```python
+from axo.propose_consumer import ProposeConsumer
+
+consumer = ProposeConsumer(store, "proposals.sqlite3", audit_path="propose_audit.jsonl")
+consumer.ingest("…", proposal_id="…", source="user")  # 只进队列，库一个字节不动
+consumer.decide_pending()  # 门控判定 → 只有 accepted 会落库
+```
+
+| 判定 | 条件（与 BioSNN 侧冻结值一致） |
+| :--- | :--- |
+| 拒绝 | 与库里已有条目相似度 ≥ 0.90（重复），或显著度 < 0.30 |
+| 自动接受 | 显著度 ≥ 0.60 且配额未满（20/小时、200/天） |
+| 待审 | 0.30–0.60，或超配额 |
+
+**默认相似度是词法重合**，不是余弦：门控必须能在没装模型的机器上跑完。接真嵌入时把
+`similarity=` 换掉，0.90 才按余弦解释——这一点写在
+[`research/mcp_write`](https://github.com/lzmd-arch/BioSNN-Plug/tree/main/research/mcp_write) 里。
+
+审计写 `propose_audit.jsonl`，事件名与 BioSNN 的 MCP 写版本一致（`proposal.received` /
+`gate.accepted` / `memory.applied`），两边可以用同一个对账脚本。**界面（设置开关、提议台账、
+撤销）在 P4，还没接**；在那之前没有任何界面路径会创建这个消费者。
+
 ## 数据放在哪
 
 默认 `%LOCALAPPDATA%\axo\`（macOS：`~/Library/Application Support/axo/`）。**刻意不放在仓库目录里**——否则
