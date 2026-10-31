@@ -143,6 +143,8 @@ def _call(core: MemoryCore, name: str, arguments: dict[str, Any]) -> dict[str, A
         "queue.list",
         "queue.approve",
         "memory.revert",
+        "capture.turn",
+        "capture.digest",
     ):
         if not hasattr(core, "queue_status"):
             raise KeyError(name)
@@ -170,9 +172,17 @@ def _call(core: MemoryCore, name: str, arguments: dict[str, Any]) -> dict[str, A
                     status=arguments.get("status"), limit=int(arguments.get("limit", 20))
                 )
             )
-        unknown = set(arguments) - {"seq", "reason"}
-        if unknown:
-            raise ValueError(f"未知参数：{sorted(unknown)}")
+        if name in ("capture.turn", "capture.digest"):
+            unknown = set(arguments) - {"text", "key"}
+            if unknown:
+                raise ValueError(f"未知参数：{sorted(unknown)}")
+            return _text(
+                core.capture(
+                    arguments.get("text"),
+                    key=arguments.get("key"),
+                    kind="capture" if name == "capture.turn" else "digest",
+                )
+            )
         if name == "queue.approve":
             return _text(core.approve(arguments.get("seq"), arguments.get("reason")))
         return _text(core.revert(arguments.get("seq"), arguments.get("reason")))

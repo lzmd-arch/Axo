@@ -45,6 +45,8 @@ def test_tool_table_adds_the_five_queue_tools(tmp_path):
         "queue.status",
         "queue.list",
         "queue.approve",
+        "capture.turn",
+        "capture.digest",
         "memory.revert",
     ]
 
@@ -100,3 +102,24 @@ def test_queue_tools_and_revert(tmp_path):
 def test_entry_point_refuses_when_the_setting_is_off(tmp_path, monkeypatch):
     monkeypatch.setattr("axo.propose_server.setting_enabled", lambda **_: False)
     assert main_write(["--db", str(tmp_path / "mem.db")]) == 2
+
+
+def test_capture_writes_without_the_gate(tmp_path):
+    # 捕获是"发生过的话"，不是"别人建议你记"：短句也直接落库，审计记 capture.applied
+    core = _core(tmp_path)
+    payload, error = _call(core, "capture.turn", {"text": "你好呀", "key": "s1#1"})
+    assert error is False, payload
+    assert payload["created"] is True
+    assert payload["entries"] == 1
+
+    # 已知缺口：record_if_absent 只按 memory_id 去重，不按 key。同一 key 再来会新增一条。
+    # 按 key 去重要在队列库里存 key→memory_id 的映射（未实现，见 docs/CAPTURE.md）。
+    again, _ = _call(core, "capture.turn", {"text": "你好呀", "key": "s1#1"})
+    assert again["created"] is True
+
+    events = [
+        json.loads(line)["event"]
+        for line in (tmp_path / "audit.jsonl").read_text("utf-8").splitlines()
+    ]
+    assert "capture.applied" in events
+    assert "gate.accepted" not in events

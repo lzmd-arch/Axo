@@ -382,6 +382,14 @@ class ProposeConsumer:
         self._audit(f"gate.{status}", {"seq": seq, "reason": reason, "salience": score})
         return self.queue.get(seq)
 
+    def writer_capture(self, text: str, *, source_ref: str):
+        """对话捕获的写入口：**不经过门控**，只负责留痕（审计事件 capture.applied）。"""
+        draft = MemoryDraft(content=text)
+        item, created = self._writer.record_if_absent(draft, session_id="", source_ref=source_ref)
+        if item is not None:
+            self._audit("capture.applied", {"source_ref": source_ref, "memory_id": item.memory_id})
+        return item, created
+
     def approve(self, seq: int, reason: str) -> dict[str, Any]:
         """把一条**待审**的提议按用户的判断放行。
 

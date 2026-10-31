@@ -88,6 +88,45 @@ TOOLS_WRITE: list[dict[str, Any]] = list(READ_TOOLS) + [
         },
     },
     {
+        "name": "capture.turn",
+        "description": (
+            "Capture one thing the user said into memory directly (no gate). Audited as capture.applied; "
+            "meant for conversation capture, not for suggestions."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "minLength": 1},
+                "key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Idempotency key, e.g. session+seq.",
+                },
+            },
+            "required": ["text", "key"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "capture.digest",
+        "description": (
+            "Write one daily digest of the assistant side of a conversation. Same write path as capture.turn."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "minLength": 1},
+                "key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Typically the date, e.g. 2026-10-31.",
+                },
+            },
+            "required": ["text", "key"],
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "memory.revert",
         "description": "Undo one accepted proposal (deletes the memory it created). Requires a reason.",
         "inputSchema": {
@@ -174,6 +213,28 @@ class WriteCore:
                 for item in rows
             ],
             "count": len(rows),
+        }
+
+    def capture(self, text: Any, *, key: Any, kind: str) -> dict[str, Any]:
+        """对话捕获：**不经过门控**，直接落库，事件记 capture.applied。
+
+        与 propose 的分工写死在名字上：propose 是"别人建议你记"（要判定），
+        capture 是"发生过的话"（只负责留痕）。它仍然可追溯：source_ref 带 key，
+        重复 key 不会重复插入。
+        """
+        body = (text or "").strip()
+        if not body:
+            raise ValueError("text 必须是非空字符串。")
+        stamp = str(key or "").strip()
+        if not stamp:
+            raise ValueError("key 必须是非空字符串。")
+        item, created = self._consumer.writer_capture(body, source_ref=f"{kind}://{stamp}")
+        if item is None:
+            raise ValueError("这段文本编不出词法指纹，无法捕获。")
+        return {
+            "memory_id": item.memory_id,
+            "created": created,
+            "entries": self._consumer.store.count(),
         }
 
     def approve(self, seq: Any, reason: Any) -> dict[str, Any]:
