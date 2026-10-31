@@ -86,7 +86,7 @@ from memcore.store import MemoryStore
 
 from .. import autostart
 from ..agent.background import CommandJobs
-from ..agent.catalog import default_tools
+from ..agent.catalog import CHAT_TOOL_NAMES, default_tools
 from ..agent.checkpoints import CheckpointStore
 from ..agent.gate import APPROVAL_TIMEOUT_S
 from ..agent.lsp import LspManager
@@ -2181,7 +2181,7 @@ class MainWindow(QMainWindow):
             current=text_for_prompt,
             environment=build_environment(
                 model_id=self._backend.model_id,
-                tools_declared=self._turn_uses_tools,
+                tools_declared=self._turn_tools_declared(),
                 needs_clarification=self._turn_needs_clarification,
                 speech_receipt=self._peek_speech_receipt(),
                 will_speak=bool(spoken and self._voice_settings.enabled),
@@ -2276,16 +2276,25 @@ class MainWindow(QMainWindow):
                 "system",
                 "这一轮只听、不调工具（原声直接给了模型）；要用工具就打字说。",
             )
-        elif self._turn_uses_tools:
-            registry = self._tools()
+        else:
+            # **闲聊轮也带一组只读工具。** 新闻、天气这类问题的答案不在对话里，而以前
+            # 这一轮连 ``tools`` 都不声明，模型只能回答"我没有接口"（2026-10-31 实测）。
+            # 写记忆/提醒/命令这些仍然只在任务语域——白名单见 ``CHAT_TOOL_NAMES``。
+            registry = self._tools() if self._turn_uses_tools else self._chat_tools()
+            if hears_audio:
+                # 原声那一轮只听、不调工具（理由同上面任务语域那条）；闲聊轮不必为
+                # 它多说一句——用户对着说话时本来就不期待工具。
+                registry = ToolRegistry(())
             if len(registry):
-                self._explain_the_missing_screen_tool()
+                if self._turn_uses_tools:
+                    self._explain_the_missing_screen_tool()
                 self._start_agent_turn(assembly, registry)
                 return
-            # 一个工具都没有的任务轮——**说明为什么**再按普通对话走。默默降级的话，
-            # 用户看到的是"我让它查一下，它却什么都没查"，而没有任何一处提到
-            # 工具集是空的。
-            self.chat_view.append_message("system", "这一轮没有可用的工具，按普通对话处理。")
+            if self._turn_uses_tools:
+                # 一个工具都没有的任务轮——**说明为什么**再按普通对话走。默默降级的话，
+                # 用户看到的是"我让它查一下，它却什么都没查"，而没有任何一处提到
+                # 工具集是空的。
+                self.chat_view.append_message("system", "这一轮没有可用的工具，按普通对话处理。")
 
         request = ChatRequest(
             messages=list(assembly.messages),
@@ -2459,6 +2468,30 @@ class MainWindow(QMainWindow):
         )
         self._report_plugin_issues(loaded.issues)
         return ToolRegistry([*builtin, *loaded.tools])
+
+    def _turn_tools_declared(self) -> bool:
+        """这一轮**会不会**给模型声明工具。装配器用它决定那句"这一轮没有工具可用"。
+
+        闲聊轮现在也带只读工具（见 ``_chat_tools``），所以不能再拿
+        ``_turn_uses_tools`` 一个布尔当全部答案——否则装配出来的上下文会告诉模型
+        "这一轮没有工具"，而请求里明明有 ``tools``（2026-10-10 那种"声称调了
+        write_memory"的幻觉就是这么来的，反着也成立）。
+        """
+        if self._turn_uses_tools:
+            return True
+        # **没判准的一轮也给只读工具**：它要做的判断是"你是不是让我查东西"，
+        # 而查新闻/天气本来就不改变任何状态。以前这一轮什么都不声明，模型只能
+        # 回答"我没有接口"——那是最坏的一种"安全"。
+        return bool(len(self._chat_tools()))
+
+    def _chat_tools(self) -> ToolRegistry:
+        """闲聊轮的工具集：只读白名单（见 ``CHAT_TOOL_NAMES``）。
+
+        闲聊轮以前一个工具都不声明，于是「看看最近有些什么新闻」这类**答案不在对话里**
+        的问题只能得到"我手上没有能连出去的接口"——模型没说错，是请求里没有 ``tools``。
+        这里不把任务语域搬过来：改状态的工具仍然不在表里，闸门那条纪律不变。
+        """
+        return ToolRegistry([tool for tool in self._tools() if tool.spec.name in CHAT_TOOL_NAMES])
 
     def _ui_call(self, func: Any, *args: Any) -> Any:
         """在**界面线程**执行一个回调，工作线程等结果。
