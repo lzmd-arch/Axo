@@ -137,10 +137,46 @@ def _call(core: MemoryCore, name: str, arguments: dict[str, Any]) -> dict[str, A
             raise ValueError("budget_tokens 必须是 1..100000 的整数。")
         hits = core.search(query, top_k, budget)
         return _text({"hits": hits, "count": len(hits)})
+    if name in ("propose.memory.write", "queue.status", "queue.list", "memory.revert"):
+        if not hasattr(core, "queue_status"):
+            raise KeyError(name)
+        if name == "propose.memory.write":
+            unknown = set(arguments) - {"text", "proposal_id", "source"}
+            if unknown:
+                raise ValueError(f"未知参数：{sorted(unknown)}")
+            return _text(
+                core.propose(
+                    arguments.get("text"),
+                    proposal_id=arguments.get("proposal_id"),
+                    source=str(arguments.get("source", "client")),
+                )
+            )
+        if name == "queue.status":
+            if arguments:
+                raise ValueError("queue.status 不接受参数。")
+            return _text(core.queue_status())
+        if name == "queue.list":
+            unknown = set(arguments) - {"status", "limit"}
+            if unknown:
+                raise ValueError(f"未知参数：{sorted(unknown)}")
+            return _text(
+                core.queue_list(
+                    status=arguments.get("status"), limit=int(arguments.get("limit", 20))
+                )
+            )
+        unknown = set(arguments) - {"seq", "reason"}
+        if unknown:
+            raise ValueError(f"未知参数：{sorted(unknown)}")
+        return _text(core.revert(arguments.get("seq"), arguments.get("reason")))
     raise KeyError(name)
 
 
-def handle_message(core: MemoryCore, message: dict[str, Any]) -> dict[str, Any] | None:
+def handle_message(
+    core: MemoryCore,
+    message: dict[str, Any],
+    *,
+    tools: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
     if message.get("jsonrpc") != "2.0":
         return _error(message.get("id"), -32600, "jsonrpc 必须是 '2.0'。")
     method = message.get("method")
@@ -162,7 +198,7 @@ def handle_message(core: MemoryCore, message: dict[str, Any]) -> dict[str, Any] 
     if method == "ping":
         return _result(message_id, {})
     if method == "tools/list":
-        return _result(message_id, {"tools": TOOLS})
+        return _result(message_id, {"tools": tools if tools is not None else TOOLS})
     if method == "tools/call":
         if not isinstance(params, dict):
             return _error(message_id, -32602, "params 必须是对象。")
@@ -181,7 +217,11 @@ def handle_message(core: MemoryCore, message: dict[str, Any]) -> dict[str, Any] 
 
 
 def serve_stdio(
-    core: MemoryCore, *, stdin: TextIO | None = None, stdout: TextIO | None = None
+    core: MemoryCore,
+    *,
+    stdin: TextIO | None = None,
+    stdout: TextIO | None = None,
+    tools: list[dict[str, Any]] | None = None,
 ) -> None:
     source, sink = stdin or sys.stdin, stdout or sys.stdout
     for line in source:
@@ -195,7 +235,7 @@ def serve_stdio(
             sink.write(json.dumps(_error(None, -32700, f"解析失败：{error}")) + "\n")
             sink.flush()
             continue
-        response = handle_message(core, message)
+        response = handle_message(core, message, tools=tools)
         if response is not None:
             sink.write(json.dumps(response, ensure_ascii=False) + "\n")
             sink.flush()

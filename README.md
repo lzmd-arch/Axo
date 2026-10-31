@@ -558,18 +558,31 @@ def tools():
 只读连接会在库旁生成 SQLite 自己的运行时索引（`mem.db-shm`、空的 `mem.db-wal`）——WAL 模式下
 读路径需要它，不是数据；不用 `immutable=1` 正是为了在应用同时写入时也能读到最新内容。
 
-### 可写档位：提议消费者（组件已就位，界面未接线）
+### 可写档位：外部程序提议，门控决定记不记
 
-上面那三个工具是**只读版**的全部。可写版不是把 `axo-mcp` 放开，而是多加一个消费者：
-外部客户端只能**提议**，提议进队列，由门控决定要不要成为记忆。
+只读版是 `axo-mcp`（三个工具）。可写版是**另一个入口** `axo-mcp-write`：多一个消费者，
+外部客户端只能提议，提议进队列，由门控决定要不要成为记忆。**默认不存在**——设置里没开，
+这个服务器起不来。
 
-```python
-from axo.propose_consumer import ProposeConsumer
+**三步用起来**
 
-consumer = ProposeConsumer(store, "proposals.sqlite3", audit_path="propose_audit.jsonl")
-consumer.ingest("…", proposal_id="…", source="user")  # 只进队列，库一个字节不动
-consumer.decide_pending()  # 门控判定 → 只有 accepted 会落库
+1. 设置 → 记忆 → 勾选「允许外部客户端提议写入记忆（MCP）」；
+2. 让客户端连 `axo-mcp-write`，提一条：
+   `{"name": "propose.memory.write", "arguments": {"text": "…", "proposal_id": "唯一串"}}`
+   —— 返回 `accepted` / `pending` / `rejected` **和理由**；
+3. 记忆窗口 → 提议台账：看待审、看理由；不满意的选中后「撤销选中的提议」。
+
+```json
+{
+  "mcpServers": {
+    "axo-memory": { "command": "axo-mcp" },
+    "axo-memory-write": { "command": "axo-mcp-write" }
+  }
+}
 ```
+
+写档位的工具：三个只读（`state.query` / `memory.search` / `trigger.status`）+
+`propose.memory.write` + `queue.status` + `queue.list` + `memory.revert`。
 
 | 判定 | 条件（与 BioSNN 侧冻结值一致） |
 | :--- | :--- |
@@ -581,9 +594,9 @@ consumer.decide_pending()  # 门控判定 → 只有 accepted 会落库
 `similarity=` 换掉，0.90 才按余弦解释——这一点写在
 [`research/mcp_write`](https://github.com/lzmd-arch/BioSNN-Plug/tree/main/research/mcp_write) 里。
 
-审计写 `propose_audit.jsonl`，事件名与 BioSNN 的 MCP 写版本一致（`proposal.received` /
-`gate.accepted` / `memory.applied`），两边可以用同一个对账脚本。**界面（设置开关、提议台账、
-撤销）在 P4，还没接**；在那之前没有任何界面路径会创建这个消费者。
+审计写 `<数据目录>/memory/propose_audit.jsonl`，事件名与 BioSNN 的 MCP 写版本一致
+（`proposal.received` / `gate.accepted` / `memory.applied` / `memory.revert`），两边可以用
+同一个对账脚本。关掉勾选框，消费者当即消失，但队列与审计文件留在原处，不会被删。
 
 ## 数据放在哪
 

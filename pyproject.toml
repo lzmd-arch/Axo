@@ -75,6 +75,8 @@ music = [
 # 捆绑在 wheel 里的语言服务器安装器：pip 安装后可直接运行。
 axo-lsp-install = "axo.agent.lsp_install:main"
 axo-mcp = "axo.mcp_server:main"
+# 写档位：只有设置里打开「允许外部客户端提议写入记忆」才会真正起服务
+axo-mcp-write = "axo.propose_server:main_write"
 
 [dependency-groups]
 dev = [
