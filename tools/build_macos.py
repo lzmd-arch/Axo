@@ -339,7 +339,7 @@ def _build_mcp_servers() -> None:
     与 Windows 侧用**同一份入口清单**（``build_exe.MCP_ENTRIES``）：桌面包不带这两个
     程序的话，用户勾了"允许外部提议写入"也等不到任何提议，而且不会报错。
     """
-    from tools.build_exe import MCP_ENTRIES
+    from build_exe import MCP_ENTRIES  # 脚本目录已在 sys.path 上（与文件顶部同一写法）
 
     out = _DIST / "_mcp"
     out.mkdir(parents=True, exist_ok=True)
