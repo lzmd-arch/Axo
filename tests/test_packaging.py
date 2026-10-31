@@ -455,3 +455,20 @@ def test_package_version_matches_pyproject() -> None:
         )
     ]
     assert values == [declared.group(1)]
+
+
+def test_mcp_servers_ship_with_the_package() -> None:
+    """桌面包必须带两个 MCP 入口，否则写档位在装好的机器上空转。
+
+    这条检查的是"构建工具声明了什么"与"入口脚本真的存在且是绝对 import"：
+    入口脚本被 PyInstaller 当 ``__main__`` 跑，相对 import 在那种情况下解析不了，
+    症状是产物能构建、双击没反应。
+    """
+    from tools import build_exe
+
+    assert set(build_exe.MCP_ENTRIES) == {"axo-mcp", "axo-mcp-write"}
+    root = Path(build_exe.__file__).resolve().parents[1]
+    for entry in build_exe.MCP_ENTRIES.values():
+        source = (root / entry).read_text(encoding="utf-8")
+        assert "from axo." in source, entry
+        assert "from ." not in source, entry

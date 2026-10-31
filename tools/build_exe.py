@@ -80,6 +80,17 @@ SHORTCUT_NAME = "Axo"
 """
 
 ENTRY = "src/axo/__main__.py"
+
+#: 随包的两个 MCP 控制台程序。**桌面包不给它们就没有意义**：写档位的全部价值就是
+#: 外部程序能提议，而 MCP 入口是命令行程序——只打包图形界面，用户勾了开关也等不到
+#: 任何提议，且不会报错（看起来像坏了）。
+#:
+#: 用 ``--onefile`` 而不是再开一棵 ``--onedir``：两份 ``_internal`` 会把每个包都拖进
+#: 来一遍；onefile 各自自足，放进 zip 根目录即可，启动多几秒对 MCP 服务器无所谓。
+MCP_ENTRIES: dict[str, str] = {
+    "axo-mcp": "src/axo/_entry_mcp_read.py",
+    "axo-mcp-write": "src/axo/_entry_mcp_write.py",
+}
 """真入口，而且**必须是这一个**。
 
 实质的入口是 :mod:`axo.ui.app` 的 ``main()``，平时跑的是 ``python -m
@@ -401,6 +412,67 @@ def _command(*, name: str, console: bool, icon: Path | None, clean: bool) -> lis
         command += ["--icon", str(icon)]
     command.append(str(_ROOT / ENTRY))
     return command
+
+
+def _build_mcp_servers(*, clean: bool) -> list[str]:
+    """把两个 MCP 控制台程序冻结成 ``dist/_mcp/*.exe``，返回问题清单。"""
+    problems: list[str] = []
+    out = _DIST / "_mcp"
+    out.mkdir(parents=True, exist_ok=True)
+    for exe, entry in MCP_ENTRIES.items():
+        command = [
+            sys.executable,
+            "-m",
+            "PyInstaller",
+            "--noconfirm",
+            "--onefile",
+            "--console",
+            "--name",
+            exe,
+            "--paths",
+            str(_ROOT / "src"),
+            "--distpath",
+            str(out),
+            "--workpath",
+            str(_BUILD / exe),
+            "--specpath",
+            str(_BUILD),
+        ]
+        if clean:
+            command.append("--clean")
+        for package in ("numpy",):
+            command += ["--collect-binaries", package]
+        command.append(str(_ROOT / entry))
+        print("$ " + " ".join(command), flush=True)
+        code = subprocess.call(command, cwd=str(_ROOT))
+        if code != 0:
+            problems.append(f"{exe} 冻结失败（退出码 {code}）")
+    return problems
+
+
+def _check_mcp_servers() -> list[str]:
+    """两个 exe 必须存在、能 ``--help``，且**写档位在设置关着时以 2 退出**。
+
+    最后那条不能靠"起一个服务器等它挂"来验：设置关着时它是立刻退出的，正好可以验；
+    设置一旦打开，这条检查会起一个真服务器——所以只验 ``--help`` 与文件存在，
+    开关行为由单元测试（``tests/test_mcp_write_server.py``）守。
+    """
+    problems: list[str] = []
+    for exe in MCP_ENTRIES:
+        path = _DIST / "_mcp" / f"{exe}.exe"
+        if not path.is_file():
+            problems.append(f"缺 {exe}.exe——MCP 入口没进包，写档位等于空转")
+            continue
+        try:
+            done = subprocess.run(
+                [str(path), "--help"], capture_output=True, text=True, timeout=120
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            problems.append(f"{exe}.exe 起不来：{error!r}")
+            continue
+        if done.returncode != 0 or "usage" not in done.stdout.lower():
+            problems.append(f"{exe}.exe --help 不干净（退出码 {done.returncode}）")
+    return problems
 
 
 def _require_pyinstaller() -> None:
@@ -1822,6 +1894,10 @@ def _make_zip(name: str) -> Path:
         for item in sorted(product.rglob("*"))
         if item.is_file()
     ]
+    for exe in MCP_ENTRIES:
+        binary = _DIST / "_mcp" / f"{exe}.exe"
+        if binary.is_file():
+            sources.append((f"{top}/{exe}.exe", binary))
     sources.append((f"{top}/LICENSE", _ROOT / "LICENSE"))
     for item in sorted((_ROOT / "licenses").iterdir()):
         if item.is_file():
@@ -1927,6 +2003,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"PyInstaller 退出码 {code}。", file=sys.stderr)
             return code
 
+    if not args.skip_build and not args.console:
+        mcp_problems = _build_mcp_servers(clean=args.clean)
+    else:
+        mcp_problems = []
+
     removed = _prune_debug_resources(name)
     gpl_removed, refused = _prune_gpl_only(name)
     removed += gpl_removed
@@ -1943,6 +2024,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         # ``--remind`` 那一条与活体探测同一批：它也是一个"起一次真产物看结果"的判据，
         # 而且比探测便宜得多（跑完就退，最多 6 秒）。
         problems += _check_remind(name)
+
+    problems += mcp_problems + _check_mcp_servers()
 
     if args.release and not problems:
         problems += _check_residue(name)
