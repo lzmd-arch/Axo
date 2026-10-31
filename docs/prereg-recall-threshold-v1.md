@@ -90,7 +90,7 @@ min_score 默认 0.20，来自 settings_store.DEFAULT_RECALL_MIN_SCORE
 
 ```bash
 uv run python tools/calibrate_recall_threshold.py            # 分布与阈值扫描
-uv run python -m pytest -q tests/test_recall_threshold_wire.py tests/test_settings_store.py
+uv run python -m pytest -q tests/test_ui_recall_threshold_wire.py tests/test_settings_store.py
 ```
 
 标定脚本只碰库的副本，并在前后比对源库 sha256。

@@ -10,6 +10,10 @@
 
 `_should_say_uncertain` 用真实方法 + 只带必要字段的替身跑（同 ``test_ui_agent_slots``
 的手法）；不建 ``MainWindow``（离屏下 QtWebEngine 一渲染就把进程硬杀掉）。
+
+**文件名必须带 ``test_ui_`` 前缀**：CI 的核心腿用 ``--ignore-glob='tests/test_ui_*'``
+跳过这一族，而本模块在顶层 import ``main_window``——它会拉进 QtWebEngine，Linux 的
+核心腿上没有 libEGL，**收集阶段就会 ImportError**。
 """
 
 from __future__ import annotations
