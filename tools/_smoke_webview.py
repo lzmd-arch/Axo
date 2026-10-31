@@ -23,6 +23,10 @@
    **JS → Python** 的半程（点按钮 → ``bridge.answer_persona`` → 信号），因为那是
    新的第二个 slot：QWebChannel 找不到槽位时**是静默丢弃**，两侧名字对不上不会
    报错，只会在真机上表现为"点了没反应"。
+6. **每轮 token 那行小字**（``endMessage(footer)``）真的挂在最后一条她的气泡下面；
+7. **``loadHistory`` 与页面重载**：历史先是整份画出来，然后**真的 reload 一次**，
+   加载完成后它自己回来——这条对应 2026-10-31 用户报的"对话区没了"。缓存在
+   ``ChatView._history`` 里，重载后由 ``_on_load_finished`` 补推。
 
 用法::
 
@@ -103,10 +107,17 @@ def main() -> int:
         ——串成一段长脚本的话，中间哪一步炸了就再也看不到后面那几步的结果。"""
         view._page.runJavaScript(script, then)
 
+    #: 重载阶段。第一次加载走完整套；``state["reloaded"]`` 为真那一次是第 7 项
+    #: 自己 ``reload()`` 出来的，只看历史回没回来。
+    state = {"reloaded": False}
+
     def on_load(ok: bool) -> None:
         if not ok:
             print("页面加载失败")
             app.quit()
+            return
+        if state["reloaded"]:
+            QTimer.singleShot(400, dump_after_reload)
             return
         view.append_message("user", "你好，这是**用户**的消息，包含 <b>标签</b>。")
         for piece in STREAMED:
@@ -187,7 +198,91 @@ def main() -> int:
         print("--- 空状态自检 ---")
         print(summary)
         print("（期望 bubbles=0、emptyHidden=false、emptyText 非空）")
-        step_persona()
+        step_usage()
+
+    # ── 3.5 每轮 token 小字 ───────────────────────────────────────────────
+
+    def step_usage() -> None:
+        view.push_token("这一轮的回答。")
+        view.end_message("输入 1,234 · 输出 56 token")
+        QTimer.singleShot(300, dump_usage)
+
+    def dump_usage() -> None:
+        ask(
+            'JSON.stringify({footers: Array.from(document.querySelectorAll("#stream .msg-footer"),'
+            " function (n) { return n.textContent; }),"
+            " lastIsAssistant: (function () {"
+            ' var all = document.querySelectorAll("#stream .msg");'
+            ' return all.length > 0 && all[all.length - 1].classList.contains("msg-assistant");'
+            " })()})",
+            report_usage,
+        )
+
+    def report_usage(summary: str) -> None:
+        print("--- 每轮 token 小字 ---")
+        print(summary)
+        print(
+            "（期望 footers=['输入 1,234 · 输出 56 token']、lastIsAssistant=true"
+            "——它必须在最后一条她的气泡**里面**）"
+        )
+        step_history()
+
+    # ── 3.6 历史整份渲染 + 页面重载后回来 ─────────────────────────────────
+
+    HISTORY = [
+        {"role": "user", "text": "看看新闻", "meta": {}},
+        {
+            "role": "assistant",
+            "text": "我先查一下。",
+            "meta": {"footer": "输入 2,259 · 输出 580 token"},
+        },
+        {
+            "role": "tool",
+            "text": "央视新闻：今日要闻……",
+            "meta": {"title": "工具结果 · web_search"},
+        },
+    ]
+
+    _HISTORY_STATE = (
+        "JSON.stringify({"
+        ' bubbles: document.querySelectorAll("#stream .msg").length,'
+        ' titles: Array.from(document.querySelectorAll("#stream .msg-caption"),'
+        " function (n) { return n.textContent; }),"
+        ' footers: Array.from(document.querySelectorAll("#stream .msg-footer"),'
+        " function (n) { return n.textContent; })"
+        "})"
+    )
+
+    def step_history() -> None:
+        view.load_history(HISTORY)
+        QTimer.singleShot(300, dump_history)
+
+    def dump_history() -> None:
+        ask(_HISTORY_STATE, report_history)
+
+    def report_history(summary: str) -> None:
+        print("--- 历史整份渲染 ---")
+        print(summary)
+        print(
+            "（期望 bubbles=3、titles 含「工具结果 · web_search」、"
+            "footers=输入 2,259 · 输出 580 token）"
+        )
+        print("--- 现在真的重载一次页面 ---")
+        state["reloaded"] = True
+        view._view.reload()
+
+    def dump_after_reload() -> None:
+        ask(_HISTORY_STATE, report_after_reload)
+
+    def report_after_reload(summary: str) -> None:
+        print("--- 重载之后（对话区没了 = 这条）---")
+        print(summary)
+        print("（期望与上一段逐字相同：历史自己回来了，不靠用户重新点会话）")
+        # 人设那一段的判据里有 ``emptyHidden=false``——它要求**空对话区**。这一项
+        # 刚把三条历史画上去，不先清掉的话，最后那条判据读到的会是"有消息"，
+        # 而那是这一步造成的，不是人设卡片的毛病。
+        view.clear()
+        QTimer.singleShot(300, step_persona)
 
     # ── 4. 首启人设卡片 ───────────────────────────────────────────────────
     #
