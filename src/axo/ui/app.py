@@ -177,6 +177,31 @@ def _remind_once() -> int:
     )
 
 
+def _install_excepthook() -> None:
+    """未处理异常写进 ``logs/ui-errors.log``。
+
+    打包成窗口程序后 stderr 是空的：槽里抛出的异常只会让界面停在某个"正在…"，
+    而现场什么都不剩（2026-10-31 的"卡在检索记忆"就是这样）。源码态照样转给
+    ``sys.__excepthook__``，终端里仍然看得到。
+    """
+    from ..paths import data_dir
+
+    def hook(exc_type, exc, tb) -> None:
+        try:
+            path = data_dir() / "logs" / "ui-errors.log"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            import traceback as _tb
+
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write("----" + chr(10))
+                _tb.print_exception(exc_type, exc, tb, file=fh)
+        except Exception:
+            pass
+        sys.__excepthook__(exc_type, exc, tb)
+
+    sys.excepthook = hook
+
+
 def main(argv: list[str] | None = None) -> int:
     """启动桌面终端，返回进程退出码。**带 ``--remind`` 时走无头那一支。**"""
     args = list(sys.argv[1:] if argv is None else argv)
@@ -185,6 +210,7 @@ def main(argv: list[str] | None = None) -> int:
     # ``_check_remind`` 起的就是一个带隔离数据目录的无头进程。
     configure_isolated_state()
     _configure_webengine_environment()
+    _install_excepthook()
 
     if REMIND_FLAG in args:
         # **在这一句之前不能有任何 Qt 对象**：登录时绝大多数情况下没有到点的提醒，

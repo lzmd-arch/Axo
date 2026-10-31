@@ -37,6 +37,7 @@ import contextlib
 import sys
 import threading
 import time
+import traceback
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import date, datetime, timedelta
@@ -2227,6 +2228,30 @@ class MainWindow(QMainWindow):
 
     @Slot(object, object)
     def _on_assembly_ready(self, assembly: Assembly, ledger: Any) -> None:
+        """装配好了。**整个发送阶段都在这里兜底。**
+
+        2026-10-31：它里面任何一处抛异常，界面都会停在"正在检索记忆…"——打包版的
+        窗口程序没有 stderr，用户看到的只有卡住。这里把异常写进
+        ``logs/ui-errors.log`` 并把界面复位，下一轮还能继续。
+        """
+        try:
+            self._start_after_assembly(assembly, ledger)
+        except Exception:
+            detail = traceback.format_exc()
+            self._log_ui_error(detail)
+            self._streaming = False
+            self._preparing = False
+            self._cancel_requested = True
+            self.chat_view.set_busy(False)
+            self.stop_button.setEnabled(False)
+            self.chat_view.append_message(
+                "system",
+                "这一轮准备时出错了（详情：`logs/ui-errors.log`）："
+                + chr(10)
+                + detail.strip().splitlines()[-1],
+            )
+
+    def _start_after_assembly(self, assembly: Assembly, ledger: Any) -> None:
         """装配好了，**这里才发请求**。"""
         if self.sender() is not self._prepare_worker:
             # 上一轮被取消之后仍在跑的装配线程。它送来的是一份**过期**的结果，收下
@@ -2280,16 +2305,30 @@ class MainWindow(QMainWindow):
             # **闲聊轮也带一组只读工具。** 新闻、天气这类问题的答案不在对话里，而以前
             # 这一轮连 ``tools`` 都不声明，模型只能回答"我没有接口"（2026-10-31 实测）。
             # 写记忆/提醒/命令这些仍然只在任务语域——白名单见 ``CHAT_TOOL_NAMES``。
-            registry = self._tools() if self._turn_uses_tools else self._chat_tools()
-            if hears_audio:
-                # 原声那一轮只听、不调工具（理由同上面任务语域那条）；闲聊轮不必为
-                # 它多说一句——用户对着说话时本来就不期待工具。
-                registry = ToolRegistry(())
-            if len(registry):
-                if self._turn_uses_tools:
-                    self._explain_the_missing_screen_tool()
-                self._start_agent_turn(assembly, registry)
-                return
+            #
+            # **整段兜底**：带工具这条路以前只有任务语域走，闲聊轮是第一次走；
+            # 它一旦在槽里抛异常，界面会停在"正在检索记忆…"而打包版没有 stderr。
+            # 出错就退回普通对话，并把 traceback 写进 logs/ui-errors.log。
+            try:
+                registry = self._tools() if self._turn_uses_tools else self._chat_tools()
+                if hears_audio:
+                    # 原声那一轮只听、不调工具（理由同上面任务语域那条）；闲聊轮不必为
+                    # 它多说一句——用户对着说话时本来就不期待工具。
+                    registry = ToolRegistry(())
+                if len(registry):
+                    if self._turn_uses_tools:
+                        self._explain_the_missing_screen_tool()
+                    self._start_agent_turn(assembly, registry)
+                    return
+            except Exception:
+                detail = traceback.format_exc()
+                self._log_ui_error(detail)
+                self.chat_view.append_message(
+                    "system",
+                    "这一轮带工具失败，已退回普通对话（详情：`logs/ui-errors.log`）："
+                    + chr(10)
+                    + detail.strip().splitlines()[-1],
+                )
             if self._turn_uses_tools:
                 # 一个工具都没有的任务轮——**说明为什么**再按普通对话走。默默降级的话，
                 # 用户看到的是"我让它查一下，它却什么都没查"，而没有任何一处提到
@@ -2468,6 +2507,20 @@ class MainWindow(QMainWindow):
         )
         self._report_plugin_issues(loaded.issues)
         return ToolRegistry([*builtin, *loaded.tools])
+
+    def _log_ui_error(self, detail: str) -> None:
+        """把界面槽里的异常写进文件。**打包成窗口程序后 stderr 是空的**，
+
+        一个在槽里抛出的异常只会让界面停在"正在检索记忆…"，而现场什么都不剩。
+        写盘是唯一能把它带回来的方式（见 ``logs/ui-errors.log``）。
+        """
+        try:
+            path = data_dir() / "logs" / "ui-errors.log"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write("----" + chr(10) + detail)
+        except Exception:
+            pass
 
     def _turn_tools_declared(self) -> bool:
         """这一轮**会不会**给模型声明工具。装配器用它决定那句"这一轮没有工具可用"。

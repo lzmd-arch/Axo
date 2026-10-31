@@ -71,10 +71,16 @@ def test_every_chat_tool_is_approval_free() -> None:
 
 
 def test_assembly_ready_wires_chat_tools() -> None:
-    """接线守卫：闲聊轮的分支里必须真的构造并交给 agent 循环。"""
-    source = inspect.getsource(MainWindow._on_assembly_ready)
-    assert "_chat_tools()" in source, "闲聊轮没有构造只读工具集"
-    assert "_start_agent_turn(assembly, registry)" in source, "工具集构造了却没有交给循环"
+    """接线守卫：闲聊轮的分支里必须真的构造并交给 agent 循环。
+
+    槽本身只做兜底（``_on_assembly_ready`` → ``_start_after_assembly``），
+    真正的分支在后者里。
+    """
+    wrapper = inspect.getsource(MainWindow._on_assembly_ready)
+    body = inspect.getsource(MainWindow._start_after_assembly)
+    assert "_start_after_assembly(assembly, ledger)" in wrapper, "兜底槽没有转给发送阶段"
+    assert "_chat_tools()" in body, "闲聊轮没有构造只读工具集"
+    assert "_start_agent_turn(assembly, registry)" in body, "工具集构造了却没有交给循环"
 
 
 def test_empty_tool_set_falls_back_to_plain_chat() -> None:
