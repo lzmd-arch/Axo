@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 
-from axo.mcp_server import handle_message, open_store
+from axo.mcp_server import handle_message
 from axo.propose_consumer import ProposeConsumer
 from axo.propose_server import TOOLS_WRITE, WriteCore, main_write
 from memcore.store import MemoryStore
@@ -19,7 +19,7 @@ def _core(tmp_path) -> WriteCore:
     consumer = ProposeConsumer(
         MemoryStore(db), tmp_path / "queue.sqlite3", audit_path=tmp_path / "audit.jsonl"
     )
-    return WriteCore(open_store(db), consumer)
+    return WriteCore(db, consumer)
 
 
 def _call(core, name, arguments=None):
@@ -97,5 +97,5 @@ def test_queue_tools_and_revert(tmp_path):
 
 
 def test_entry_point_refuses_when_the_setting_is_off(tmp_path, monkeypatch):
-    monkeypatch.setattr("axo.propose_server.setting_enabled", lambda: False)
+    monkeypatch.setattr("axo.propose_server.setting_enabled", lambda **_: False)
     assert main_write(["--db", str(tmp_path / "mem.db")]) == 2

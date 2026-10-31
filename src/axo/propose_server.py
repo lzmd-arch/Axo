@@ -16,6 +16,8 @@ accept / pending / reject 的结论，不会出现"提了但永远没人处置"�
 from __future__ import annotations
 
 import argparse
+import contextlib
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -88,12 +90,20 @@ TOOLS_WRITE: list[dict[str, Any]] = list(READ_TOOLS) + [
 class WriteCore:
     """三个只读工具转发给只读核；其余四个转发给消费者。"""
 
-    def __init__(self, reader_store: MemoryStore, consumer: ProposeConsumer) -> None:
-        # 收 **store** 而不是 **MemoryCore**：调用方刚才就传错过一次（把 store 当
-        # MemoryCore 传进来，症状是检索报"MemoryStore 没有 search"）。让构造器自己
-        # 包一层，这种错就不可能发生。
-        self._reader = MemoryCore(reader_store)
+    def __init__(self, db: Path, consumer: ProposeConsumer) -> None:
+        # 收**库路径**而不是现成的连接：检索用的只读连接在启动时打开，而落库走另一个
+        # 可写连接——**只读连接看不见之后提交的写入**（WAL 下的快照），症状是
+        # "提议被接受、库里也有一条，但紧接着 memory.search 返回空"。所以每次落库之后
+        # 换一条新的只读连接。
+        self._db = db
+        self._reader = MemoryCore(open_store(db))
         self._consumer = consumer
+
+    def _refresh_reader(self) -> None:
+        old = self._reader
+        self._reader = MemoryCore(open_store(self._db))
+        with contextlib.suppress(Exception):  # 关不掉不影响新连接
+            old.store.close()
 
     # ---- 只读（与 axo-mcp 同一份实现）
     def state(self) -> dict[str, Any]:
@@ -113,6 +123,8 @@ class WriteCore:
         if row["status"] == "pending":
             self._consumer.decide(row["seq"])
         decided = self._consumer.queue.get(row["seq"])
+        if decided["status"] == "accepted":
+            self._refresh_reader()
         return {
             "seq": decided["seq"],
             "proposal_id": decided["proposal_id"],
@@ -151,11 +163,26 @@ class WriteCore:
     def revert(self, seq: Any, reason: Any) -> dict[str, Any]:
         if not isinstance(seq, int) or isinstance(seq, bool):
             raise ValueError("seq 必须是整数。")
-        return self._consumer.revert(seq, reason)
+        payload = self._consumer.revert(seq, reason)
+        self._refresh_reader()
+        return payload
 
 
-def setting_enabled() -> bool:
-    """读真实设置。Qt 只在调用时导入——测试与纯逻辑不需要它。"""
+#: 隔离测试用的覆盖开关。**只在同时显式给了数据目录时才被采信**——不然它就能
+#: 悄悄把默认库的写档位打开，而那正是"默认只读"要防的事。
+ENV_OVERRIDE = "AXO_PROPOSE_SETTING"
+
+
+def setting_enabled(*, isolated: bool = False) -> bool:
+    """读真实设置。Qt 只在调用时导入——测试与纯逻辑不需要它。
+
+    ``isolated`` 由调用方在**显式指定了数据目录**时为真；只有那种情况下
+    :data:`ENV_OVERRIDE` 才会被采纳。生产路径永远读设置。
+    """
+    override = os.environ.get(ENV_OVERRIDE)
+    if override is not None and isolated:
+        return override.strip() == "1"
+
     from PySide6.QtCore import QSettings
 
     from .ui.settings_store import SETTINGS_APP, SETTINGS_ORG, SettingsStore
@@ -178,7 +205,7 @@ def main_write(argv: list[str] | None = None) -> int:
 
     if args.data_dir is not None:
         paths.set_data_root(args.data_dir)
-    if not setting_enabled():
+    if not setting_enabled(isolated=args.data_dir is not None or args.db is not None):
         print(
             f"写档位没有打开。在 Axo 里打开：{SETTING_KEY_HINT}，再重启这个服务器。",
             file=sys.stderr,
@@ -189,7 +216,7 @@ def main_write(argv: list[str] | None = None) -> int:
     queue = args.queue or paths.propose_queue_path()
     audit = args.audit or paths.propose_audit_path()
     consumer = ProposeConsumer(MemoryStore(db), queue, audit_path=audit)
-    serve_stdio(WriteCore(open_store(db), consumer), tools=TOOLS_WRITE)
+    serve_stdio(WriteCore(db, consumer), tools=TOOLS_WRITE)
     return 0
 
 
