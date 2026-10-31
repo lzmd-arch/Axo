@@ -95,9 +95,18 @@ def test_yielding_stops_playdown_before_any_early_return(tree: ast.Module) -> No
 
 
 def test_the_assembly_line_attaches_the_recording(tree: ast.Module) -> None:
-    """`_on_assembly_ready` 真的调了 `_attach_pending_audio`——贴音频是接线，不是纯层。"""
-    assert _calls(_method(tree, "_on_assembly_ready"), "_attach_pending_audio"), (
-        "_on_assembly_ready 没贴原声——勾了「听得见」也是发文字"
+    """装配完成之后真的调了 `_attach_pending_audio`——贴音频是接线，不是纯层。
+
+    2026-10-31 起槽本身只剩兜底（``_on_assembly_ready`` → ``_start_after_assembly``，
+    见 ``test_ui_chat_tools_wire``）。判据跟着**真正干活**的那个函数走，同时钉住
+    兜底槽确实转了过去——拆分之后最容易发生的事，就是一段接线留在了没人调的
+    旧函数里。
+    """
+    assert _calls(_method(tree, "_start_after_assembly"), "_attach_pending_audio"), (
+        "发送阶段没贴原声——勾了「听得见」也是发文字"
+    )
+    assert _calls(_method(tree, "_on_assembly_ready"), "_start_after_assembly"), (
+        "_on_assembly_ready 没有转给 _start_after_assembly——上面那条守的是死代码"
     )
 
 

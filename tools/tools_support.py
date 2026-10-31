@@ -44,6 +44,7 @@ class RecordingChatView(QWidget):
     stickers_add_requested = Signal()
     stickers_folder_requested = Signal()
     files_dropped = Signal(list)
+    recovered = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -61,7 +62,7 @@ class RecordingChatView(QWidget):
     def append_message(self, role: str, text: str, meta: dict | None = None) -> None:
         self.calls.append(f"appendMessage({role})")
 
-    def end_message(self) -> None:
+    def end_message(self, footer: str = "") -> None:
         self.calls.append("endMessage")
 
     def set_busy(self, busy: bool) -> None:

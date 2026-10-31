@@ -416,6 +416,28 @@ def bundled_embedding_dir() -> Path | None:
     return None
 
 
+LLAMA_DIR_NAME = "llama"
+"""随包的 llama.cpp 运行时目录名（``llama-server.exe`` + CUDA 运行库）。"""
+
+
+def bundled_llama_dir() -> Path | None:
+    """随包的 llama.cpp 运行时目录；没有就 ``None``。
+
+    打包态在 ``<bundle>/llama``；源码态允许把同一套文件放到仓库的
+    ``build/bundle/llama``，或用 ``AXO_LLAMA_DIR`` 指过去（调试与手工验证用）。
+    判据是 ``llama-server.exe`` 存在——只判目录会让一个空目录骗过所有人。
+    """
+    raw = os.environ.get("AXO_LLAMA_DIR", "").strip()
+    candidates = [Path(raw).expanduser()] if raw else []
+    candidates += [base / LLAMA_DIR_NAME for base in _bundled_base_dirs()]
+    if not getattr(sys, "frozen", False):
+        candidates.append(Path(__file__).resolve().parents[2] / "build" / "bundle" / LLAMA_DIR_NAME)
+    for candidate in candidates:
+        if (candidate / "llama-server.exe").is_file():
+            return candidate
+    return None
+
+
 def bundled_tts_dir() -> Path | None:
     """随包的千岁 TTS 资产目录（ZipVoice 模型 + 参考音）；没有就 ``None``。
 

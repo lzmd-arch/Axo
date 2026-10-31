@@ -23,9 +23,13 @@
 
 ## ``statistics`` 里多几个键，不改少任何一个
 
-``finished`` 的第二个参数是**超集**：``ChatWorker`` 的三个键一个不少（缺的
-``prompt_tokens``/``completion_tokens`` 是 ``None``——工具循环这一版不上报 token），
+``finished`` 的第二个参数是**超集**：``ChatWorker`` 的三个键一个不少，
 再加上 ``rounds`` / ``tool_calls`` / ``wrapped_up`` / ``unexecuted`` / ``tool_trace``。
+
+``prompt_tokens`` / ``completion_tokens`` 从 P8 起**也上报**，口径是**这一轮所有
+请求之和**（见 :attr:`~axo.agent.loop.LoopDone.prompt_tokens`）：三轮工具调用会把
+三次上下文重发都算进去，与账单一致。后端一次都没给 ``usage`` 时仍是 ``None``——
+那时界面不显示，而不是显示 0。
 
 ``unexecuted`` **调用方不许吞掉**：那是"模型还想调工具但没有声明可用了"的那几个名字，
 吞掉它就等于回到了 ``ChatWorker`` 被修掉的那个缺陷——静默丢弃。
@@ -96,6 +100,8 @@ from ..session.budget import TokenBudget, TokenMeter
 __all__ = ["AgentWorker"]
 
 _EMPTY_STATISTICS: dict[str, Any] = {
+    # 正常收尾时由 ``LoopDone`` 填（所有轮次求和）；被打断的那一轮保持 ``None``
+    # ——循环被 ``break`` 掉时 ``LoopDone`` 不产出，手里没有可报的数。
     "prompt_tokens": None,
     "completion_tokens": None,
     # 正常收尾时由 ``LoopDone.response_meta`` 填；被用户中断时保持空（那一轮没有
@@ -401,6 +407,8 @@ class AgentWorker(QObject):
                     final_text = event.final_text
                     interrupted = False
                     statistics.update(
+                        prompt_tokens=event.prompt_tokens,
+                        completion_tokens=event.completion_tokens,
                         rounds=event.rounds,
                         tool_calls=event.tool_calls,
                         wrapped_up=event.wrapped_up,

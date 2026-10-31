@@ -65,9 +65,13 @@ macOS 包**已经带了**中文离线语音模型，下面那段手动放模型�
 点「更多信息」→「仍要运行」。
 
 第一次启动是**空的**：没有记忆、没有对话，先看到的是一张人设卡片而不是输入框
-（见下面「首次运行：定一次人设」）。要能聊天还得有一个模型，两条路任选：
+（见下面「首次运行：定一次人设」）。要能聊天还得有一个模型，三条路任选：
 
-* **本机**：装 [Ollama](https://ollama.com/download)，`ollama pull qwen3:4b`。
+* **内置（推荐，不用装任何别的东西）**：安装包自带 llama.cpp 的 CUDA 运行时
+  （`llama/` 目录），设置 → 后端 → 内置（llama.cpp），选一个 `.gguf` 模型文件即可
+  （Ollama 下载下来的 blob 本身就是 GGUF，也能直接选）。软件自己把模型跑起来，
+  **不经过 Ollama**、不占它的 11434 端口；没有 NVIDIA 显卡时自动退回 CPU，只是慢。
+* **本机 Ollama**：装 [Ollama](https://ollama.com/download) 后 `ollama pull qwen3:4b`。
   4B 级量化模型，8 GB 显存这一档就够。**语义召回不需要再单独 pull 嵌入模型**：
   分发版自带 `bge-small-zh-v1.5`（512 维 ONNX，随包、离线）；源码态没有随包资产时
   才退回 `ollama pull nomic-embed-text`。
@@ -136,7 +140,9 @@ DeepSeek 目前也没有音频接口）。**勾上意味着你的声音会随请
 
 这一节是**从源码跑**。只要一个能用的程序，看上面那节。
 
-前置三件：**Git**、**uv**、**Ollama**。
+前置三件：**Git**、**uv**、**Ollama**（也可以不装 Ollama，改用内置的 llama.cpp：
+`uv run python tools/fetch_bundle_assets.py --llama-only` 抓运行时，再在设置里选
+「内置（llama.cpp）」与一个 GGUF 文件；此时嵌入模型仍建议用随包资产或 Ollama 拉的那份）。
 
 * **Git**——`winget install --id Git.Git`，或 <https://git-scm.com/download/win>。
 * **uv**——本项目的运行入口：`winget install --id astral-sh.uv`，或 `pipx install uv`，

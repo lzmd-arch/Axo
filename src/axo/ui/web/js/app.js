@@ -56,6 +56,11 @@
   var active = null; // 正在流式写入的消息体
   var pending = null; // 待渲染的增量文本缓冲
 
+  /* 最后一条「她说的」气泡。endMessage 的页脚（这一轮用掉多少 token）挂在它
+     身上。**只由 pushToken 与 appendMessage 设置，不跟 loadHistory 走**：回看
+     时那些气泡的页脚来自 meta.footer，一次收尾不该把统计写进一条旧消息。 */
+  var lastAssistant = null;
+
   /* 人设卡片正等着回答。**初值 false，由 Python 推上来的那次打开它。**
 
      方向是这么定的：反过来的写法（初值 true，"没人说一句之前不让打字"）在正常
@@ -181,6 +186,7 @@
     for (var i = 0; i < messages.length; i++) messages[i].remove();
     active = null;
     pending = null;
+    lastAssistant = null;
     updateEmpty();
   }
 
@@ -411,11 +417,15 @@
 
   window.ChatHost = {
     appendMessage: function (role, text, meta) {
-      append(role || "assistant", text, meta || {});
+      var bubble = append(role || "assistant", text, meta || {});
+      // 她整段说的那些（表情包、主动开口）也算「她的气泡」：下一条收尾的
+      // 统计挂在它下面，而不是更早的某一轮。
+      if (bubble && (role === "assistant" || role === "proactive")) lastAssistant = bubble;
     },
 
     pushToken: function (text) {
       if (!active) active = append("assistant", "");
+      lastAssistant = active;
       pending = (pending === null ? active._text : pending) + (text || "");
       schedule();
       // 口型同步入口。现在 Live2D 未接入，这两行是空操作；
@@ -428,7 +438,7 @@
       }
     },
 
-    endMessage: function () {
+    endMessage: function (footer) {
       if (frame !== null) {
         window.cancelAnimationFrame(frame);
         frame = null;
@@ -436,6 +446,15 @@
       flush();
       active = null;
       pending = null;
+      // 这一轮用掉多少 token。**参数可有可无**：老调用方不传也照旧收尾，
+      // 所以那份「只增不改」的契约不用动。
+      if (footer && lastAssistant) {
+        var note = document.createElement("div");
+        note.className = "msg-footer";
+        note.textContent = footer;
+        lastAssistant.appendChild(note);
+        if (nearBottom()) scrollToBottom();
+      }
     },
 
     setBusy: function (value) {
@@ -533,7 +552,17 @@
     loadHistory: function (messages) {
       resetStream();
       (messages || []).forEach(function (message) {
-        append(message.role || "assistant", message.text || "", message.meta || {});
+        // 一条画不出来**不许把后面的全部带走**。以前这个循环没有兜底：中间某一条
+        // 让渲染抛错，后面的历史就一条都不出来，而用户看到的是"对话区没了"——
+        // 正是 2026-10-31 报的那个症状。Python 侧会把这里的报错写进
+        // logs/ui-errors.log（见 chat_view.py 的 javaScriptConsoleMessage）。
+        try {
+          append(message.role || "assistant", message.text || "", message.meta || {});
+        } catch (error) {
+          if (window.console && window.console.error) {
+            window.console.error("loadHistory: " + ((error && error.message) || error));
+          }
+        }
       });
       scrollToBottom();
     },

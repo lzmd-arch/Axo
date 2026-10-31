@@ -260,6 +260,18 @@ class LoopDone:
     与 ``ChatWorker`` 的 ``response_meta`` 同一个含义。
     """
 
+    prompt_tokens: int | None = None
+    """这一轮**全部请求**加起来用掉的输入 token。
+
+    **跨轮求和而不是取最后一轮**：每一轮都要把上下文重发一遍，计费与限流都按次
+    算，所以"这一轮花了多少"必须是总和——只取最后一次会把一次三轮工具调用报成
+    三分之一。后端一次都没上报（本机某些端点不给 ``usage``）就保持 ``None``，
+    与 ``ChatWorker`` 的统计同形。
+    """
+
+    completion_tokens: int | None = None
+    """同 :attr:`prompt_tokens`，输出那一侧。"""
+
 
 Event = (
     RoundStarted
@@ -530,6 +542,10 @@ def run_agent_loop(
     total_calls = 0
     final_text = ""
     response_meta: dict[str, Any] = {}
+    # 用量按**所有轮次求和**（见 :attr:`LoopDone.prompt_tokens`）。``None`` 表示
+    # 到现在为止一个端都没上报过——不能拿 0 当初始值，否则"没上报"会被报成"用了 0"。
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
     unexecuted: tuple[str, ...] = ()
     wrapped_up = False
     fuse = limits.fuse_rounds if limits.max_rounds is None else limits.max_rounds
@@ -592,6 +608,12 @@ def run_agent_loop(
             # "一个调用分了两片"这种在本项目里不存在的情形。
             if piece.tool_calls:
                 calls = piece.tool_calls
+            piece_prompt = getattr(piece, "prompt_tokens", None)
+            if isinstance(piece_prompt, int):
+                prompt_tokens = (prompt_tokens or 0) + piece_prompt
+            piece_completion = getattr(piece, "completion_tokens", None)
+            if isinstance(piece_completion, int):
+                completion_tokens = (completion_tokens or 0) + piece_completion
             meta = piece.raw.get("meta")
             if isinstance(meta, dict) and meta:
                 response_meta = dict(meta)
@@ -752,4 +774,6 @@ def run_agent_loop(
         stop_reason=stop_reason or "final",
         detail=stop_detail,
         response_meta=response_meta,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
     )

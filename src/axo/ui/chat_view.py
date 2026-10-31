@@ -24,7 +24,7 @@ JS 与 Python 的契约（两边都是**只增不改**，否则旧前端会静�
     Python → JS     window.ChatHost.appendMessage(role, text, meta)   role: user|assistant|system|tool|proactive
                                                                       meta: {title?, footer?, image?}
                     window.ChatHost.pushToken(text)                  流式增量
-                    window.ChatHost.endMessage()                     一片回复结束
+                    window.ChatHost.endMessage(footer)               一片回复结束；footer 可选，是气泡下面那行小字
                     window.ChatHost.setBusy(busy)                    生成中
                     window.ChatHost.setStatus(text)                  顶栏状态
                     window.ChatHost.clear()                          清空对话流
@@ -116,6 +116,7 @@ from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
+from .errorlog import log_ui_error
 from .theme import Resolved
 
 __all__ = ["ChatView", "WebBridge"]
@@ -285,6 +286,23 @@ class _SafePage(QWebEnginePage):
     def createWindow(self, window_type: Any) -> QWebEnginePage | None:  # noqa: N802, ARG002
         return None  # 不弹新窗口；外链走上面的 acceptNavigationRequest
 
+    def javaScriptConsoleMessage(self, level: Any, message: str, line: int, source: str) -> None:  # noqa: N802
+        """网页里抛出来的错写进 ``logs/ui-errors.log``。
+
+        **不写的话它就只在 Chromium 的控制台里**，而打包后的窗口程序没有控制台。
+        2026-10-31 用户报"对话区没了"时，最可能的两条线索（脚本在渲染历史时抛错、
+        渲染进程自己死掉）**一条都没留下**——这就是补这一段的理由。
+
+        只记 error 那一档：``console.log``/warning 是网页自己的调试噪声，全记会
+        把真正要看的那一行埋掉。
+        """
+        try:
+            is_error = level == QWebEnginePage.JavaScriptConsoleMessageLevel.ErrorMessageLevel
+        except Exception:  # noqa: BLE001 — 枚举比较不该把渲染拖垮
+            is_error = False
+        if is_error:
+            log_ui_error(f"网页脚本出错：{message}（{source}:{line}）")
+
 
 def _local_file_uris(mime: Any) -> list[str]:
     """拖放数据里的本地文件 URI。**非本地的一律不取。**
@@ -371,6 +389,14 @@ class ChatView(QWidget):
     """拖进来一批文件（``file://`` URL）。**与桥那个同名但不是一个对象**——
     理由见 :attr:`WebBridge.voice_toggled` 那条注释：少声明一次，构造就会炸。"""
 
+    recovered = Signal()
+    """渲染进程死掉之后，网页重新加载成功。
+
+    **主窗口收到它要用当前逐字稿重推一次**：这个控件缓存的那份历史是上一次
+    ``load_history`` 的快照，而死掉的很可能正是这一轮流式输出的那些字——它们
+    只活在网页里，逐字稿要等收尾才写。重推之后用户看到的是完整记录，不是半截。
+    """
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._bridge = WebBridge(self)
@@ -415,6 +441,23 @@ class ChatView(QWidget):
         #: 会落在空页面上。
         self._stickers: list[dict[str, str]] = []
 
+        #: 回看的逐字稿，**同样缓存 + 重推**。它是本控件里唯一一份由调用方算好的
+        #: 内容（``display_rows`` 的产出），所以缓存放在这里而不是主窗口：页面加载
+        #: 完成的那一刻，重推是**这个控件**知道的时机。
+        #:
+        #: 不带缓存的症状正是 2026-10-31 那条"对话区没了"：``load_history`` 落在
+        #: 页面还没起来的窗口里（打包后第一次渲染比源码态慢），``_call`` 那一句
+        #: 被 ``window.ChatHost &&`` 静默吞掉，而之后没有任何一处会再推一次——用户
+        #: 选了一个有内容的会话，看到的是空白。``None`` = 还没载入过任何会话
+        #: （区别于"载入了一个空会话"，后者要推空表把旧内容清掉）。
+        self._history: list[dict[str, Any]] | None = None
+
+        #: 这一次页面加载是不是"渲染进程死后重启"。重启那一次**不推缓存**，改发
+        #: :attr:`recovered`：缓存可能已经落后于逐字稿（见那个信号的说明）。
+        self._recovering = False
+        #: 连着崩了几次。**不许无限重启**（见 :meth:`_on_renderer_crashed`）。
+        self._crash_count = 0
+
         self._view = _SafeView(self)
         self._page = _SafePage(self._view)
         self._view.setPage(self._page)
@@ -442,10 +485,16 @@ class ChatView(QWidget):
         # 它也还在。
         self._view.files_dropped.connect(self.files_dropped)
         self._view.loadFinished.connect(self._on_load_finished)
+        # 渲染进程的死亡是**静默**的：画面整块变白，``loadFinished`` 不触发，任何
+        # 一次 ``_call`` 都石沉大海。接上它才有"自己活过来"这一说。
+        self._view.renderProcessTerminated.connect(self._on_renderer_crashed)
         self._view.load(QUrl.fromLocalFile(str(_INDEX)))
 
     def _on_load_finished(self, ok: bool) -> None:
         if not ok:
+            # 加载失败在这里是**空白页的来源之一**（文件缺失、磁盘错误）。不写
+            # 一行日志的话，用户看到的只是"对话区没了"。
+            log_ui_error("对话页没有加载成功（loadFinished(False)）。")
             return
         base = QUrl.fromLocalFile(str(_WEB_ROOT)).toString()
         self._page.runJavaScript(f"window.BASE = {json.dumps(base)};")
@@ -459,6 +508,15 @@ class ChatView(QWidget):
         self._call("setMotion", self._motion)
         if self._wallpaper:
             self._call("setWallpaper", self._wallpaper)
+        # 逐字稿紧挨着人设卡片之前重推（它在网页里创建节点，不动焦点）。渲染进程
+        # 刚重启的那一次不推缓存：让主窗口用**当前**的逐字稿重推一遍（见
+        # :attr:`recovered`）。
+        if self._recovering:
+            self._recovering = False
+            self._crash_count = 0
+            self.recovered.emit()
+        elif self._history is not None:
+            self._call("loadHistory", self._history)
         # 人设卡片排最后：asking 时它会抢焦点（focus 到那个输入框），排在
         # setStatus 之类的后面才不会被别的东西把焦点拿走。
         if self._persona is not None:
@@ -474,6 +532,23 @@ class ChatView(QWidget):
             self._call("setCallPartial", self._call_partial)
         if self._stickers:
             self._call("setStickers", self._stickers)
+
+    def _on_renderer_crashed(self, status: Any, exit_code: int) -> None:
+        """网页的渲染进程死了：**重载一次，把现场写进日志。**
+
+        症状是**整块对话区空白、界面其它部分照常**——用户看不到任何报错，只会以为
+        记录没了。GPU 驱动在这个 Chromium 版本上不稳是最常见的来源（``ui/app.py``
+        的 ``AXO_SOFTWARE_RENDER`` 那段就是为它留的逃生口）。
+
+        **连着三次还起不来就不再重启**：那说明问题不在"掉了一次"，重载只会变成
+        每两秒一次的循环——那比空白还糟，而且它会长满整个日志。
+        """
+        self._crash_count += 1
+        log_ui_error(f"网页渲染进程退出：status={status!r} exit_code={exit_code}")
+        if self._crash_count > 3:
+            return
+        self._recovering = True
+        self._view.reload()
 
     # ── 向网页推送 ──────────────────────────────────────────────────────────
 
@@ -526,9 +601,14 @@ class ChatView(QWidget):
         if text:
             self._call("pushToken", text)
 
-    def end_message(self) -> None:
-        """标记当前这片回复结束。"""
-        self._call("endMessage")
+    def end_message(self, footer: str = "") -> None:
+        """标记当前这片回复结束。
+
+        ``footer`` 是气泡下面那行小字——这一轮用了多少 token。**默认为空**，所以
+        一次性整段显示的那几条（提醒、主动开口）照旧不带。网页那一侧把它挂在
+        **最后一条她说的气泡**上（见 ``web/js/app.js`` 的 ``lastAssistant``）。
+        """
+        self._call("endMessage", footer)
 
     def set_busy(self, busy: bool) -> None:
         """生成中/空闲。网页据此决定发送按钮与输入框的状态。"""
@@ -557,11 +637,18 @@ class ChatView(QWidget):
         self._call("setVoiceState", self._voice_state)
 
     def clear(self) -> None:
+        """清空对话流。**缓存也清**：否则页面下一次重载会把旧会话又画出来。"""
+        self._history = []
         self._call("clear")
 
-    def load_history(self, messages: Sequence[dict[str, str]]) -> None:
-        """整体替换对话流。用于切换会话。"""
-        self._call("loadHistory", list(messages))
+    def load_history(self, messages: Sequence[dict[str, Any]]) -> None:
+        """整体替换对话流。用于切换会话，**也用于页面重新加载之后的恢复**。
+
+        先存进 :attr:`_history` 再推：页面没起来时这一句会落空，而
+        ``_on_load_finished`` 要靠这份缓存补推一次（见那里的说明）。
+        """
+        self._history = [dict(item) for item in messages]
+        self._call("loadHistory", self._history)
 
     def set_wallpaper(self, path: str | None) -> None:
         """设置壁纸。``None`` 表示恢复默认纯色。

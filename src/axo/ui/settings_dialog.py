@@ -76,6 +76,8 @@ from .settings_store import (
     CLOUD_PRESETS,
     DEFAULT_CLOUD_BASE_URL,
     DEFAULT_HOST,
+    DEFAULT_LOCAL_CONTEXT,
+    PROVIDER_BUILTIN,
     PROVIDER_CLOUD,
     PROVIDER_OLLAMA,
     BackendSettings,
@@ -579,12 +581,14 @@ class BackendPage(QWidget):
         # data 存的是**常量**不是下标：下标会随条目顺序漂，而这两个值要落进设置、
         # 还要被 ``load_backend`` 认出来。
         self.provider_combo.addItem("本机（Ollama）", PROVIDER_OLLAMA)
+        self.provider_combo.addItem("内置（llama.cpp，随包）", PROVIDER_BUILTIN)
         self.provider_combo.addItem("云端 API（OpenAI 兼容）", PROVIDER_CLOUD)
         self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
         head.addRow("后端", self.provider_combo)
         outer.addLayout(head)
 
         outer.addWidget(self._build_local_group())
+        outer.addWidget(self._build_builtin_group())
         outer.addWidget(self._build_cloud_group())
 
         row = QHBoxLayout()
@@ -636,6 +640,60 @@ class BackendPage(QWidget):
         self.remote_warning.setObjectName("remoteWarning")
         box.addWidget(self.remote_warning)
         return group
+
+    def _build_builtin_group(self) -> QWidget:
+        """内置组：模型文件 + 上下文。
+
+        **模型文件是用户自己的**（可以是 Ollama 那一份 blob——它就是一个 GGUF），
+        所以这里只有路径，没有下载按钮：拿到什么模型是用户的决定。
+        """
+        group = QWidget(self)
+        self.builtin_group = group
+        box = QVBoxLayout(group)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(8)
+
+        box.addWidget(_section("随包 llama.cpp"))
+        form = QFormLayout()
+        form.setSpacing(8)
+
+        row = QWidget(group)
+        row_box = QHBoxLayout(row)
+        row_box.setContentsMargins(0, 0, 0, 0)
+        row_box.setSpacing(8)
+        self.local_model_edit = QLineEdit(row)
+        self.local_model_edit.setPlaceholderText("选择一个 .gguf 模型文件")
+        browse = QPushButton("浏览…", row)
+        browse.clicked.connect(self._on_browse_local_model)
+        row_box.addWidget(self.local_model_edit)
+        row_box.addWidget(browse)
+        form.addRow("模型文件", row)
+
+        self.local_context_spin = QSpinBox(group)
+        self.local_context_spin.setRange(512, 65536)
+        self.local_context_spin.setSingleStep(512)
+        self.local_context_spin.setValue(DEFAULT_LOCAL_CONTEXT)
+        form.addRow("上下文 token", self.local_context_spin)
+        box.addLayout(form)
+
+        box.addWidget(
+            _hint(
+                "软件自己拉起随包的 llama-server（CUDA），不需要安装 Ollama。"
+                "模型文件可以选 Ollama 的 blob（它本身就是 GGUF），选一次即可。"
+            )
+        )
+        return group
+
+    def _on_browse_local_model(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择本地模型",
+            self.local_model_edit.text().strip(),
+            "GGUF 模型 (*.gguf);;所有文件 (*)",
+        )
+        if path:
+            self.local_model_edit.setText(path)
+            self._emit()
 
     def _build_cloud_group(self) -> QWidget:
         """云端组：地址 + key + 代价说明。"""
@@ -698,6 +756,8 @@ class BackendPage(QWidget):
 
         self.host_edit.setText(backend.host)
         self.allow_remote_box.setChecked(backend.allow_remote)
+        self.local_model_edit.setText(backend.local_model_path)
+        self.local_context_spin.setValue(int(backend.local_context))
         preset_index = self.preset_combo.findData(backend.cloud_preset)
         if preset_index < 0:
             preset_index = self.preset_combo.findData(CLOUD_PRESET_CUSTOM)
@@ -727,6 +787,8 @@ class BackendPage(QWidget):
             cloud_base_url=self.cloud_url_edit.text().strip() or DEFAULT_CLOUD_BASE_URL,
             cloud_preset=str(self.preset_combo.currentData() or CLOUD_PRESET_CUSTOM),
             api_key=self.api_key_edit.text().strip(),
+            local_model_path=self.local_model_edit.text().strip(),
+            local_context=int(self.local_context_spin.value()),
         )
 
     # ── 联动 ────────────────────────────────────────────────────────────────
@@ -778,8 +840,11 @@ class BackendPage(QWidget):
         )
 
     def _sync_groups(self) -> None:
-        cloud = self.current_provider() == PROVIDER_CLOUD
-        self.local_group.setVisible(not cloud)
+        provider = self.current_provider()
+        cloud = provider == PROVIDER_CLOUD
+        builtin = provider == PROVIDER_BUILTIN
+        self.local_group.setVisible(provider == PROVIDER_OLLAMA)
+        self.builtin_group.setVisible(builtin)
         self.cloud_group.setVisible(cloud)
         self._sync_warning()
 
@@ -792,8 +857,15 @@ class BackendPage(QWidget):
         不勾/不选时也要能读——用户得先知道代价才能决定要不要切过去，把代价藏起来
         是最糟的做法。而切到云端之后那句话必须更醒目：它说的是一件**已经发生**的事。
         """
-        cloud = self.current_provider() == PROVIDER_CLOUD
-        self._arm(self.remote_warning, self.allow_remote_box.isChecked() and not cloud)
+        provider = self.current_provider()
+        cloud = provider == PROVIDER_CLOUD
+        # 非本机地址那条警告只在 **Ollama 这一档**有意义：内置那一档根本不填 host，
+        # 而勾选框跟着 Ollama 组一起藏起来了——藏起来的勾选框还亮着警告，
+        # 用户找不到能改的地方。
+        self._arm(
+            self.remote_warning,
+            provider == PROVIDER_OLLAMA and self.allow_remote_box.isChecked(),
+        )
         self._arm(self.cloud_warning, cloud)
 
     @staticmethod

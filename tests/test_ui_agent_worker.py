@@ -182,10 +182,10 @@ def test_with_no_tools_the_text_and_the_keys_match_chat_worker(
     意味着 ``_on_reply_finished`` 复用不过去了——而那条复用正是这一版不合并两条
     消费路径却仍然安全的前提。
 
-    **两条路径的差别被单独钉出来**：``prompt_tokens`` / ``completion_tokens`` 在
-    工具循环这一版**恒为 ``None``**（循环不读 token 统计，见 ``agent/loop.py``）。
-    不写这一条的话，"键一样"会被读成"值也一样"，而下一次有人顺手把界面上的
-    token 计数接到 ``finished`` 上时，他会拿到一个永远空着的数。
+    **两条路径的差别**：``prompt_tokens`` / ``completion_tokens`` 在工具循环里是
+    **所有轮次之和**（见 ``agent/loop.py`` 的 ``LoopDone``），聊天那边只有一次
+    请求。单轮无工具时两个数恰好相等——所以这条平价测试同时钉住"键一样"与
+    "值也一样"；多轮的求和另有专门的用例（``test_agent_loop``）。
     """
     script = [
         [
@@ -205,8 +205,8 @@ def test_with_no_tools_the_text_and_the_keys_match_chat_worker(
     assert agent_text == chat_text == "你好，世界"
     assert set(chat_stats) <= set(agent_stats), "ChatWorker 的键在 AgentWorker 上缺了"
     assert agent_stats["interrupted"] is False
-    assert agent_stats["prompt_tokens"] is None, "工具循环这一版不上报 token，别把它当真"
-    assert agent_stats["completion_tokens"] is None
+    assert agent_stats["prompt_tokens"] == chat_stats["prompt_tokens"] == 12
+    assert agent_stats["completion_tokens"] == chat_stats["completion_tokens"] == 5
 
 
 def test_a_plain_reply_reports_empty_tool_statistics(qapp: Any, store: MemoryStore) -> None:

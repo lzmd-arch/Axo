@@ -120,6 +120,8 @@ from ..asr import Transcription
 from ..attachments import Attachment, attachment_for, body_of
 from ..busd.launcher import launch_blocked_reason, spawn_daemon, stop_daemon
 from ..llm.base import ChatBackendError, ChatRequest, EmbeddingBackend
+from ..llm.llama_server import MODEL_ID_PREFIX as BUILTIN_MODEL_ID_PREFIX
+from ..llm.llama_server import BuiltinLlamaBackend
 from ..llm.local_speech import LocalSpeech
 from ..llm.local_speech import is_available as local_tts_available
 from ..llm.ollama import (
@@ -201,8 +203,10 @@ from .chat_worker import ChatWorker, ModelListWorker
 from .consolidation_scheduler import MIN_DELAY_MS, ConsolidationScheduler
 from .data_move import MoveKind, MovePlan, plan_move
 from .data_root import MoveReport, discard_source, stage_move
+from .errorlog import log_ui_error
 from .glass import AuroraBackdrop
 from .layout import plan_pane_sizes
+from .llama_worker import LlamaRuntimeWorker
 from .memory_window import MemoryWindow
 from .memory_worker import (
     AUTO_GRAPH_MAX,
@@ -384,6 +388,26 @@ def _used_screen(tool_trace: Sequence[Mapping[str, Any]]) -> bool:
     return any(entry.get("name") == _SCREEN_TOOL for entry in tool_trace)
 
 
+def usage_footer(prompt: int | None, completion: int | None) -> str:
+    """这一轮用掉的 token，写成气泡下面那行小字。**两个都没有就返回空串。**
+
+    它是**同一个数在三个地方说三遍**里唯一留在对话中的那一份：状态栏那句话会被
+    下一件事盖掉（"已记下 N 条记忆"），逐字稿里存着账，而回看时能一眼看到它的
+    只有这行小字。
+
+    千分位是为了读得下去；单位只在末尾写一次，因为它对两个数都成立。被中断的
+    那一轮可能只有前半截的数——**照样写出来，比空着诚实**。
+    """
+    parts: list[str] = []
+    if isinstance(prompt, int) and not isinstance(prompt, bool):
+        parts.append(f"输入 {prompt:,}")
+    if isinstance(completion, int) and not isinstance(completion, bool):
+        parts.append(f"输出 {completion:,}")
+    if not parts:
+        return ""
+    return " · ".join(parts) + " token"
+
+
 def _empty_reply_note(*, text: str, interrupted: bool) -> str:
     """一条**空回复**该说的那句话；不该说的时候返回空串。
 
@@ -468,6 +492,12 @@ def display_rows(messages: Sequence[Message]) -> list[dict[str, Any]]:
                 text = "这一步没有执行——它需要你点头，而没有得到允许。"
             else:
                 meta["title"] = f"工具结果 · {name}"
+        if role in ("assistant", "proactive"):
+            # 回看时每一轮各自的用量。**与当时屏幕上那行小字同一个函数**——
+            # 两处各写一份格式的话，回看与现场迟早对不上。
+            footer = usage_footer(message.prompt_tokens, message.completion_tokens)
+            if footer:
+                meta["footer"] = footer
         rows.append({"role": role, "text": text, "meta": meta})
     return rows
 
@@ -821,6 +851,8 @@ class MainWindow(QMainWindow):
         self._lexindex_thread: QThread | None = None
         self._lexindex_worker: LexicalIndexWorker | None = None
         self._model_thread: QThread | None = None
+        #: 内置 llama.cpp 的运行时；没有用内置模式时恒为 None。
+        self._runtime: Any | None = None
         self._model_worker: ModelListWorker | None = None
         self._setup_thread: QThread | None = None
         self._setup_worker: MemorySyncWorker | None = None
@@ -1489,6 +1521,8 @@ class MainWindow(QMainWindow):
 
     def _wire(self) -> None:
         self.chat_view.message_submitted.connect(self._on_submit)
+        # 网页渲染进程死后重载完成：用当前逐字稿重推一次（见 ``_on_chat_recovered``）。
+        self.chat_view.recovered.connect(self._on_chat_recovered)
         self.chat_view.persona_answered.connect(self._on_persona_answered)
         self.chat_view.voice_toggled.connect(self._on_voice_toggled)
         # 通话：状态机在 axo.call，接线在 ui.call。**这里只连接与转发。**
@@ -1587,14 +1621,41 @@ class MainWindow(QMainWindow):
         if current is None or self._streaming:
             return
         session_id = current.data(Qt.ItemDataRole.UserRole)
-        self._session = self._store.load(session_id)
+        try:
+            self._session = self._store.load(session_id)
+            rows = display_rows(self._session.messages)
+        except Exception:  # noqa: BLE001 — 读不出来要说出来，不许留一片空白
+            detail = traceback.format_exc()
+            self._log_ui_error(detail)
+            last_line = (detail.strip().splitlines() or ["未知错误"])[-1]
+            self.chat_view.append_message(
+                "system", "**这个会话读不出来。**" + chr(10) + chr(10) + last_line
+            )
+            return
         # 测试历史只在内存里，不随会话文件恢复；切会话就重新开始。
         self._test_session = TestSession(self._test_session_path())
-        self.chat_view.load_history(display_rows(self._session.messages))
+        self.chat_view.load_history(rows)
         self.chat_view.set_status(f"已载入会话 {session_id}")
         # 记忆窗口要按会话区分一条早退路径：属于当前会话的记忆会被召回当作"逐字稿
         # 里已经有的内容"排除。推晚了的话，它给的解释指向**上一个**会话。
         self._push_context_to_memory_window()
+
+    @Slot()
+    def _on_chat_recovered(self) -> None:
+        """对话页的渲染进程死过一次、又活过来了：**用当前逐字稿重推一遍**。
+
+        控件缓存的那份历史是上一次 ``load_history`` 的快照，而死掉的很可能正是
+        这一轮的流式输出——那些字只活在网页里，逐字稿要等收尾才写。所以恢复时
+        以逐字稿为准；顺带把"正在生成"的锁按回当前状态，否则重载后的网页会把
+        发送键解禁，用户能在一轮还没跑完时再发一句。
+        """
+        try:
+            rows = display_rows(self._session.messages)
+        except Exception:  # noqa: BLE001 — 恢复失败也要留证据，但别炸掉这个槽
+            self._log_ui_error(traceback.format_exc())
+            return
+        self.chat_view.load_history(rows)
+        self.chat_view.set_busy(self._streaming)
 
     def _on_delete_session(self) -> None:
         item = self.session_list.currentItem()
@@ -1655,13 +1716,20 @@ class MainWindow(QMainWindow):
         name = self.model_combo.currentData()
         if not name:
             return ""
-        prefix = (
-            CLOUD_MODEL_ID_PREFIX if self._backend_settings.is_cloud else OLLAMA_MODEL_ID_PREFIX
-        )
+        if self._backend_settings.is_cloud:
+            prefix = CLOUD_MODEL_ID_PREFIX
+        elif self._backend_settings.is_builtin:
+            prefix = BUILTIN_MODEL_ID_PREFIX
+        else:
+            prefix = OLLAMA_MODEL_ID_PREFIX
         return f"{prefix}/{name}"
 
     def _refresh_models(self) -> None:
         if self._model_thread is not None and self._model_thread.isRunning():
+            return
+        if self._backend_settings.is_builtin:
+            # 内置 llama.cpp：没有"模型清单"可拉，只有"把运行时拉起来"这一件事。
+            self._start_builtin_runtime()
             return
         thread = QThread(self)
         # 整个 ``BackendSettings`` 交给 worker，**不是拆开的 host + allow_remote**：
@@ -1691,6 +1759,56 @@ class MainWindow(QMainWindow):
             # 云端下**必须另起一趟**问本机 Ollama 要嵌入模型，见那个方法的说明。
             self._refresh_embedding_models()
         thread.start()
+
+    def _start_builtin_runtime(self) -> None:
+        """内置 llama.cpp：后台拉起随包的 llama-server，再当 OpenAI 兼容端点用。
+
+        **模型加载是几秒到几十秒的事**，不能放在界面线程（见 ``ui/llama_worker.py``）。
+        路径为空时直接说清楚——那是这个设置最常见的一种"没配好"，而静默退回 Ollama
+        会让用户以为"内置模式没生效"却不知道为什么。
+        """
+        path = self._backend_settings.local_model_path.strip()
+        if not path:
+            self._set_backend_down(
+                "用的是内置 llama.cpp，但还没选模型文件。"
+                "设置 → 后端 → 内置（llama.cpp）里选一个 .gguf 文件。"
+            )
+            return
+        thread = QThread(self)
+        worker = LlamaRuntimeWorker(
+            model_path=path, context=int(self._backend_settings.local_context)
+        )
+        worker.ready.connect(self._on_builtin_ready)
+        worker.failed.connect(self._on_builtin_failed)
+        worker.ready.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        self._track(thread, worker, what="本地模型线程", slot="llama")
+        self.chat_view.set_status("正在启动本地模型…")
+        thread.start()
+
+    @Slot(str)
+    def _on_builtin_ready(self, _base_url: str) -> None:
+        worker = self.sender()
+        runtime = getattr(worker, "runtime", None)
+        if runtime is None or not runtime.running:
+            self._set_backend_down("本地模型起来了，但运行时对象丢了。点 ⟳ 再试一次。")
+            return
+        self._runtime = runtime
+        name = "local"
+        self._model_windows = {name: int(self._backend_settings.local_context)}
+        self._model_caps = {name: ("completion", "tools")}
+        self.model_combo.blockSignals(True)
+        self.model_combo.clear()
+        self.model_combo.addItem(
+            f"本地（{Path(self._backend_settings.local_model_path).name}）", name
+        )
+        self.model_combo.blockSignals(False)
+        self._on_model_changed()
+        self._set_backend_up(f"内置 llama.cpp 就绪 · {self._backend_settings.local_context} token")
+
+    @Slot(str)
+    def _on_builtin_failed(self, detail: str) -> None:
+        self._set_backend_down(detail)
 
     def _refresh_embedding_models(self) -> None:
         """**云端模式下额外跑一趟本机 Ollama**，只为了嵌入模型的清单。
@@ -1901,7 +2019,24 @@ class MainWindow(QMainWindow):
             self._backend = None
             return
         self._settings.setValue(self._last_model_key(), name)
-        if self._backend_settings.is_cloud:
+        if self._backend_settings.is_builtin:
+            runtime = getattr(self, "_runtime", None)
+            if runtime is None or not runtime.running:
+                self._backend = None
+                self._set_backend_down("本地模型运行时没有起来。点 ⟳ 重试。")
+                return
+            try:
+                self._backend = BuiltinLlamaBackend(
+                    model=str(name),
+                    base_url=runtime.base_url,
+                    api_key="local",
+                    context_window=self._model_windows.get(str(name)),
+                )
+            except (ChatBackendError, ValueError) as exc:
+                self._backend = None
+                self._set_backend_down(str(exc))
+                return
+        elif self._backend_settings.is_cloud:
             try:
                 self._backend = OpenAICompatChatBackend(
                     model=str(name),
@@ -2514,13 +2649,7 @@ class MainWindow(QMainWindow):
         一个在槽里抛出的异常只会让界面停在"正在检索记忆…"，而现场什么都不剩。
         写盘是唯一能把它带回来的方式（见 ``logs/ui-errors.log``）。
         """
-        try:
-            path = data_dir() / "logs" / "ui-errors.log"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("a", encoding="utf-8") as fh:
-                fh.write("----" + chr(10) + detail)
-        except Exception:
-            pass
+        log_ui_error(detail)
 
     def _turn_tools_declared(self) -> bool:
         """这一轮**会不会**给模型声明工具。装配器用它决定那句"这一轮没有工具可用"。
@@ -3267,7 +3396,12 @@ class MainWindow(QMainWindow):
     @Slot(str, dict)
     def _on_reply_finished(self, text: str, statistics: dict[str, Any]) -> None:
         interrupted = bool(statistics.get("interrupted"))
-        self.chat_view.end_message()
+        # 这一轮用掉多少 token：**写进气泡下面那行小字**。状态栏那句（见下面
+        # "输入 … · 输出 …"）会马上被下一件事盖掉，而这行字留在对话里——用户
+        # 2026-10-31 说"看不到每次对话的 token 用量"，就是因为它只闪了一下。
+        self.chat_view.end_message(
+            usage_footer(statistics.get("prompt_tokens"), statistics.get("completion_tokens"))
+        )
         # **空回复要说出来**（见 :func:`_empty_reply_note`）：不说的话，用户看到的是一个
         # 空气泡——而那个看起来像界面坏了，不像"模型这一轮没说话"。
         note = _empty_reply_note(text=text, interrupted=interrupted)
@@ -5833,6 +5967,10 @@ class MainWindow(QMainWindow):
         if self._shutting_down:
             return
         self._shutting_down = True
+        runtime = getattr(self, "_runtime", None)
+        if runtime is not None:
+            runtime.stop()
+            self._runtime = None
         timer = getattr(self, "_job_log_timer", None)
         if timer is not None:
             timer.stop()

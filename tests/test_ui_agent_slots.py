@@ -63,7 +63,7 @@ class Recorder:
     def __init__(self) -> None:
         self.calls: list[Any] = []
 
-    def end_message(self) -> None:
+    def end_message(self, footer: str = "") -> None:
         self.calls.append("endMessage")
 
     def append_message(self, role: str, text: str, meta: dict | None = None) -> None:

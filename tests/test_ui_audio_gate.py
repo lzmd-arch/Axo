@@ -28,8 +28,8 @@ class _Recorder:
     def append_message(self, role: str, text: str, meta: dict | None = None) -> None:
         self.calls.append((role, text))
 
-    def end_message(self) -> None:
-        self.calls.append(("endMessage", ""))
+    def end_message(self, footer: str = "") -> None:
+        self.calls.append(("endMessage", footer))
 
     def set_status(self, text: str) -> None:
         self.calls.append(("setStatus", text))

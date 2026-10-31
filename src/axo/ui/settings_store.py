@@ -78,6 +78,10 @@ _K_CLOUD_PRESET = "backend/cloud_preset"
 #: **盘上存的不是 key 本身**：Windows 是 DPAPI 密文的 base64，macOS 只留一个
 #: ``keychain:v1`` 标记。见 :mod:`axo.secrets` 与下面 :meth:`SettingsStore.load_backend`。
 _K_API_KEY = "backend/api_key"
+#: 内置 llama.cpp 用的 GGUF 文件（用户自己选；默认可以是 Ollama 的 blob 文件——
+#: 那只是一个文件，不需要 Ollama 在跑）。
+_K_LOCAL_MODEL = "backend/local_model_path"
+_K_LOCAL_CONTEXT = "backend/local_context"
 
 _K_READ_ROOTS = "tools/read_roots"
 _K_CLOUD_VISION = "tools/cloud_vision"
@@ -173,7 +177,13 @@ DEFAULT_CLOUD_BASE_URL = "https://api.deepseek.com/v1"
 #: OpenRouter 还是自建的 vLLM，都还是 ``cloud``。
 PROVIDER_OLLAMA = "ollama"
 PROVIDER_CLOUD = "cloud"
-_PROVIDERS = (PROVIDER_OLLAMA, PROVIDER_CLOUD)
+#: **随包的 llama.cpp**：软件自己拉起 ``llama-server``，不经过 Ollama。
+#: 与 ``ollama`` 的区别是"谁提供这个运行时"，不是"模型在不在本机"——两者都在本机。
+PROVIDER_BUILTIN = "builtin"
+_PROVIDERS = (PROVIDER_OLLAMA, PROVIDER_CLOUD, PROVIDER_BUILTIN)
+
+#: 内置运行时的默认上下文（与 qwen3-4b 在 Ollama 那条链上的 8k 对齐）。
+DEFAULT_LOCAL_CONTEXT = 8192
 
 
 @dataclass(frozen=True)
@@ -286,10 +296,22 @@ class BackendSettings:
     """
     api_key: str = ""
 
+    local_model_path: str = ""
+    """``PROVIDER_BUILTIN`` 时要加载的 GGUF 文件。空串 = 还没选。"""
+
+    local_context: int = DEFAULT_LOCAL_CONTEXT
+    """``PROVIDER_BUILTIN`` 的上下文窗口。**由软件自己定**（llama-server 的 ``-c``），
+    改这里要同时重建运行时——它只在启动时读一次。"""
+
     @property
     def is_cloud(self) -> bool:
         """界面与主窗口问"现在是云端吗"的唯一入口——别在各处比字符串。"""
         return self.provider == PROVIDER_CLOUD
+
+    @property
+    def is_builtin(self) -> bool:
+        """是不是用随包的 llama.cpp（不是 Ollama、也不是云端）。"""
+        return self.provider == PROVIDER_BUILTIN
 
 
 @dataclass(frozen=True)
@@ -664,6 +686,14 @@ class SettingsStore:
             cloud_base_url=cloud_base_url,
             cloud_preset=preset,
             api_key=unprotect(self._text(_K_API_KEY)),
+            local_model_path=self._text(_K_LOCAL_MODEL).strip(),
+            local_context=max(
+                512,
+                _as_int(
+                    self._backend.value(_K_LOCAL_CONTEXT, DEFAULT_LOCAL_CONTEXT),
+                    DEFAULT_LOCAL_CONTEXT,
+                ),
+            ),
         )
 
     def save_backend(self, settings: BackendSettings) -> None:
@@ -677,6 +707,8 @@ class SettingsStore:
         # **key 加密后再落盘。** 空串原样存空串（``protect`` 自己会短路），于是
         # "没配 key"与"配了又清掉"在盘上是同一个状态——这正是我们想要的。
         self._backend.setValue(_K_API_KEY, protect(settings.api_key))
+        self._backend.setValue(_K_LOCAL_MODEL, settings.local_model_path)
+        self._backend.setValue(_K_LOCAL_CONTEXT, int(settings.local_context))
 
     # ── 工具 ────────────────────────────────────────────────────────────────
 

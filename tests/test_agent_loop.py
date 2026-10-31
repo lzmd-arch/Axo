@@ -242,6 +242,42 @@ def test_plain_answer_is_a_single_request(store: MemoryStore) -> None:
     assert [event.text for event in events if isinstance(event, TextDelta)] == ["今天挺好。"]
 
 
+def test_token_usage_is_summed_across_rounds(store: MemoryStore) -> None:
+    """用量按**所有轮次之和**上报，不是最后一轮那个数。
+
+    两次工具调用的账单是两次上下文重发；只报最后一份会把一次长任务报成接近
+    一半（轮到三轮就是三分之一）。两个数都要对——只钉一个的话，另一个写反了
+    也发现不了。
+    """
+    backend = ScriptedBackend(
+        script=[
+            [
+                text_chunk("我查一下。", prompt_tokens=100, completion_tokens=10),
+                tool_chunk(call("spy")),
+            ],
+            [text_chunk("查到了。", done=True, prompt_tokens=200, completion_tokens=20)],
+        ]
+    )
+
+    _, done = drive(backend, ToolRegistry([SpyTool()]), store)
+
+    assert (done.prompt_tokens, done.completion_tokens) == (300, 30)
+
+
+def test_usage_stays_none_when_the_backend_never_reports(store: MemoryStore) -> None:
+    """一次都没上报就是 ``None``，**不是 0**。
+
+    0 会在界面上是"输入 0 · 输出 0 token"——一个确定却错误的数；``None`` 是
+    "这块不给数"，界面就不显示。两者的区别正是这个字段能是 ``None`` 的理由。
+    """
+    backend = ScriptedBackend(script=[[text_chunk("今天挺好。", done=True)]])
+
+    _, done = drive(backend, ToolRegistry([SpyTool()]), store)
+
+    assert done.prompt_tokens is None
+    assert done.completion_tokens is None
+
+
 def test_assistant_message_carries_the_tool_calls(store: MemoryStore) -> None:
     """回灌的那条 assistant 行必须带 ``tool_calls``。
 

@@ -253,6 +253,9 @@ def window() -> SimpleNamespace:
         _graph_enabled=False,
         _writer=SimpleNamespace(policy=None),
         _settings_store=SimpleNamespace(saved=[]),
+        # 队列审批的消费者（MCP 写档位那一版加的）：记忆设置一变它也要重同步。
+        # 这两个文件测的是调度器/图那条链，不把它那套状态搬进来——给个空动作。
+        _sync_propose_consumer=lambda: None,
         _track=lambda *_args, **_kwargs: None,
     )
     fake._start_consolidation = MainWindow._start_consolidation.__get__(fake)

@@ -23,6 +23,7 @@ from axo.ui.settings_store import (
     CLOUD_PRESETS,
     DEFAULT_CLOUD_BASE_URL,
     DEFAULT_HOST,
+    PROVIDER_BUILTIN,
     PROVIDER_CLOUD,
     PROVIDER_OLLAMA,
     BackendSettings,
@@ -224,6 +225,35 @@ def test_backend_roundtrip() -> None:
     loaded = store.load_backend()
     assert loaded.host == "http://192.168.1.9:11434"
     assert loaded.allow_remote is True
+
+
+def test_builtin_roundtrip_keeps_the_model_path_and_context() -> None:
+    """「内置 llama.cpp」那一档的两个字段必须真的落盘、再读回来。
+
+    它们是用户唯一能改的两个数（模型文件、上下文）。读不回来的症状不是报错，而是
+    下次启动**静默用默认值**：模型路径空 → "本地模型文件不存在"，而用户明明选过。
+    """
+    store = SettingsStore(FakeBackend())
+    store.save_backend(
+        BackendSettings(
+            provider=PROVIDER_BUILTIN,
+            local_model_path="D:/models/qwen3-4b.gguf",
+            local_context=16384,
+        )
+    )
+    loaded = store.load_backend()
+    assert loaded.provider == PROVIDER_BUILTIN
+    assert loaded.is_builtin is True
+    assert loaded.local_model_path == "D:/models/qwen3-4b.gguf"
+    assert loaded.local_context == 16384
+
+
+@pytest.mark.parametrize("stored", ["一天", 0, -5, None])
+def test_a_broken_local_context_falls_back_to_a_usable_one(stored: object) -> None:
+    """上下文读坏了不能是 0 或负数：``-c 0`` 会让 llama-server 根本起不来，
+    而它失败的样子是一句"本地模型没起来"，指不到这个字段。"""
+    store = SettingsStore(FakeBackend({"backend/local_context": stored}))
+    assert store.load_backend().local_context >= 512
 
 
 def test_allow_remote_defaults_to_false() -> None:

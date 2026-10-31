@@ -149,9 +149,16 @@ _BUNDLE_ASSETS = _ROOT / "build" / "bundle"
 
 
 def _bundle_datas() -> tuple[tuple[str, str], ...]:
-    """随包模型目录 → PyInstaller 目标。没有抓过资产时返回空。"""
+    """随包模型/运行时目录 → PyInstaller 目标。没有抓过资产时返回空。"""
     found: list[tuple[str, str]] = []
-    for name, target in (("embedding", "embedding"), ("tts", "tts"), ("vosk", "models")):
+    # ``llama`` 是**本地模型运行时**（llama.cpp 的 Windows CUDA 发行包，约 732 MiB），
+    # 不是模型：模型是用户设置里选的 GGUF 文件。见 ``axo/llm/llama_server.py``。
+    for name, target in (
+        ("embedding", "embedding"),
+        ("tts", "tts"),
+        ("vosk", "models"),
+        ("llama", "llama"),
+    ):
         source = _BUNDLE_ASSETS / name
         if source.is_dir():
             found.append((str(source), target))
@@ -159,8 +166,12 @@ def _bundle_datas() -> tuple[tuple[str, str], ...]:
 
 
 def _bundle_missing() -> list[str]:
-    """发布版必须带的两套模型；返回缺的文件（空 = 齐）。"""
+    """发布版必须带的模型与运行时；返回缺的文件（空 = 齐）。"""
     required = (
+        # 本地模型运行时。**发布版必须带**：用户要求的正是"软件自己调用本地模型、
+        # 不经过 Ollama"；少了它，那条路在安装包里只剩一句"运行时不在了"。
+        "llama/llama-server.exe",
+        "llama/cublas64_13.dll",
         "embedding/bge-small-zh-v1.5/model_optimized.onnx",
         "embedding/bge-small-zh-v1.5/tokenizer.json",
         "tts/zipvoice/encoder.int8.onnx",
@@ -675,6 +686,13 @@ def _check_layout(name: str) -> list[str]:
                 f"语音识别的原生库不在：{path.relative_to(_ROOT).as_posix()}"
                 "（多半是 --collect-binaries vosk 那一步失效了）"
             )
+    if (_BUNDLE_ASSETS / "llama").is_dir():
+        # 本地推理运行时：**源目录在就必须进镜像**。少了它的症状是设置里选「内置
+        # llama.cpp」之后一句"运行时不在了"，而不是构建失败——所以在这里拦。
+        for relative in ("llama/llama-server.exe", "llama/cudart64_13.dll"):
+            path = internal / relative
+            if not path.exists():
+                problems.append(f"随包运行时不在：{path.relative_to(_ROOT).as_posix()}")
     if _BUNDLE_ASSETS.is_dir():
         for relative in (
             "embedding/bge-small-zh-v1.5/model_optimized.onnx",
@@ -1373,9 +1391,14 @@ _RELEASE_README = """Axo {version}（Windows x64）
 4. 第一次启动会有一个几步的小引导，问你三件事：记忆存在哪个文件夹、它该怎么跟你
    说话、用哪个模型。都能跳过，以后在"设置"里随时改。
 
-要能聊天，需要一个模型，下面两条任选一条：
+要能聊天，需要一个模型，下面三条任选一条：
 
-  · 本机跑（免费、不用联网）
+  · 用软件自带的本地运行时（推荐，不用装别的东西）
+      在"设置 → 后端"里选「内置（llama.cpp）」，再选一个 .gguf 模型文件。
+      软件自己把模型跑起来，不经过 Ollama；没有 NVIDIA 显卡时自动退回 CPU，只是慢。
+      （Ollama 下载下来的模型文件本身就是 GGUF，也能直接选。）
+
+  · 本机 Ollama（免费、不用联网）
       先装 Ollama：https://ollama.com/download
       装完在命令行里拉一个模型：ollama pull qwen3:4b
     程序默认就找本机的 Ollama，不需要额外设置。
@@ -1976,7 +1999,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         missing = _bundle_missing()
         if missing:
             print(
-                "发布版缺随包模型，先跑：\n\n"
+                "发布版缺随包模型/运行时，先跑：\n\n"
                 "    uv run python tools/fetch_bundle_assets.py\n\n"
                 "缺：" + "、".join(missing),
                 file=sys.stderr,

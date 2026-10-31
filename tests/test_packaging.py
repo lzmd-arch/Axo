@@ -472,3 +472,34 @@ def test_mcp_servers_ship_with_the_package() -> None:
         source = (root / entry).read_text(encoding="utf-8")
         assert "from axo." in source, entry
         assert "from ." not in source, entry
+
+
+def test_the_local_model_runtime_is_fetched_and_shipped(tmp_path, monkeypatch) -> None:
+    """「软件自己调用本地模型」靠随包的 llama.cpp 运行时，三处各钉一条。
+
+    三条各自对应一种**静默**失效：
+
+    * 抓资产没抓它 → 源码/build 里没有那个目录；
+    * ``_bundle_datas`` 没列它 → PyInstaller 打进包里的是**没有运行时**的应用，而
+      ``_bundle_datas`` 对不存在的目录本来就是静默跳过的，构建日志里一个字都不会说；
+    * 自检没看它 → 镜像里少了 exe 也照样算构建成功，症状要到用户点「内置 llama.cpp」
+      那一刻才出现。
+    """
+    import inspect
+
+    from tools import build_exe
+
+    fetch = (_REPO_ROOT / "tools" / "fetch_bundle_assets.py").read_text(encoding="utf-8")
+    assert "llama-server.exe" in fetch, "抓资产那只脚本不认识这个运行时"
+    assert "cudart-llama-bin-win-cuda-13.4-x64.zip" in fetch, "CUDA 运行库那份没抓"
+
+    monkeypatch.setattr(build_exe, "_BUNDLE_ASSETS", tmp_path)
+    (tmp_path / "llama").mkdir()
+    targets = [target for _source, target in build_exe._bundle_datas()]
+    assert "llama" in targets, "_bundle_datas 没把运行时目录带进包"
+    assert "llama/llama-server.exe" in build_exe._bundle_missing(), (
+        "发布闸门不看运行时——少了它也能打出发布包"
+    )
+    assert "llama/llama-server.exe" in inspect.getsource(build_exe._check_layout), (
+        "构建后自检不看镜像里有没有运行时"
+    )

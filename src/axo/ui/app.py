@@ -31,6 +31,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .errorlog import log_ui_error
 from .settings_store import SETTINGS_APP, SETTINGS_ORG
 
 if TYPE_CHECKING:  # pragma: no cover - 只为类型标注，运行时不 import Qt
@@ -184,19 +185,12 @@ def _install_excepthook() -> None:
     而现场什么都不剩（2026-10-31 的"卡在检索记忆"就是这样）。源码态照样转给
     ``sys.__excepthook__``，终端里仍然看得到。
     """
-    from ..paths import data_dir
+    import traceback as _tb
 
     def hook(exc_type, exc, tb) -> None:
-        try:
-            path = data_dir() / "logs" / "ui-errors.log"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            import traceback as _tb
-
-            with path.open("a", encoding="utf-8") as fh:
-                fh.write("----" + chr(10))
-                _tb.print_exception(exc_type, exc, tb, file=fh)
-        except Exception:
-            pass
+        # 写盘那一步在 :func:`~axo.ui.errorlog.log_ui_error` 里，与网页那一侧同一份
+        # 格式（见那个模块的文档）。
+        log_ui_error("".join(_tb.format_exception(exc_type, exc, tb)))
         sys.__excepthook__(exc_type, exc, tb)
 
     sys.excepthook = hook
