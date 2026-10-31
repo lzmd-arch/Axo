@@ -212,7 +212,10 @@ class AgentWorker(QObject):
         ctx: ToolContext,
         budget: TokenBudget,
         meter: TokenMeter,
-        tools_ceiling: int,
+        #: 工具尾巴的额度。**省略就交给循环自己算**（``run_agent_loop`` 的默认：
+        #: 装配完之后还剩多少）。界面那条任务路一直是不传的——这一版之前它是必填，
+        #: 于是构造直接 TypeError，而窗口程序没有 stderr，界面上只剩"正在检索记忆…"。
+        tools_ceiling: int | None = None,
         limits: LoopLimits = DEFAULT_LIMITS,
         approval_timeout: float = APPROVAL_TIMEOUT_S,
         run_log: RunLog | None = None,

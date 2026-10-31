@@ -106,3 +106,17 @@ def test_turn_tools_declared_follows_the_same_registry() -> None:
     window._turn_needs_clarification = False
     window._turn_uses_tools = True
     assert MainWindow._turn_tools_declared(window) is True
+
+
+def test_agent_worker_can_be_built_without_a_ceiling() -> None:
+    """``tools_ceiling`` 省略时必须能构造。
+
+    2026-10-31 的真实现场：``_start_agent_turn`` 从来不传它（循环自己算额度），
+    而签名里它是必填——构造直接 TypeError，界面停在"正在检索记忆…"。
+    """
+    import inspect
+
+    from axo.ui.agent_worker import AgentWorker
+
+    parameter = inspect.signature(AgentWorker.__init__).parameters["tools_ceiling"]
+    assert parameter.default is None, "省略 tools_ceiling 必须合法（循环自己算）"
