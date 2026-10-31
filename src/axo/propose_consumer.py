@@ -45,6 +45,12 @@ NOVELTY_WEIGHT = 0.25
 ENTITY_WEIGHT = 0.10
 LENGTH_MIN, LENGTH_MAX = 20, 400
 
+#: 实测的"无关文本"余弦基线（真实库 193 条、随包 BGE、抽样 80，2026-10-31）。
+#: 新颖度要按它归一，否则假设余弦≈0 会把这一项压掉一半：
+#: 无关文本实测 0.511，`1 - sim` 只剩 0.49，而设计时按 1.0 算。
+#: 见 BioSNN 侧 `research/mcp_write` 与 Axo 的 `benchmarks/gate_calibration.md`。
+NOVELTY_BASELINE = 0.51
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS proposals (
     seq          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -99,7 +105,9 @@ def salience(text: str, *, source: str, max_similarity: float) -> float:
         length_part = LENGTH_WEIGHT / 2
     else:
         length_part = 0.0
-    novelty = NOVELTY_WEIGHT * max(0.0, 1.0 - max_similarity)
+    # 按实测基线归一：与"完全不相关"一样远 = 1，和基线一样近 = 0。
+    span = 1.0 - NOVELTY_BASELINE
+    novelty = NOVELTY_WEIGHT * min(1.0, max(0.0, (1.0 - max_similarity) / span))
     entity = ENTITY_WEIGHT if any(ch.isdigit() for ch in text) else 0.0
     return round(min(1.0, weight + length_part + novelty + entity), 4)
 

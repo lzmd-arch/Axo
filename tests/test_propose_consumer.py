@@ -209,3 +209,14 @@ def test_approving_something_that_is_not_pending_is_refused(tmp_path):
     consumer.decide_pending()
     with pytest.raises(ValueError, match="只有待审的才能批准"):
         consumer.approve(1, "already accepted")
+
+
+def test_salience_uses_the_measured_baseline():
+    """回归：证据是 2026-10-31 真实库（193 条）上的标定，别再按"无关文本余弦≈0"想事。
+
+    实测：无关文本 ~0.511，库内异条目中位 0.634，天花板 0.807。
+    """
+    body = "the trigger fired 3 times across 20 turns on the real stream"
+    assert salience(body, source="llm", max_similarity=0.5115) >= 0.60  # 新文本能自动接受
+    assert salience(body, source="llm", max_similarity=0.8072) < 0.60  # 接近已有条目 -> 待审
+    assert salience(body, source="client", max_similarity=0.8072) >= 0.60
