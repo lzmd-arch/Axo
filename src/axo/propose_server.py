@@ -6,8 +6,9 @@
 * 新增 ``propose.memory.write``：只往队列里放一条，**不直接改库**；
 * 新增 ``queue.status`` / ``queue.list`` / ``memory.revert``：看判定、看理由、撤回一条。
 
-判定在 ``propose`` 同一次调用里跑完（``decide_pending``）：客户端提完就能拿到
-accept / pending / reject 的结论，不会出现"提了但永远没人处置"的队列。
+判定在 ``propose`` 同一次调用里跑完（只判这一条）：客户端提完就能拿到
+accept / pending / reject 的结论。**待审的不会被丢掉**——用户可以在台账里
+``queue.approve`` 放行，或事后撤销。
 
 **默认不存在。** ``memory/propose_enabled`` 关着时这个入口直接退出，并告诉你去哪里打开——
 "关着"的形状是"没有这个服务器"，不是"有这个服务器但什么也不写"。
@@ -68,6 +69,21 @@ TOOLS_WRITE: list[dict[str, Any]] = list(READ_TOOLS) + [
                 },
                 "limit": {"type": "integer", "minimum": 1, "maximum": 100},
             },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "queue.approve",
+        "description": (
+            "Approve a held proposal by hand and let it become a memory. Requires a reason."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "seq": {"type": "integer", "minimum": 1},
+                "reason": {"type": "string", "minLength": 1},
+            },
+            "required": ["seq", "reason"],
             "additionalProperties": False,
         },
     },
@@ -159,6 +175,13 @@ class WriteCore:
             ],
             "count": len(rows),
         }
+
+    def approve(self, seq: Any, reason: Any) -> dict[str, Any]:
+        if not isinstance(seq, int) or isinstance(seq, bool):
+            raise ValueError("seq 必须是整数。")
+        payload = self._consumer.approve(seq, reason)
+        self._refresh_reader()
+        return payload
 
     def revert(self, seq: Any, reason: Any) -> dict[str, Any]:
         if not isinstance(seq, int) or isinstance(seq, bool):

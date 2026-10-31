@@ -10,16 +10,17 @@ from typing import Any
 
 import pytest
 
-from axo.propose_consumer import ProposeConsumer
+from axo.propose_consumer import GateConfig, ProposeConsumer
 from axo.ui.propose_ledger import ProposeLedgerWindow, ledger_rows
 from memcore.store import MemoryStore
 
 
-def _consumer(tmp_path) -> ProposeConsumer:
+def _consumer(tmp_path, **kwargs) -> ProposeConsumer:
     return ProposeConsumer(
         MemoryStore(":memory:"),
         tmp_path / "queue.sqlite3",
         audit_path=tmp_path / "audit.jsonl",
+        **kwargs,
     )
 
 
@@ -75,6 +76,25 @@ def test_undo_is_disabled_for_a_pending_row(qapp, tmp_path):
     try:
         window.table.selectRow(0)
         assert window.undo_button.isEnabled() is False
+    finally:
+        window.close()
+        window.deleteLater()
+
+
+@pytest.mark.gui
+def test_approve_is_enabled_for_a_pending_row(qapp, tmp_path):
+    consumer = _consumer(tmp_path, config=GateConfig(quota_hourly=0))
+    consumer.ingest("held because the hourly quota is zero", proposal_id="p1", source="user")
+    consumer.decide_pending()
+
+    window = ProposeLedgerWindow(consumer)
+    try:
+        window.table.selectRow(0)
+        assert window.approve_button.isEnabled() is True
+        assert window.undo_button.isEnabled() is False
+        window._on_approve_clicked()
+        assert consumer.store.count() == 1
+        assert ledger_rows(consumer)[0][3] == "已接受"
     finally:
         window.close()
         window.deleteLater()

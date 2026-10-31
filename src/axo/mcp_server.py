@@ -137,7 +137,13 @@ def _call(core: MemoryCore, name: str, arguments: dict[str, Any]) -> dict[str, A
             raise ValueError("budget_tokens 必须是 1..100000 的整数。")
         hits = core.search(query, top_k, budget)
         return _text({"hits": hits, "count": len(hits)})
-    if name in ("propose.memory.write", "queue.status", "queue.list", "memory.revert"):
+    if name in (
+        "propose.memory.write",
+        "queue.status",
+        "queue.list",
+        "queue.approve",
+        "memory.revert",
+    ):
         if not hasattr(core, "queue_status"):
             raise KeyError(name)
         if name == "propose.memory.write":
@@ -167,6 +173,8 @@ def _call(core: MemoryCore, name: str, arguments: dict[str, Any]) -> dict[str, A
         unknown = set(arguments) - {"seq", "reason"}
         if unknown:
             raise ValueError(f"未知参数：{sorted(unknown)}")
+        if name == "queue.approve":
+            return _text(core.approve(arguments.get("seq"), arguments.get("reason")))
         return _text(core.revert(arguments.get("seq"), arguments.get("reason")))
     raise KeyError(name)
 

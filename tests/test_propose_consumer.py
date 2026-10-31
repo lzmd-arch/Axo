@@ -185,3 +185,27 @@ def test_build_consumer_opens_the_queue_when_the_switch_is_on(tmp_path):
     assert consumer is not None
     consumer.ingest("a proposal from the switch-on path", proposal_id="p1", source="user")
     assert consumer.store.count() == 0
+
+
+def test_a_pending_proposal_can_be_approved_into_a_memory(tmp_path):
+    # 「待审」必须有一个出口：没有这个入口，pending 既变不成记忆也不会被丢弃
+    consumer = _consumer(tmp_path, config=GateConfig(quota_hourly=0))
+    consumer.ingest(
+        "the gate held this line because the hourly quota was zero", proposal_id="p1", source="user"
+    )
+    consumer.decide_pending()
+    assert consumer.queue.get(1)["status"] == "pending"
+    assert consumer.store.count() == 0
+
+    payload = consumer.approve(1, "looked at it, worth keeping")
+    assert payload["status"] == "accepted"
+    assert consumer.store.count() == 1
+    assert "approved by user" in consumer.queue.get(1)["reason"]
+
+
+def test_approving_something_that_is_not_pending_is_refused(tmp_path):
+    consumer = _consumer(tmp_path)
+    consumer.ingest("an entry the gate accepts straight away", proposal_id="p1", source="user")
+    consumer.decide_pending()
+    with pytest.raises(ValueError, match="只有待审的才能批准"):
+        consumer.approve(1, "already accepted")

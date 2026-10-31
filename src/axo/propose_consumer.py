@@ -331,7 +331,13 @@ class ProposeConsumer:
 
     # ------------------------------------------------------------ 落库
     def _apply(
-        self, seq: int, row: dict[str, Any], score: float, similarity: float
+        self,
+        seq: int,
+        row: dict[str, Any],
+        score: float,
+        similarity: float,
+        *,
+        reason: str | None = None,
     ) -> dict[str, Any]:
         """**唯一**会改记忆库的方法。"""
         text = row["payload"]["text"]
@@ -347,10 +353,14 @@ class ProposeConsumer:
                 seq, "rejected", "not encodable as a lexical fingerprint", score, similarity
             )
         status = "accepted"
-        reason = f"salience {score:.3f} ≥ {self.config.accept_salience:.2f}, quota free"
-        self.queue.decide(seq, status, reason, salience_score=score, max_similarity=similarity)
+        decided_reason = reason or (
+            f"salience {score:.3f} ≥ {self.config.accept_salience:.2f}, quota free"
+        )
+        self.queue.decide(
+            seq, status, decided_reason, salience_score=score, max_similarity=similarity
+        )
         self.queue.record_apply(seq, memory_id=item.memory_id)
-        self._audit("gate.accepted", {"seq": seq, "reason": reason, "source": source})
+        self._audit("gate.accepted", {"seq": seq, "reason": decided_reason, "source": source})
         self._audit(
             "memory.applied",
             {"seq": seq, "memory_id": item.memory_id, "created": created},
@@ -363,6 +373,23 @@ class ProposeConsumer:
         self.queue.decide(seq, status, reason, salience_score=score, max_similarity=similarity)
         self._audit(f"gate.{status}", {"seq": seq, "reason": reason, "salience": score})
         return self.queue.get(seq)
+
+    def approve(self, seq: int, reason: str) -> dict[str, Any]:
+        """把一条**待审**的提议按用户的判断放行。
+
+        门控只回答"按冻结的阈值该怎么判"，回答不了"用户觉得这条值得记"——待审的
+        意义就是等人。没有这个入口，pending 就是一个**没有出口的状态**：台账能看见，
+        却永远变不成记忆，也不会被丢掉。所以它必到、且必须留痕。
+        """
+        why = (reason or "").strip()
+        if not why:
+            raise ValueError("reason 必须是非空字符串。")
+        row = self.queue.get(seq)
+        if row["status"] != "pending":
+            raise ValueError(f"第 {seq} 条是 {row['status']}，只有待审的才能批准。")
+        return self._apply(
+            seq, row, row["salience"], row["max_cosine"], reason=f"approved by user: {why}"
+        )
 
     def revert(self, seq: int, reason: str) -> dict[str, Any]:
         """撤销一条 accepted：把那次写进去的记忆删掉，库回到写前。"""

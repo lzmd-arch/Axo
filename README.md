@@ -573,7 +573,8 @@ def tools():
 2. 让客户端连 `axo-mcp-write`，提一条：
    `{"name": "propose.memory.write", "arguments": {"text": "…", "proposal_id": "唯一串"}}`
    —— 返回 `accepted` / `pending` / `rejected` **和理由**；
-3. 记忆窗口 → 提议台账：看待审、看理由；不满意的选中后「撤销选中的提议」。
+3. 记忆窗口 → 提议台账：看待审、看理由；**待审的**可以「批准选中的提议」，
+   **已接受的**可以「撤销选中的提议」。
 
 ```json
 {
@@ -585,7 +586,7 @@ def tools():
 ```
 
 写档位的工具：三个只读（`state.query` / `memory.search` / `trigger.status`）+
-`propose.memory.write` + `queue.status` + `queue.list` + `memory.revert`。
+`propose.memory.write` + `queue.status` + `queue.list` + `queue.approve` + `memory.revert`。
 
 | 判定 | 条件（与 BioSNN 侧冻结值一致） |
 | :--- | :--- |

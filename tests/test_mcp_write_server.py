@@ -36,7 +36,7 @@ def _call(core, name, arguments=None):
     return json.loads(reply["result"]["content"][0]["text"]), reply["result"].get("isError", False)
 
 
-def test_tool_table_adds_four_to_the_three_read_only(tmp_path):
+def test_tool_table_adds_the_five_queue_tools(tmp_path):
     assert [tool["name"] for tool in TOOLS_WRITE] == [
         "state.query",
         "memory.search",
@@ -44,6 +44,7 @@ def test_tool_table_adds_four_to_the_three_read_only(tmp_path):
         "propose.memory.write",
         "queue.status",
         "queue.list",
+        "queue.approve",
         "memory.revert",
     ]
 

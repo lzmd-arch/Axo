@@ -100,7 +100,7 @@ def main(argv: list[str]) -> int:
     session = Session(args.exe, state, db)
     try:
         tools = session.tools()
-        check("工具表 7 个", len(tools) == 7 and "memory.revert" in tools, str(tools))
+        check("工具表 8 个", len(tools) == 8 and "memory.revert" in tools, str(tools))
 
         proposed = session.call(
             "propose.memory.write",

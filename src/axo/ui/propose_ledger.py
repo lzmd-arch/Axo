@@ -87,6 +87,12 @@ class ProposeLedgerWindow(QDialog):
         layout.addWidget(self.table, 1)
 
         buttons = QHBoxLayout()
+        self.approve_button = QPushButton("批准选中的提议", self)
+        self.approve_button.setObjectName("proposeApproveButton")
+        self.approve_button.setEnabled(False)
+        self.approve_button.setToolTip("把一条「待审」的提议按你的判断放行，写进记忆")
+        self.approve_button.clicked.connect(self._on_approve_clicked)
+        buttons.addWidget(self.approve_button)
         self.undo_button = QPushButton("撤销选中的提议", self)
         self.undo_button.setObjectName("proposeUndoButton")
         self.undo_button.setEnabled(False)
@@ -138,10 +144,22 @@ class ProposeLedgerWindow(QDialog):
 
     def _on_selection_changed(self) -> None:
         seq = self.selected_seq()
-        enabled = False
-        if seq is not None:
-            enabled = self._consumer.queue.get(seq)["status"] == "accepted"
-        self.undo_button.setEnabled(enabled)
+        status = self._consumer.queue.get(seq)["status"] if seq is not None else None
+        self.undo_button.setEnabled(status == "accepted")
+        # 「待审」必须有一个出口：只显示不处置的话，pending 永远变不成记忆
+        self.approve_button.setEnabled(status == "pending")
+
+    def _on_approve_clicked(self) -> None:
+        seq = self.selected_seq()
+        if seq is None:
+            return
+        try:
+            payload = self._consumer.approve(seq, "approved from the proposal ledger")
+        except ValueError as error:
+            QMessageBox.warning(self, "批准失败", str(error))
+            return
+        self.refresh()
+        self.summary.setText(self.summary.text() + f" · 已批准第 {payload['seq']} 条")
 
     def _on_undo_clicked(self) -> None:
         seq = self.selected_seq()
