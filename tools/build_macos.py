@@ -333,6 +333,44 @@ _README = """Axo（千岁 / 阿螈）macOS 包
 """
 
 
+def _build_mcp_servers() -> None:
+    """冻结两个 MCP 控制台程序到 ``dist/_mcp/``。
+
+    与 Windows 侧用**同一份入口清单**（``build_exe.MCP_ENTRIES``）：桌面包不带这两个
+    程序的话，用户勾了"允许外部提议写入"也等不到任何提议，而且不会报错。
+    """
+    from tools.build_exe import MCP_ENTRIES
+
+    out = _DIST / "_mcp"
+    out.mkdir(parents=True, exist_ok=True)
+    for exe, entry in MCP_ENTRIES.items():
+        _run(
+            [
+                sys.executable,
+                "-m",
+                "PyInstaller",
+                "--noconfirm",
+                "--onefile",
+                "--console",
+                "--name",
+                exe,
+                "--paths",
+                str(_ROOT / "src"),
+                "--distpath",
+                str(out),
+                "--workpath",
+                str(_BUILD / exe),
+                "--specpath",
+                str(_BUILD),
+                "--collect-binaries",
+                "numpy",
+                str(_ROOT / entry),
+            ],
+            timeout=1800,
+            cwd=_ROOT,
+        )
+
+
 def _package(version: str, arch: str, *, make_dmg: bool = True) -> list[Path]:
     stage = _BUILD / "Axo-macos-stage"
     if stage.exists():
@@ -349,6 +387,12 @@ def _package(version: str, arch: str, *, make_dmg: bool = True) -> list[Path]:
         shutil.copytree(_ROOT / "licenses", stage / "licenses")
     if not (stage / "LICENSE").is_file() or not (stage / "licenses" / "LGPL-3.0.txt").is_file():
         raise SystemExit("安装包里少了 LICENSE 或 LGPL-3.0.txt：LGPL §4(b) 的副本义务")
+    for exe in ("axo-mcp", "axo-mcp-write"):
+        binary = _DIST / "_mcp" / exe
+        if not binary.is_file():
+            raise SystemExit(f"缺 {exe}：MCP 入口没进包，写档位等于空转")
+        shutil.copyfile(binary, stage / exe)
+        (stage / exe).chmod(0o755)
     (stage / "README-macOS.txt").write_text(_README, encoding="utf-8")
 
     stem = f"{APP_NAME}-{version}-macos-{arch}"
@@ -418,6 +462,9 @@ def main(argv: list[str] | None = None) -> int:
                 "发布版缺随包模型，先跑 uv run python tools/fetch_bundle_assets.py；缺："
                 + "、".join(missing)
             )
+
+    if not args.skip_build:
+        _build_mcp_servers()
 
     icon = ICNS if ICNS.is_file() else None
     command = _build_command(model=model, icon=icon)
