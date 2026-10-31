@@ -109,6 +109,7 @@ _K_SPEECH_CALL_IDLE = "speech/call_idle_hangup_s"
 _K_TASK_MEMORY = "memory/task_memory"
 _K_PROPOSE_ENABLED = "memory/propose_enabled"
 _K_GRAPH_CHANNEL = "memory/graph_channel"
+_K_RECALL_MIN_SCORE = "memory/recall_min_score"
 _K_CONSOLIDATION_ENABLED = "memory/consolidation_enabled"
 _K_CONSOLIDATION_INTERVAL_S = "memory/consolidation_interval_s"
 
@@ -450,6 +451,22 @@ class BusSettings:
     interval_s: int = 60
 
 
+DEFAULT_RECALL_MIN_SCORE = 0.20
+"""召回的最低融合分：低于它的记忆**不注入上下文**。
+
+**0.20 是从真实库的分布里量的，不是拍的。** 2026-11-01 在 217 条的副本上跑
+``tools/calibrate_recall_threshold.py``：陌生话题的 top 融合分最大 0.163，整句
+正样本的 p5 是 0.567、半句 0.211——谷点在 0.16–0.21 之间。取 0.20 之后：
+
+* 陌生话题注入条数中位 62 → **0**；
+* 整句正样本 100% 仍有一条，半句 97%；
+* 真实会话里的用户提问 97% 仍有一条。
+
+旧的 0.10 是词法量纲标定的，在混合通道下等于没设门槛（每轮注入几十条）。
+详情与判据见 ``docs/prereg-recall-threshold-v1.md``。
+"""
+
+
 @dataclass(frozen=True)
 class MemorySettings:
     """记忆设置。
@@ -503,11 +520,17 @@ class MemorySettings:
             快照攒多快，那要用户自己的库跑上一阵才有数。所以设置页把它摆在明面上，
             而不是写死在这里。下限 60 秒（``consolidation_scheduler.MIN_DELAY_MS``
             同值），再往下没有意义：一轮本身可能跑几分钟。
+        recall_min_score: 召回的最低融合分，低于它的记忆不注入上下文。
+
+            **默认 0.20 是量出来的**（见 :data:`DEFAULT_RECALL_MIN_SCORE`）：它是
+            陌生话题与真实提问两道分布的谷点。调高会更严格（可能丢半句相关的记忆），
+            调低会更宽松（陌生话题又开始往上下文里塞东西）。设置页给的是 0.10–0.60。
     """
 
     task_memory: bool = False
     propose_enabled: bool = False
     graph_channel: bool = False
+    recall_min_score: float = DEFAULT_RECALL_MIN_SCORE
     consolidation_enabled: bool = True
     consolidation_interval_s: int = 86_400
 
@@ -837,6 +860,16 @@ class SettingsStore:
             task_memory=_as_bool(self._backend.value(_K_TASK_MEMORY, False)),
             propose_enabled=_as_bool(self._backend.value(_K_PROPOSE_ENABLED, False)),
             graph_channel=_as_bool(self._backend.value(_K_GRAPH_CHANNEL, False)),
+            recall_min_score=min(
+                0.9,
+                max(
+                    0.0,
+                    _as_float(
+                        self._backend.value(_K_RECALL_MIN_SCORE, DEFAULT_RECALL_MIN_SCORE),
+                        DEFAULT_RECALL_MIN_SCORE,
+                    ),
+                ),
+            ),
             consolidation_enabled=_as_bool(
                 self._backend.value(_K_CONSOLIDATION_ENABLED, True), True
             ),
@@ -850,6 +883,7 @@ class SettingsStore:
         self._backend.setValue(_K_TASK_MEMORY, bool(settings.task_memory))
         self._backend.setValue(_K_PROPOSE_ENABLED, bool(settings.propose_enabled))
         self._backend.setValue(_K_GRAPH_CHANNEL, bool(settings.graph_channel))
+        self._backend.setValue(_K_RECALL_MIN_SCORE, float(settings.recall_min_score))
         self._backend.setValue(_K_CONSOLIDATION_ENABLED, bool(settings.consolidation_enabled))
         self._backend.setValue(_K_CONSOLIDATION_INTERVAL_S, int(settings.consolidation_interval_s))
 
@@ -1040,6 +1074,26 @@ def _as_int(value: object, default: int) -> int:
     if isinstance(value, str):
         try:
             return int(value.strip())
+        except ValueError:
+            return default
+    return default
+
+
+def _as_float(value: object, default: float) -> float:
+    """把读回来的东西收成 float。**收不了就 ``default``，绝不抛**——理由同
+    :func:`_as_int`：这个值在主窗口构造路径上被读，抛出去就是"打不开"。
+
+    ``bool`` 先挡掉（它是 ``int`` 的子类）：一个被写坏的布尔会让门槛变成 0 或 1，
+    前者等于不设门槛，后者等于几乎不注入——两种都是静默的。
+    """
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        number = float(value)
+        return number if number == number else default  # NaN 不能当门槛
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
         except ValueError:
             return default
     return default

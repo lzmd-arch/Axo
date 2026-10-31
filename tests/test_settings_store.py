@@ -23,6 +23,7 @@ from axo.ui.settings_store import (
     CLOUD_PRESETS,
     DEFAULT_CLOUD_BASE_URL,
     DEFAULT_HOST,
+    DEFAULT_RECALL_MIN_SCORE,
     PROVIDER_BUILTIN,
     PROVIDER_CLOUD,
     PROVIDER_OLLAMA,
@@ -246,6 +247,33 @@ def test_builtin_roundtrip_keeps_the_model_path_and_context() -> None:
     assert loaded.is_builtin is True
     assert loaded.local_model_path == "D:/models/qwen3-4b.gguf"
     assert loaded.local_context == 16384
+
+
+def test_recall_threshold_roundtrip() -> None:
+    """门槛存进去要读得回来——读不回来就是"下一步启动又变回 0.20"，
+    而用户上一次调高是因为他的库上误注入太多。"""
+    store = SettingsStore(FakeBackend())
+    store.save_memory(MemorySettings(recall_min_score=0.35))
+    assert store.load_memory().recall_min_score == pytest.approx(0.35)
+
+
+@pytest.mark.parametrize(
+    "stored,expected",
+    [
+        ("0.4", 0.4),
+        (0.4, 0.4),
+        # 手改注册表能写进任何东西：读坏就用默认，绝不抛（同 _as_int 那条纪律）。
+        ("不是数", DEFAULT_RECALL_MIN_SCORE),
+        (True, DEFAULT_RECALL_MIN_SCORE),
+        (None, DEFAULT_RECALL_MIN_SCORE),
+        # 超界的值夹回来：负数会让一切被挡，1 以上会让一切通过——两种都静默。
+        (-1.0, 0.0),
+        (5.0, 0.9),
+    ],
+)
+def test_recall_threshold_survives_bad_values(stored: object, expected: float) -> None:
+    store = SettingsStore(FakeBackend({"memory/recall_min_score": stored}))
+    assert store.load_memory().recall_min_score == pytest.approx(expected)
 
 
 @pytest.mark.parametrize("stored", ["一天", 0, -5, None])
@@ -677,8 +705,8 @@ def test_the_memory_keys_live_in_their_own_namespace() -> None:
     """**键的空间分开**，与前面三组一样。
 
     塞进 ``tools/*`` 的话，"哪些键属于工具"就只能靠 grep 回答——而这几项管的都不是
-    哪个工具能用、也不是沙箱授权：一个管记忆落库的粒度，一个管召回用不用联想，后两个
-    管睡眠巩固跑不跑、隔多久跑。
+    哪个工具能用、也不是沙箱授权：一个管记忆落库的粒度，一个管召回用不用联想，
+    三个管召回门槛与睡眠巩固跑不跑、隔多久跑。
 
     写出去的键**逐个列出来**（不是"含哪些"）：多写一格就是多占一格命名空间，而
     ``save_memory`` 写的是整组设置——将来加字段时这条会红，提醒改的人想一下新键该
@@ -690,6 +718,7 @@ def test_the_memory_keys_live_in_their_own_namespace() -> None:
         "memory/task_memory",
         "memory/propose_enabled",
         "memory/graph_channel",
+        "memory/recall_min_score",
         "memory/consolidation_enabled",
         "memory/consolidation_interval_s",
     ]

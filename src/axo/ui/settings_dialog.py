@@ -77,6 +77,7 @@ from .settings_store import (
     DEFAULT_CLOUD_BASE_URL,
     DEFAULT_HOST,
     DEFAULT_LOCAL_CONTEXT,
+    DEFAULT_RECALL_MIN_SCORE,
     PROVIDER_BUILTIN,
     PROVIDER_CLOUD,
     PROVIDER_OLLAMA,
@@ -1460,7 +1461,8 @@ class MemoryPage(QWidget):
             _hint("打开后，召回除了看词法与语义，还会把「跟查询内容沾边的记忆的邻居」也拉进来。")
         )
         self.graph_cost = _hint(
-            "代价写在前面：门槛 min_score（0.10）是按词法量纲标定的，多一条通道会让"
+            "代价写在前面：门槛 min_score（默认 0.20，可在下面「记忆门槛」里调）"
+            "是按词法量纲标定的，多一条通道会让"
             "这个阈值不再对应原来的严格程度——命中会变多，误注入也可能变多。本机实测"
             "这条通道是负的（hit@1 0.8500 → 0.8250），所以默认关。开之前请看"
             " benchmarks/gold/CORPUS.md 里「联想腿」那一页的数。"
@@ -1476,6 +1478,42 @@ class MemoryPage(QWidget):
         self.graph_note = _hint("")
         self.graph_note.setObjectName("graphNote")
         outer.addWidget(self.graph_note)
+
+        outer.addSpacing(6)
+        outer.addWidget(_section("记忆门槛"))
+        outer.addWidget(
+            _hint(
+                "召回时，分数低于这个门槛的记忆**不进上下文**——它们还在库里，只是这一轮"
+                "不去打扰模型。调高更严格（可能漏掉半句相关的），调低更宽松（陌生话题"
+                "又会往上下文里塞几十条无关记忆）。"
+            )
+        )
+        recall_row = QHBoxLayout()
+        recall_row.setContentsMargins(0, 0, 0, 0)
+        self.recall_slider = QSlider(Qt.Orientation.Horizontal, self)
+        self.recall_slider.setObjectName("recallMinScoreSlider")
+        # **范围是 0.10–0.60，不是 0.50–0.90。** 这个数是融合分，不是余弦：真实库上
+        # 陌生话题的 top 融合分最大 0.163、整句正样本的中位 0.567——谷点在 0.16–0.21。
+        # 按余弦直觉定 0.65 会把绝大多数正常提问也挡掉（半句相关的只剩一半）。
+        # 依据见 ``docs/prereg-recall-threshold-v1.md``。
+        self.recall_slider.setRange(10, 60)
+        self.recall_slider.setSingleStep(1)
+        self.recall_slider.setPageStep(5)
+        self.recall_slider.setValue(round(DEFAULT_RECALL_MIN_SCORE * 100))
+        self.recall_slider.valueChanged.connect(self._on_recall_slider)
+        self.recall_value = QLabel(self)
+        self.recall_value.setObjectName("recallMinScoreValue")
+        self.recall_value.setMinimumWidth(40)
+        recall_row.addWidget(self.recall_slider)
+        recall_row.addWidget(self.recall_value)
+        outer.addLayout(recall_row)
+        self._sync_recall_value(self.recall_slider.value())
+        outer.addWidget(
+            _hint(
+                "默认 0.20 是量出来的：在 217 条的库上，陌生话题注入条数中位从 62 降到 0，"
+                "整句相关的 100% 仍有一条，真实提问的 97% 仍有一条。"
+            )
+        )
 
         outer.addSpacing(6)
         outer.addWidget(_section("睡眠巩固"))
@@ -1569,6 +1607,8 @@ class MemoryPage(QWidget):
             self.task_box.setChecked(settings.task_memory)
             self.propose_box.setChecked(settings.propose_enabled)
             self.graph_box.setChecked(settings.graph_channel)
+            self.recall_slider.setValue(round(settings.recall_min_score * 100))
+            self._sync_recall_value(self.recall_slider.value())
             self.consolidation_box.setChecked(settings.consolidation_enabled)
             # **小时 ← 秒，四舍五入到整小时**：手改过的注册表里可以是 3600（正好 1 小时）
             # 也可以是 5400（1.5 小时）。后者界面上只能显示成 2 小时——**这是有损的**，
@@ -1587,6 +1627,7 @@ class MemoryPage(QWidget):
             task_memory=self.task_box.isChecked(),
             propose_enabled=self.propose_box.isChecked(),
             graph_channel=self.graph_box.isChecked(),
+            recall_min_score=self.recall_slider.value() / 100.0,
             consolidation_enabled=self.consolidation_box.isChecked(),
             consolidation_interval_s=self.consolidation_hours.value() * _SECONDS_PER_HOUR,
         )
@@ -1602,6 +1643,15 @@ class MemoryPage(QWidget):
         if self._syncing:
             return
         self.changed.emit(self.current())
+
+    def _on_recall_slider(self, value: int) -> None:
+        self._sync_recall_value(value)
+        if self._syncing:
+            return
+        self.changed.emit(self.current())
+
+    def _sync_recall_value(self, value: int) -> None:
+        self.recall_value.setText(f"{value / 100:.2f}")
 
     # ── 图状态那一行 ────────────────────────────────────────────────────────
 

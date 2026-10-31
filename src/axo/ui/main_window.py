@@ -110,6 +110,7 @@ from ..agent.router import (
     RegisterState,
     RoutedTurn,
     SlashCommand,
+    is_memory_question,
     route_turn,
 )
 from ..agent.runlog import RunLog
@@ -180,6 +181,7 @@ from ..paths import (
     stickers_dir,
     voices_dir,
 )
+from ..phrases import pick_phrase
 from ..plugins import PluginIssue, load_enabled_plugins
 from ..propose_consumer import build_consumer
 from ..secrets import protect, unprotect
@@ -721,6 +723,9 @@ class MainWindow(QMainWindow):
         #: 用不用**任务记忆**（:class:`~axo.memory.policy.TaskPolicy`）。
         #: 默认关，存在 ``QSettings`` 的 ``memory/*`` 里，由设置窗口的「记忆」页改。
         self._task_memory: bool = self._settings_store.load_memory().task_memory
+        #: 召回的最低融合分（低于它不注入）。**每轮现读**在 ``_recall_config`` 里用，
+        #: 改设置时由 ``_on_memory_changed`` 落一次——与 ``_graph_enabled`` 同一种形状。
+        self._recall_min_score: float = self._settings_store.load_memory().recall_min_score
         #: 提醒设置：**到点那一刻要不要打扰他**（叫醒窗口、由她说一句），两项默认都开。
         #: 它只影响"提醒响的时候额外发生什么"，不改变提醒本身——关掉任意一个，那条提醒
         #: 照旧被标成响过、托盘照旧弹气泡、对话区照旧留一条。
@@ -2470,6 +2475,8 @@ class MainWindow(QMainWindow):
                 # 工具集是空的。
                 self.chat_view.append_message("system", "这一轮没有可用的工具，按普通对话处理。")
 
+        if self._should_say_uncertain(ledger):
+            return
         request = ChatRequest(
             messages=list(assembly.messages),
             max_tokens=self._budget.reserve_output or None,
@@ -2486,6 +2493,45 @@ class MainWindow(QMainWindow):
         self._track(thread, worker, what="生成线程", slot="chat")
         self.chat_view.set_status("正在生成…")
         thread.start()
+
+    def _should_say_uncertain(self, ledger: Any) -> bool:
+        """记忆里一条都没有、而这一句又是在问记忆：**直说不确定，不再调模型。**
+
+        三条判据缺一不可（理由与判据见 ``docs/prereg-recall-threshold-v1.md``）：
+
+        * 这一轮**没有工具**——有工具时模型可以自己去 ``search_memory``，替它拒答
+          等于把还能查的路堵上；
+        * 阈值之后召回的 ``ledger`` 里**一条都没有**；
+        * 这句话是在问**记忆里的事**（:func:`~axo.agent.router.is_memory_question`）。
+
+        **闲聊轮不走这里**："今天有点累"本来就不该要求"有过记忆"，让它在没有记忆时
+        回一句"我不太熟悉"是把两件不同的事混成一件。
+
+        走到这里时正文**还没流式发出去**（调用点在 ``ChatWorker`` 之前），所以抢在
+        前头说一句不会半路插话。说完走 :meth:`_on_reply_finished` 同一条收尾：写逐字稿、
+        写记忆、复位界面、该念就念——**少走一条路，这里的行为就会和普通回合分叉**。
+        """
+        if self._turn_uses_tools or self._turn_needs_clarification:
+            return False
+        if ledger is None:
+            return False
+        if getattr(ledger, "injected", ()) or ():
+            return False
+        if not is_memory_question(self._pending_text):
+            return False
+        phrase = pick_phrase()
+        self.chat_view.append_message("assistant", phrase)
+        self._on_reply_finished(
+            phrase,
+            {
+                "interrupted": False,
+                "prompt_tokens": None,
+                "completion_tokens": None,
+                "no_grounding": True,
+            },
+        )
+        self.chat_view.set_status("记忆里没有相关条目，已直说")
+        return True
 
     def _test_session_path(self) -> Path:
         """测试历史与会话同目录：``<session_id>.tests.json``。"""
@@ -5139,6 +5185,7 @@ class MainWindow(QMainWindow):
         self._task_memory = settings.task_memory
         self._writer.policy = TaskPolicy() if self._task_memory else PerItemPolicy()
         self._graph_enabled = settings.graph_channel
+        self._recall_min_score = settings.recall_min_score
         self._settings_store.save_memory(settings)
         self._sync_propose_consumer()
         self._consolidation_enabled = settings.consolidation_enabled
@@ -5165,6 +5212,9 @@ class MainWindow(QMainWindow):
         """
         return RecallConfig(
             graph_weight=_GRAPH_CHANNEL_WEIGHT if self._graph_enabled else 0.0,
+            # 弱记忆不注入：低于门槛的那些留在库里、不进上下文。0.20 是量出来的
+            # 谷点，理由见 ``settings_store.DEFAULT_RECALL_MIN_SCORE``。
+            min_score=self._recall_min_score,
         )
 
     # ── 关联图 ──────────────────────────────────────────────────────────────

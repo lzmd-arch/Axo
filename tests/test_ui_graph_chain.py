@@ -151,6 +151,9 @@ def window() -> SimpleNamespace:
     """
     fake = SimpleNamespace(
         _graph_enabled=False,
+        # ``_recall_config`` 现在还要读门槛（弱记忆不注入）。这一组测的是联想那条线，
+        # 给默认值即可——但**必须给**：少了它三个用例会当场 AttributeError。
+        _recall_min_score=0.20,
         _graph=None,
         _graph_freshness=None,
         _graph_note="",
