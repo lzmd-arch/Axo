@@ -61,6 +61,12 @@ def _declared(name: str) -> object:
     """
     tree = ast.parse(_BUILD_TOOL.read_text(encoding="utf-8"))
     for node in tree.body:
+        # 两种写法都要认：``NAME = ...`` 与 ``NAME: dict[str, str] = ...``
+        # （``MCP_ENTRIES`` 就是后者——只认前者时这条守卫会以为常量不存在）。
+        if isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name) and node.target.id == name and node.value:
+                return ast.literal_eval(node.value)
+            continue
         if isinstance(node, ast.Assign) and any(
             isinstance(target, ast.Name) and target.id == name for target in node.targets
         ):
@@ -464,17 +470,29 @@ def test_mcp_servers_ship_with_the_package() -> None:
     入口脚本被 PyInstaller 当 ``__main__`` 跑，相对 import 在那种情况下解析不了，
     症状是产物能构建、双击没反应。
     """
-    from tools import build_exe
-
-    assert set(build_exe.MCP_ENTRIES) == {"axo-mcp", "axo-mcp-write"}
-    root = Path(build_exe.__file__).resolve().parents[1]
-    for entry in build_exe.MCP_ENTRIES.values():
-        source = (root / entry).read_text(encoding="utf-8")
+    # **不 import ``tools.build_exe``。** 那个目录不是包，CI 的 Python 3.10 上
+    # ``from tools import build_exe`` 直接 ``ModuleNotFoundError``（本机 3.12 靠
+    # 命名空间包碰巧能过）——2026-10-31 这条就是这样在 CI 上红的。按 AST 读字面量，
+    # 与上面 ``_declared`` 同一手法。
+    entries = _declared("MCP_ENTRIES")
+    assert isinstance(entries, dict)
+    assert set(entries) == {"axo-mcp", "axo-mcp-write"}
+    for entry in entries.values():
+        source = (_REPO_ROOT / str(entry)).read_text(encoding="utf-8")
         assert "from axo." in source, entry
         assert "from ." not in source, entry
 
 
-def test_the_local_model_runtime_is_fetched_and_shipped(tmp_path, monkeypatch) -> None:
+def _function_source(name: str) -> str:
+    """``tools/build_exe.py`` 里某个函数的源码片段（按 AST 取，不 import）。"""
+    text = _BUILD_TOOL.read_text(encoding="utf-8")
+    for node in ast.walk(ast.parse(text)):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return ast.get_source_segment(text, node) or ""
+    raise AssertionError(f"{_BUILD_TOOL.name} 里没有函数 {name}")
+
+
+def test_the_local_model_runtime_is_fetched_and_shipped() -> None:
     """「软件自己调用本地模型」靠随包的 llama.cpp 运行时，三处各钉一条。
 
     三条各自对应一种**静默**失效：
@@ -485,21 +503,17 @@ def test_the_local_model_runtime_is_fetched_and_shipped(tmp_path, monkeypatch) -
     * 自检没看它 → 镜像里少了 exe 也照样算构建成功，症状要到用户点「内置 llama.cpp」
       那一刻才出现。
     """
-    import inspect
-
-    from tools import build_exe
-
+    # 全部按源码读（不 import：理由见上面 MCP 那条）。
     fetch = (_REPO_ROOT / "tools" / "fetch_bundle_assets.py").read_text(encoding="utf-8")
     assert "llama-server.exe" in fetch, "抓资产那只脚本不认识这个运行时"
     assert "cudart-llama-bin-win-cuda-13.4-x64.zip" in fetch, "CUDA 运行库那份没抓"
 
-    monkeypatch.setattr(build_exe, "_BUNDLE_ASSETS", tmp_path)
-    (tmp_path / "llama").mkdir()
-    targets = [target for _source, target in build_exe._bundle_datas()]
-    assert "llama" in targets, "_bundle_datas 没把运行时目录带进包"
-    assert "llama/llama-server.exe" in build_exe._bundle_missing(), (
+    assert '("llama", "llama")' in _function_source("_bundle_datas"), (
+        "_bundle_datas 没把运行时目录带进包"
+    )
+    assert "llama/llama-server.exe" in _function_source("_bundle_missing"), (
         "发布闸门不看运行时——少了它也能打出发布包"
     )
-    assert "llama/llama-server.exe" in inspect.getsource(build_exe._check_layout), (
+    assert "llama/llama-server.exe" in _function_source("_check_layout"), (
         "构建后自检不看镜像里有没有运行时"
     )

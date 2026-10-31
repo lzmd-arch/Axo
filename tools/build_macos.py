@@ -463,9 +463,6 @@ def main(argv: list[str] | None = None) -> int:
                 + "、".join(missing)
             )
 
-    if not args.skip_build:
-        _build_mcp_servers()
-
     icon = ICNS if ICNS.is_file() else None
     command = _build_command(model=model, icon=icon)
     if args.dry_run:
@@ -483,6 +480,13 @@ def main(argv: list[str] | None = None) -> int:
         import PyInstaller  # noqa: F401
     except ImportError:
         raise SystemExit("PyInstaller 不在当前环境：先 uv sync --all-extras") from None
+
+    # MCP 入口是**独立的小产物**，与 .app 无关；但它要 PyInstaller。
+    # **必须排在 ``--dry-run`` 的 return 之后**：dry-run 是"只打印命令"，而在
+    # 没装 PyInstaller 的环境（CI 的 pytest 腿）里跑一次真构建会当场失败——
+    # 2026-10-31 那条 macOS 冒烟测试就是这么红的。
+    if not args.skip_build:
+        _build_mcp_servers()
 
     if not args.skip_build:
         icon = _make_icns()
