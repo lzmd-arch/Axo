@@ -94,7 +94,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "biosnn-bus", specifier = ">=0.4.0,<0.5" },
+    { name = "biosnn-bus", specifier = ">=0.5.0,<0.6" },
     { name = "cryptography", marker = "extra == 'sync'", specifier = ">=42" },
     { name = "httpx", marker = "extra == 'llm'", specifier = ">=0.27" },
     { name = "numpy", specifier = ">=1.24" },
@@ -131,16 +131,16 @@ dev = [
 
 [[package]]
 name = "biosnn-bus"
-version = "0.4.0"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b5/f5/bc163a5297c8cd4a21044ccf8c2d4c63e09a647b385b35cdb1510ee036c5/biosnn_bus-0.4.0.tar.gz", hash = "sha256:124c6e68be31dfd9fe9959ca363699ab28fa6e6eeb5eed1653ef045a1634b450", size = 55953, upload-time = "2026-10-25T14:23:14.361Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8d/cd/5c2b8219cd9a09388fdf8e5d211d56a7ecdd3f846ebcd6ad09244530a280/biosnn_bus-0.5.0.tar.gz", hash = "sha256:a78e5eec18a7ae8feae415bc7f5666f3a4a7bdaf089dd5fa14bc1b1175d3b987", size = 66249, upload-time = "2026-11-01T11:32:59.143Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/21/71/f32be12f134bc0366f3d26c63132d4900027dcfa7368ccc8359b5529026a/biosnn_bus-0.4.0-py3-none-any.whl", hash = "sha256:3b2f9eb4403a91668824cb68e1a5bc5fa5782a645c26394989d1e974ae8262f3", size = 43918, upload-time = "2026-10-25T14:23:13.039Z" },
+    { url = "https://files.pythonhosted.org/packages/73/37/9a9d5dbb44003d6d64731deb38fe791d1d09d839082599e85c3dd63cc384/biosnn_bus-0.5.0-py3-none-any.whl", hash = "sha256:47ac8d208827c38ba7ba2eeb2d8c443eeaee489cfb918ca506d1eea783b99f21", size = 51975, upload-time = "2026-11-01T11:32:57.765Z" },
 ]
 
 [[package]]

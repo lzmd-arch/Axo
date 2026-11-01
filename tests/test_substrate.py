@@ -292,3 +292,22 @@ def test_complete_really_goes_through_the_library(monkeypatch: pytest.MonkeyPatc
     substrate.complete(probe, top=1)
 
     assert len(seen) == 1, f"complete 没走类型边界（to_spike 被调了 {len(seen)} 次）"
+
+
+def test_respond_spiking_is_deterministic_and_shaped_like_the_linear_one():
+    """脉冲臂：形状与线性臂一致、同种子可复现；线性臂本身一个字没改。"""
+    texts = ["北岸一号站的采集箱每五分钟推一次数据包", "会议改到周四下午三点", "冰箱里的牛奶剩半盒"]
+    items = [_item(f"m{i}", encode_lexical(text)) for i, text in enumerate(texts)]
+    sub = Substrate.build(items)
+    probe = encode_assoc(encode_lexical("北岸一号站的采集箱每五分钟推一次数据包"))
+
+    linear = sub.respond(probe)
+    first = sub.respond_spiking(probe, neurons=64, steps=5, seed=7)
+    second = sub.respond_spiking(probe, neurons=64, steps=5, seed=7)
+
+    # 线性臂返回稠密 (N,)；脉冲臂返回"每条记忆一个分"，形状 (n,)
+    assert linear.shape == (DEFAULT_SDR_WIDTH,)
+    assert first.shape == (len(texts),)
+    assert np.array_equal(first, second), "同种子必须逐位相同"
+    assert np.all(np.isfinite(first))
+    assert np.array_equal(sub.respond(probe), linear), "线性臂不得被脉冲路径影响"

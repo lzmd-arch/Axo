@@ -252,6 +252,57 @@ class Substrate:
             minlength=self.width,
         ).astype(np.float32)
 
+    def respond_spiking(
+        self,
+        probe: SDR,
+        *,
+        neurons: int = 512,
+        steps: int = 10,
+        seed: int = 0,
+    ) -> np.ndarray:
+        """脉冲版的一步响应：线性响应 → 512 个 ALIF 神经元跑 ``steps`` 步 → 读出。
+
+        **默认不参与任何路径**：:meth:`respond` 一个字没改，关着时行为与以前逐字节相同。
+        这是预注册 ``docs/prereg-substrate-spiking-v1.md`` 里的实验臂，S1–S3 判据未过之前
+        不应在任何生产路径里打开。
+
+        做法（跑之前写死的）：
+
+        1. 先拿线性响应 ``dense = respond(probe)``——脉冲臂与线性臂共享同一份输入，
+           差别只在读出；
+        2. 用一个**固定种子**的随机投影把 4096 维压到 ``neurons`` 维，作为输入电流；
+        3. 每个时间步推一次 :class:`~biosnn_bus.AdaptiveMembrane.forward`，累计发放数；
+        4. 每个模式按"它的投影码与发放率的内积"打分——与线性臂的
+           ``a_m · (W p)`` 同构，只是把 ``W p`` 换成了群体发放率。
+        """
+        from biosnn_bus import AdaptiveMembrane
+
+        self._check_probe(probe)
+        if self.n == 0:
+            return np.zeros(len(self.ids), dtype=np.float32)
+
+        linear = self.respond(probe)
+        rng = np.random.default_rng(seed)
+        projection = rng.normal(0.0, 1.0 / np.sqrt(self.width), size=(self.width, neurons))
+
+        membrane = AdaptiveMembrane(neurons)
+        current = projection.T @ linear
+        spikes = np.zeros(neurons, dtype=np.float64)
+        for _ in range(steps):
+            spikes += membrane.forward(current)
+
+        rates = spikes / steps
+        codes = projection[self.idx].sum(axis=1)  # (n, neurons)
+        return (codes @ rates).astype(np.float32)
+
+    def complete_spiking(
+        self, probe: SDR, *, top: int = 5, neurons: int = 512, steps: int = 10, seed: int = 0
+    ) -> list[tuple[str, float]]:
+        """:meth:`complete` 的脉冲版：同样的排序口径，分数来自群体发放率。"""
+        scores = self.respond_spiking(probe, neurons=neurons, steps=steps, seed=seed)
+        order = np.argsort(scores)[::-1][:top]
+        return [(self.ids[int(i)], float(scores[int(i)])) for i in order]
+
     def complete(self, probe: SDR, *, top: int = 5) -> list[tuple[str, float]]:
         """模式补全：哪几条记忆最能解释这个探针。按得分降序。
 
