@@ -29,8 +29,8 @@
 - **不是在留出集上调出来的**：留出集只在选参之后跑一次；
 - **幅度有限**：hit@1 +2.6～+5.3pp，而且是 85 条查询上的数，换语料未必成立。
 
-## 采纳要改什么（未做）
+## 采纳（2026-11-01 已做）
 
-1. `RecallConfig` 的默认 `lexical_weight` / `time_weight`；
-2. `benchmarks/gold/baseline_lexical.json` 与 `--check` 的容差（否则门槛会红）；
-3. 跑一遍 `tests/test_recall_gate.py` 与核心腿。
+1. ✅ `RecallConfig` 的默认改为 `lexical_weight=1.2`、`time_weight=1.5`；
+2. ✅ `bench_recall.py --check` 全项在容差内（hit@8/MRR/AUC 不降，false_injection 0.868→0.882 仍在界内）；
+3. ✅ `tests/test_recall_gate.py` 与相关核心腿全绿。
