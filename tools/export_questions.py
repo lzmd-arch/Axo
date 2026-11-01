@@ -1,6 +1,6 @@
 """从真实会话里抽出提问，生成一份**待标注**语料（只读会话，输出写仓外）。
 
-    python tools/export_questions.py --out D:/Projects/annotation_2026-11
+    python tools/export_questions.py --out ~/axo-annotation
     python tools/export_questions.py --dry-run          # 只统计，不写文件
 
 输出：`questions.jsonl`，每行 `{id, question, source_session, asked_at, label, note}`，
@@ -18,8 +18,9 @@ import json
 import random
 from pathlib import Path
 
-DEFAULT_SESSIONS = Path("D:/AxoData/sessions")
-DEFAULT_OUT = Path("D:/Projects/annotation_2026-11")
+#: 默认从 Axo 自己的数据根取会话目录（四档优先级由 :mod:`axo.paths` 决定）。
+DEFAULT_SESSIONS: Path | None = None
+DEFAULT_OUT = Path.home() / "axo-annotation"
 
 #: 太短或纯附和的不值得标：它们既没有“事实”，也谈不上“有没有支撑”。
 _TRIVIAL = {
@@ -118,7 +119,7 @@ def _stratified(turns: list[dict], limit: int, seed: int) -> list[dict]:
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sessions", type=Path, default=DEFAULT_SESSIONS)
+    parser.add_argument("--sessions", type=Path, default=None)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--limit", type=int, default=60)
     parser.add_argument("--seed", type=int, default=20261101)
@@ -126,6 +127,10 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--all", action="store_true", help="连不像提问的碎片一起取")
     args = parser.parse_args(argv)
 
+    if args.sessions is None:
+        from axo import paths  # noqa: PLC0415 - 只有真要读盘时才导入
+
+        args.sessions = paths.sessions_dir()
     if not args.sessions.is_dir():
         print(f"没有这个目录：{args.sessions}")
         return 2

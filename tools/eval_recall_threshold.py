@@ -1,6 +1,6 @@
 """在**标注语料**上复评召回门槛的两条判据（库用真实库的副本，只读源库）。
 
-    python tools/eval_recall_threshold.py --questions D:/Projects/annotation_2026-11/questions.jsonl
+    python tools/eval_recall_threshold.py --questions ~/axo-annotation/questions.jsonl
     python tools/eval_recall_threshold.py --questions … --corpus gold   # 先复现旧语料上的数
 
 判据（`docs/prereg-recall-threshold-v1.md`）：
@@ -32,7 +32,7 @@ def sha256(path: Path) -> str:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--questions", type=Path, required=True)
-    parser.add_argument("--db", type=Path, default=Path("D:/AxoData/memory/mem.db"))
+    parser.add_argument("--db", type=Path, default=Path.home() / ".axo" / "memory" / "mem.db")
     parser.add_argument("--limit", type=int, default=5, help="每次召回最多注入多少条")
     parser.add_argument("--json-out", type=Path, default=None)
     args = parser.parse_args(argv)
