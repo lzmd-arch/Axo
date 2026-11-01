@@ -100,6 +100,15 @@ def _resolve_embedder(args: argparse.Namespace):
     if args.no_semantic:
         return None
 
+    # 随包的 bge 中文模型走本地 ONNX，不经过 Ollama——这是"换嵌入模型"的对比入口。
+    local = getattr(args, "local_embed", None)
+    if local is not None:
+        from axo.llm.local_embed import LocalEmbeddingBackend
+
+        backend = LocalEmbeddingBackend(model_dir=local)
+        print(f"语义通道：{backend.space_id}（本地 ONNX，{backend.dim} 维）")
+        return backend
+
     from axo.llm.base import EmbeddingBackendError
     from axo.llm.ollama import (
         OllamaEmbeddingBackend,
@@ -372,6 +381,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     group.add_argument("--semantic", action="store_true", help="强制要求语义通道，连不上即失败")
     parser.add_argument("--model", default=DEFAULT_MODEL, help="嵌入模型名")
+    parser.add_argument(
+        "--local-embed",
+        type=Path,
+        default=None,
+        help="随包 bge 模型目录（本地 ONNX，不走 Ollama）",
+    )
     parser.add_argument("--host", default=DEFAULT_HOST, help="Ollama 地址")
     parser.add_argument("--corpus-dir", default="", help="金标准语料目录（默认自动定位）")
     parser.add_argument(
