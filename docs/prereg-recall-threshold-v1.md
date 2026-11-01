@@ -87,6 +87,20 @@ min_score 默认 0.20，来自 settings_store.DEFAULT_RECALL_MIN_SCORE
 闲聊轮带只读工具之后已经不是一回事）。可达性由 `tests/test_router.py` 的
 `test_empty_recall_refusal_is_reachable_through_the_router` 钉住。
 
+## 5.1 2026-11-01：词法/时间可靠度改了，门槛的口径跟着变（待重标）
+
+同一天调了 ``RecallConfig`` 的可靠度（词法 0.9 → 1.2、时间 1.0 → 1.5，依据
+``benchmarks/recall_tuning.md`` 的两向交叉验证）。融合分是**绝对**乘可靠度的，所以
+"同一个数"对原始 Jaccard 的严格度会变：
+
+- ``memcore.RecallConfig.min_score`` 从 0.10 重标为 **0.133**（0.139 × 1.2 × 0.8），
+  默认门槛维持原来的严格度；
+- **产品门槛 ``settings_store.DEFAULT_RECALL_MIN_SCORE`` 仍是 0.20，没有重标**。
+  按新可靠度它对应的原始 Jaccard 约 0.21（旧口径约 0.28），也就是**比第 1–3 节那组
+  判据通过时更松**。本文的 62→0、保留率、延迟三组数字因此**只对旧权重成立**；
+  重标要用真实库重跑 ``tools/calibrate_recall_threshold.py``，在那之前 0.20 是一个
+  "没跟着权重走"的旧数。
+
 ## 6. 限制
 
 - 正样本取记忆原文，**太干净**；真实会话里还没有"有记忆支撑 / 没有"的人工标注。
