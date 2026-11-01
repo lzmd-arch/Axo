@@ -37,6 +37,9 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--space", required=True)
     parser.add_argument("--model-dir", type=Path, required=True)
     parser.add_argument("--batch", type=int, default=32)
+    parser.add_argument(
+        "--missing-only", action="store_true", help="只补这个空间里还没有向量的条目"
+    )
     parser.add_argument("--i-mean-the-real-library", action="store_true")
     args = parser.parse_args(argv)
 
@@ -56,6 +59,9 @@ def main(argv: list[str]) -> int:
 
     backend = LocalEmbeddingBackend(model_dir=args.model_dir)
     items = list(store.iter_items())
+    if args.missing_only:
+        missing = set(store.missing_embedding_ids(args.space))
+        items = [item for item in items if item.memory_id in missing]
     done = 0
     for start in range(0, len(items), args.batch):
         chunk = items[start : start + args.batch]
