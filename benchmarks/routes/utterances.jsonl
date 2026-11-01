@@ -111,13 +111,13 @@
 {"id": "u-0111", "text": "帮我算一下从上次标定到现在过了多久，然后把结果记下来", "expect": "task", "category": "long_task"}
 {"id": "u-0112", "text": "读读 data.csv，顺便告诉我里面有多少行", "expect": "task", "category": "long_task"}
 {"id": "u-0113", "text": "谢谢你帮我查资料", "expect": "chat", "category": "hard", "note": "礼貌词包的过去时陈述：规则层**有把握地**判成 task。修它要动礼貌词与 task 词的优先级，而那个方向的代价更大（见 router.py 的 _COURTESY_PREFIXES）"}
-{"id": "u-0114", "text": "我们上次聊到哪儿了？", "expect": "task", "category": "hard", "note": "该走 search_memory，但形状是一句问号结尾的闲聊"}
-{"id": "u-0115", "text": "你还记得我上次说的那件事吗？", "expect": "task", "category": "hard", "note": "同上"}
+{"id": "u-0114", "text": "我们上次聊到哪儿了？", "expect": "chat", "category": "hard", "note": "2026-11-01 改标：问记忆属闲聊语域——闲聊轮本来就声明只读工具（含 search_memory），而召回为空时由主窗口直接说\"不确定\"；留在 task 会让那条诚实路径永远够不着"}
+{"id": "u-0115", "text": "你还记得我上次说的那件事吗？", "expect": "chat", "category": "hard", "note": "2026-11-01 改标：问记忆属闲聊语域——闲聊轮本来就声明只读工具（含 search_memory），而召回为空时由主窗口直接说\"不确定\"；留在 task 会让那条诚实路径永远够不着"}
 {"id": "u-0116", "text": "别忘了我说的", "expect": "task", "category": "hard", "note": "否定式里藏着一个正向请求：别忘 = 记住。表里只有「忘掉」"}
-{"id": "u-0117", "text": "回想一下我们第一次见面", "expect": "task", "category": "hard", "note": "祈使动词不在表里：加一个「回想一下」就能收"}
+{"id": "u-0117", "text": "回想一下我们第一次见面", "expect": "chat", "category": "hard", "note": "2026-11-01 改标：问记忆属闲聊语域——闲聊轮本来就声明只读工具（含 search_memory），而召回为空时由主窗口直接说\"不确定\"；留在 task 会让那条诚实路径永远够不着"}
 {"id": "u-0118", "text": "记录一下我今天的感受", "expect": "task", "category": "hard", "note": "同义动词不在表里：表里是「记一下」，这句是「记录一下」"}
 {"id": "u-0119", "text": "把昨天那段话再念一遍", "expect": "task", "category": "hard", "note": "表里是「念一下」，这句是「念一遍」"}
-{"id": "u-0120", "text": "我上次说想买的那本书叫什么", "expect": "task", "category": "hard", "note": "要查记忆，但连问号都没有"}
+{"id": "u-0120", "text": "我上次说想买的那本书叫什么", "expect": "chat", "category": "hard", "note": "2026-11-01 改标：问记忆属闲聊语域——闲聊轮本来就声明只读工具（含 search_memory），而召回为空时由主窗口直接说\"不确定\"；留在 task 会让那条诚实路径永远够不着"}
 {"id": "u-0121", "text": "别提醒我了", "expect": "task", "category": "reminder", "note": "与 u-0085「不用提醒我了」只差两个字而方向相反：那句是 negation（这一轮什么都不做），这句是要把那条撤掉（cancel_reminder）。表里「别提醒」写成整词是照「别忘」的手法——否定窗口只看标记**之前**那几个字，而这里的「别」在标记内部。"}
 {"id": "u-0122", "text": "把提醒取消掉", "expect": "task", "category": "reminder", "note": "「取消」不是表里的动词。不收这一族的话表里一个词都不命中 → 判不出来 → 那一轮不声明任何工具，而用户要的是把那条撤掉。"}
 {"id": "u-0123", "text": "我约了哪些提醒？", "expect": "task", "category": "reminder", "note": "问句形状，但答案不在对话里、也不在记忆库里，只能去那本账上查（list_reminders）。不收它就会被「句末问号 → 闲聊」整族吃掉——与 hard 那族（u-0114/u-0115）是同一个机制。"}

@@ -143,9 +143,13 @@ def test_not_memory_questions(text: str) -> None:
 
 
 def test_the_marker_table_is_shared_with_the_router() -> None:
-    """路由与界面读**同一张表**——两张表迟早一边改了另一边没改。"""
-    source = inspect.getsource(__import__("axo.agent.router", fromlist=["_TASK_MARKERS"]))
-    assert "*MEMORY_QUERY_MARKERS" in source
+    """路由与界面读**同一张表**——两张表迟早一边改了另一边没改。
+
+    2026-11-01 起路由不再把它拼进 ``_TASK_MARKERS``，而是由 ``rule_register`` 直接
+    调 ``is_memory_question``（同一个常量、同一个函数）；这一条跟着钉新的接线。
+    """
+    source = inspect.getsource(__import__("axo.agent.router", fromlist=["rule_register"]))
+    assert "is_memory_question(stripped)" in source
     assert set(MEMORY_QUERY_MARKERS) >= {"上次", "记忆里"}
 
 

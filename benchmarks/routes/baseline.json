@@ -4,7 +4,7 @@
     "schema_version": 1,
     "utterances": {
       "count": 133,
-      "sha256": "015865f9f986f65c590839bcfa88a9322d36ab513a27ccc99f0a3cfc4aae480a"
+      "sha256": "bd0f16466982d93b2776c4eada03549840906f3174d60893de770f300cd08171"
     }
   },
   "model": "",
@@ -15,11 +15,11 @@
     "accuracy": 0.9819819819819819,
     "accuracy_all": 0.9774436090225563,
     "task_recall": 1.0,
-    "task_precision": 0.9649122807017544,
-    "chat_recall": 0.9642857142857143,
+    "task_precision": 0.9622641509433962,
+    "chat_recall": 0.9666666666666667,
     "chat_precision": 1.0,
     "ambiguous_rate": 0.16541353383458646,
-    "majority_baseline": 0.5789473684210527
+    "majority_baseline": 0.6090225563909775
   },
   "per_category": {
     "ambiguous": {
@@ -129,6 +129,6 @@
     "task_recall": 0.02,
     "chat_recall": 0.02
   },
-  "frozen_at": "2026-10-13T19:00:23Z",
+  "frozen_at": "2026-11-01T14:57:39Z",
   "note": "这是**实测值，不是目标值**（先跑后填）。门槛 = 本文件的值 ± tolerance，方向见 axo.bench.routeeval.GATED（四项都是越大越好），容差的含义见那里的 DEFAULT_TOLERANCE（这份测量是确定性的，容差不是噪声，是「允许几条翻转而不惊动人」）。改语料要同时改 freeze.json 并重跑 --freeze。**门槛只绑规则层**：模型层要 Ollama，把门槛绑上去等于让装没装模型决定提交能不能过。"
 }

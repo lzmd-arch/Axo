@@ -49,6 +49,7 @@ from axo.agent.router import (
     classify_with_model,
     decide,
     decide_turn,
+    is_memory_question,
     parse_slash,
     route_turn,
     rule_register,
@@ -340,41 +341,64 @@ def test_rule_layer_decision_table(text: str, register: Register | None, confide
 @pytest.mark.parametrize(
     "text",
     [
-        # 用户**实际打过的**说法（2026-10-11 的实测现场）。"查看"/"看看"本身不在
-        # 表里（见 ``_TASK_MARKERS`` 上面那段"刻意不收"），所以兜住它们的是
-        # "说的是记忆这件事"。
+        # 用户**实际打过的**说法（2026-10-11 的实测现场）。
         "查看我的记忆",
         "看看我的记忆",
         "我的记忆里有什么？",
         "记忆里关于颜色的那条是什么",
         "记忆库里都有什么",
-        # 主力词：``上次``。它不是动词，收它是因为它指的是"这件事发生过，而记录
-        # 不在你眼前"——也就是"去查"。
+        # 主力词：``上次``。
         "我上次说想买什么",
         "我们上次聊到哪儿了？",
-        # 语料点名的同义动词缺口：表里原本只有 ``记一下``/``念一下``/``忘掉``。
-        "记录一下我今天的感受",
-        "把昨天那段话再念一遍",
-        "别忘了我说的",
+        # 既没有问号也没有动词的形状。
         "回想一下那次",
     ],
 )
-def test_the_memory_lookup_family_reaches_the_tools(text: str) -> None:
-    """查记忆的那一族必须判成 task，**哪怕它是问句**。
+def test_the_memory_lookup_family_is_a_conversation(text: str) -> None:
+    """问记忆 → **闲聊语域，且不是歧义轮**（2026-11-01 改的契约）。
 
-    这一族漏掉时很有欺骗性：句子没问题、词表也没坏，是**第 7 条**（句末问号 →
-    CHAT）抢在前面把整族吃掉了。而"查记忆"天然是问句（"我上次说想买什么？"），
-    所以这一族几乎是精确地踩在第 7 条上。
+    以前这一族必须判 task，理由写在 ``_TASK_MARKERS`` 的旧注释里：闲聊轮一个工具都
+    不声明，判成闲聊等于让模型说"这一轮没有工具"。2026-10-31 之后闲聊轮声明只读
+    工具，那条理由消失了；而留在 task 里有一个更贵的代价——
+    ``MainWindow._should_say_uncertain`` 只在**非任务、非歧义**的轮次触发，记忆问题
+    全被判成 task 时，"召回为空就直说没找到"这条路径永远够不着（它此前的测试用替身
+    窗口，绕过了路由，所以一直是绿的）。
 
-    后果不是"答得不好"而是"这一轮没有工具"：语域判成 CHAT → 那一轮**不声明任何
-    工具**（``agent/loop.py`` 的 ``offered = ()``）→ 模型只能照 ``session/
-    environment.py`` 补的那句事实说"这一轮没有工具可用"。用户看到的是模型在
-    推卸，实际是路由没给它工具。
-
-    所以这里的断言要点在**问号那两条**上：``我的记忆里有什么？`` 与 ``我们上次聊到
-    哪儿了？`` 判成 task 才是对的，而它们正是靠"标记在第 7 条之前命中"才对的。
+    置信度必须是非零的（``0.7``）：落回 ``None`` 会被标成歧义，而歧义轮同样不触发
+    那句话术——这是"改了表却还是够不着"的第二种坏法。
     """
+    assert rule_register(text) == (Register.CHAT, 0.7)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # 同义动词缺口：表里原本只有 ``记一下``/``念一下``/``忘掉``。
+        "记录一下我今天的感受",
+        "把昨天那段话再念一遍",
+        "别忘了我说的",
+    ],
+)
+def test_the_memory_write_family_is_still_a_task(text: str) -> None:
+    """往库里写仍是任务：那是动作，要有写作工具与确认闸门兜着。"""
     assert rule_register(text) == (Register.TASK, 0.85)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["我上次说的那个项目怎么样了", "我的记忆里有什么？", "回想一下上次吃饭"],
+)
+def test_empty_recall_refusal_is_reachable_through_the_router(text: str) -> None:
+    """``_should_say_uncertain`` 的三条判据要能**同时成立**——这是它的可达性守卫。
+
+    只钉 ``is_memory_question`` 与替身窗口里的触发条件是不够的：那些测试绕过了路由，
+    于是"记忆标记同时是任务标记 ⇒ 永远是任务轮"这种接线断了也照样全绿。这里用真实
+    路由走一遍。
+    """
+    routed = route_turn(text, RegisterState())
+    assert is_memory_question(text) is True
+    assert routed.uses_tools is False
+    assert routed.wants_clarification is False
 
 
 def test_别忘_is_not_read_back_as_a_negation() -> None:
