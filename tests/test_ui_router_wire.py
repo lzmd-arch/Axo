@@ -34,15 +34,16 @@ import pytest
 
 from axo.agent.router import Register, RegisterState, RouteSource
 from axo.ui.main_window import MainWindow
+from axo.ui.settings_store import ROUTING_AUTO, ROUTING_CHAT, ROUTING_TASK
 
 pytestmark = pytest.mark.gui
 
 _SOURCE = Path(__file__).resolve().parent.parent / "src/axo/ui/main_window.py"
 
 
-def _router() -> SimpleNamespace:
-    """一个只带路由状态的假 ``self``。"""
-    return SimpleNamespace(_router_state=RegisterState())
+def _router(routing_mode: str = ROUTING_AUTO) -> SimpleNamespace:
+    """一个只带路由状态与语域设置的假 ``self``。"""
+    return SimpleNamespace(_router_state=RegisterState(), _routing_mode=routing_mode)
 
 
 def _route(window: SimpleNamespace, text: str):
@@ -203,3 +204,41 @@ def test_on_submit_actually_consumes_the_routing_verdict() -> None:
     }
     for field in ("_turn_register", "_turn_uses_tools", "_turn_needs_clarification"):
         assert field in assigned, f"_on_submit 没有把 {field} 存下来"
+
+
+# ── 4. 钉住的语域：设置里说了算，但斜杠更近 ─────────────────────────────────
+
+
+def test_a_pinned_task_gives_tools_even_to_chitchat() -> None:
+    """「始终任务」把语域钉住：每一轮都是任务，工具表一样。
+
+    钉住是给"自动切换看起来不可预期"准备的出口——用户不想再猜"这一轮她会不会
+    动手"时，行为要完全确定。
+    """
+    routed = _route(_router(ROUTING_TASK), "今天天气不错")
+    assert routed.register is Register.TASK
+    assert routed.uses_tools is True
+    assert routed.decision.source is RouteSource.SETTING, "要说清是设置定的，不是规则层判的"
+
+
+def test_a_pinned_chat_takes_tools_away_from_a_task_sentence() -> None:
+    routed = _route(_router(ROUTING_CHAT), "帮我查一下笔记")
+    assert routed.register is Register.CHAT
+    assert routed.uses_tools is False
+    assert routed.decision.source is RouteSource.SETTING
+
+
+def test_a_slash_still_beats_the_pin() -> None:
+    """显式指定比设置更近：钉住任务时 ``/chat`` 仍然只给这一轮闲聊。"""
+    routed = _route(_router(ROUTING_TASK), "/chat 帮我查一下笔记")
+    assert routed.register is Register.CHAT
+    assert routed.uses_tools is False
+    assert routed.decision.source is RouteSource.SLASH
+
+
+def test_pinning_task_clears_ambiguity() -> None:
+    """钉住的意思是"用户已经决定了"——还标歧义的话，``uses_tools`` 会继续为假，
+    钉住「始终任务」等于没钉。"""
+    routed = _route(_router(ROUTING_TASK), "思考哥德巴赫猜想")
+    assert routed.uses_tools is True
+    assert routed.wants_clarification is False

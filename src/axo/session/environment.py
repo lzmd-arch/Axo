@@ -49,6 +49,7 @@ def build_environment(
     call_mode: bool = False,
     pending_alerts: Sequence[str] = (),
     workspace: str = "",
+    register: str = "",
 ) -> str:
     """拼 L1 的正文。
 
@@ -72,6 +73,12 @@ def build_environment(
         workspace: 本轮工作区上下文（仓库/分支/最近提交/AGENTS 摘要）。空串 = 不注入；
             由 :func:`axo.agent.workspace.build_workspace_context` 生成。**它是事实，不是
             指令**；指令仍只在 L0。
+        register: 这一轮的语域，``"task"`` / ``"chat"`` / 空串。
+            **空串 = 不表态**（老调用方与既有测试的输出逐字节不变）。非空时补一句
+            "这一轮按任务/闲聊处理"——模型读不到"自己没收到什么"，而任务轮与闲聊轮
+            的**区别只在工具表里有什么**：同一条写着"帮我查一下"的消息，两轮收到的
+            指令文本一模一样，不动工具的那一轮看起来就像她不肯动手。
+            歧义轮不写这一句（``needs_clarification`` 那一段已经说了）。
 
     Returns:
         两三行文本。**空输入给空串**（没给模型标识也照样给时间）。
@@ -93,6 +100,13 @@ def build_environment(
         lines.append(f"你此刻由 {model_id} 驱动；记忆不属于你，属于这台机器。")
     if workspace:
         lines.append(workspace.rstrip())
+    if register and tools_declared and not needs_clarification:
+        # 一句**事实**，与"这一轮没有工具"同族。任务轮与闲聊轮的差别只在工具表里
+        # 有什么，而模型看不见自己的工具表**缺**了哪些——所以要说出来。
+        if register == "task":
+            lines.append("这一轮按**任务**处理：工具已经声明，需要改状态的动作会先请用户确认。")
+        else:
+            lines.append("这一轮按**闲聊**处理：只声明了只读工具，改状态的动作这一轮没有。")
     if needs_clarification:
         if tools_declared:
             # 只读工具在手时，"没判准"不等于"不能查"：查新闻/天气不改变任何状态。

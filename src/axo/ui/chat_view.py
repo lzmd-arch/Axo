@@ -617,6 +617,15 @@ class ChatView(QWidget):
     def set_status(self, text: str) -> None:
         self._call("setStatus", text)
 
+    def set_register(self, register: str, *, pinned: bool = False) -> None:
+        """顶栏那枚小标签：**这一轮按任务还是闲聊处理**。
+
+        ``register`` 是 ``"task"`` / ``"chat"``，空串 = 隐藏。``pinned`` 说明这是设置里
+        钉住的、不是路由判的——两者在界面上要分得开：一个是"这一轮看起来像什么"，
+        另一个是"我把它钉死了"。短语与配色由网页那边写（见 ``web/js/app.js``）。
+        """
+        self._call("setRegister", register, bool(pinned))
+
     def append_job_log(self, job_id: str, text: str) -> None:
         """后台作业的增量日志。**只显示，不写逐字稿、不进模型上下文。**"""
         if job_id and text:

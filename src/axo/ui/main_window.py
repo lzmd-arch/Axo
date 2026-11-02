@@ -109,8 +109,10 @@ from ..agent.router import (
     Register,
     RegisterState,
     RoutedTurn,
+    RouteSource,
     SlashCommand,
     is_memory_question,
+    pinned_decision,
     route_turn,
 )
 from ..agent.runlog import RunLog
@@ -233,6 +235,9 @@ from .screen import own_window_rects
 from .settings_dialog import SettingsDialog
 from .settings_store import (
     PROVIDER_OLLAMA,
+    ROUTING_AUTO,
+    ROUTING_MODES,
+    ROUTING_TASK,
     BackendSettings,
     MemorySettings,
     MusicSettings,
@@ -720,6 +725,13 @@ class MainWindow(QMainWindow):
         self._web_require_approval: bool = self._tool_settings.web_require_approval
         self._allow_commands: bool = self._tool_settings.allow_commands
         self._weather_enabled: bool = self._tool_settings.weather_enabled
+        #: 钉住的语域（``auto`` / ``chat`` / ``task``）。``auto`` = 每轮按那句话判；
+        #: 另两档压过规则层、压不过斜杠。见 :func:`~axo.agent.router.pinned_decision`。
+        self._routing_mode: str = (
+            self._tool_settings.routing_mode
+            if self._tool_settings.routing_mode in ROUTING_MODES
+            else ROUTING_AUTO
+        )
         #: 用不用**任务记忆**（:class:`~axo.memory.policy.TaskPolicy`）。
         #: 默认关，存在 ``QSettings`` 的 ``memory/*`` 里，由设置窗口的「记忆」页改。
         self._task_memory: bool = self._settings_store.load_memory().task_memory
@@ -1619,6 +1631,7 @@ class MainWindow(QMainWindow):
         self.chat_view.clear()
         self.session_list.setCurrentItem(None)
         self.chat_view.set_status("新会话")
+        self.chat_view.set_register("")
         self._clear_round_state()
         self._push_context_to_memory_window()
 
@@ -1641,6 +1654,7 @@ class MainWindow(QMainWindow):
         self._test_session = TestSession(self._test_session_path())
         self.chat_view.load_history(rows)
         self.chat_view.set_status(f"已载入会话 {session_id}")
+        self.chat_view.set_register("")
         # 记忆窗口要按会话区分一条早退路径：属于当前会话的记忆会被召回当作"逐字稿
         # 里已经有的内容"排除。推晚了的话，它给的解释指向**上一个**会话。
         self._push_context_to_memory_window()
@@ -2109,8 +2123,15 @@ class MainWindow(QMainWindow):
 
         ``self._router_state`` **会被就地修改**（迟滞就是靠它跨轮记事的），所以整个
         窗口只有这一处调路由——多一个调用点就多一个"状态被推着走"的地方。
+
+        **设置里钉住的语域在这里套上去**（:func:`~axo.agent.router.pinned_decision`）：
+        它压过规则层，但压不过斜杠——用户当场打的 ``/chat`` 比一页设置更近。
         """
-        return route_turn(text, self._router_state)
+        routed = route_turn(text, self._router_state)
+        if self._routing_mode == ROUTING_AUTO:
+            return routed
+        pinned = Register.TASK if self._routing_mode == ROUTING_TASK else Register.CHAT
+        return replace(routed, decision=pinned_decision(routed.decision, pinned))
 
     def _run_direct_web(self, parsed: Any) -> None:
         """L1：用户显式触发的联网读。**不经过模型判断，也不发请求。**
@@ -2237,6 +2258,7 @@ class MainWindow(QMainWindow):
             self.chat_view.append_message(
                 "system", f"已切到{'任务' if parsed.forced is Register.TASK else '闲聊'}语域。"
             )
+            self.chat_view.set_register(parsed.forced.value)
             return
         if parsed.is_direct_web:
             self._run_direct_web(parsed)
@@ -2246,6 +2268,12 @@ class MainWindow(QMainWindow):
         self._turn_register = routed.register
         self._turn_uses_tools = routed.uses_tools
         self._turn_needs_clarification = routed.wants_clarification
+        # 顶栏那枚小标签：**这一轮按什么处理**。钉住的与判出来的分开显示——用户
+        # 要能一眼看出"是她判错了"还是"是我钉住了"。
+        self.chat_view.set_register(
+            self._turn_register.value,
+            pinned=routed.decision.source is RouteSource.SETTING,
+        )
         text = parsed.text
         if not text:
             return
@@ -2331,6 +2359,7 @@ class MainWindow(QMainWindow):
                 call_mode=bool(getattr(self, "_call", None) and self._call.live),
                 pending_alerts=tuple(getattr(self, "_call_pending_alerts", ())),
                 workspace=self._workspace_context() if self._turn_uses_tools else "",
+                register=self._turn_register.value,
             ),
             embedding=self._embedding,
             session_id=self._session.session_id,
@@ -4901,6 +4930,7 @@ class MainWindow(QMainWindow):
                 dialog.theme_changed.connect(self._on_theme_changed)
                 dialog.backend_changed.connect(self._on_backend_changed)
                 dialog.tools_changed.connect(self._on_tools_changed)
+                dialog.routing_changed.connect(self._on_routing_changed)
                 dialog.vision_changed.connect(self._on_cloud_vision_changed)
                 dialog.audio_changed.connect(self._on_cloud_audio_changed)
                 dialog.web_changed.connect(self._on_web_changed)
@@ -5071,7 +5101,21 @@ class MainWindow(QMainWindow):
             web_require_approval=bool(getattr(self, "_web_require_approval", False)),
             cloud_vision=self._cloud_vision,
             audio_in=self._audio_in,
+            routing_mode=getattr(self, "_routing_mode", ROUTING_AUTO),
         )
+
+    @Slot(str)
+    def _on_routing_changed(self, mode: str) -> None:
+        """设置里把语域钉住了（或改回自动）。**下一轮就生效**——每轮现读这一位。
+
+        **同时把迟滞状态清空。** 钉住期间规则层仍在推进那个状态机（它不知道设置里
+        说了什么），所以解除钉住时可能带着一段过期的"当前是任务"——用户会看到
+        改回自动之后的第一轮莫名其妙还是任务。清空等于从「闲聊」重新开始，而
+        "进任务立即生效"保证第一句任务不会因为清空而丢工具。
+        """
+        self._routing_mode = mode if mode in ROUTING_MODES else ROUTING_AUTO
+        self._router_state = RegisterState()
+        self._settings_store.save_tools(self._current_tool_settings())
 
     @Slot(bool)
     def _on_cloud_vision_changed(self, flag: bool) -> None:

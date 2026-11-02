@@ -71,6 +71,9 @@ class RecordingChatView(QWidget):
     def set_status(self, text: str) -> None:
         self.calls.append("setStatus")
 
+    def set_register(self, register: str, *, pinned: bool = False) -> None:
+        self.calls.append(f"setRegister({register}{',pinned' if pinned else ''})")
+
     def set_voice_state(self, state: str) -> None:
         self.calls.append(f"setVoiceState({state})")
 

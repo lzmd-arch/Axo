@@ -417,6 +417,38 @@ body.has-wallpaper #scrim {
   overflow-wrap: anywhere;
 }
 
+/* 顶栏那枚语域小标签。**任务 / 闲聊**是两种语域的视觉标识，不是状态文字的一部分：
+   状态说的是"正在做什么"（检索、生成、已连接），这一枚说的是"这一轮按什么处理"。 */
+.register-chip {
+  flex: 0 0 auto;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  color: var(--fg-muted);
+}
+
+.register-chip.register-task {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent);
+}
+
+.register-chip.register-chat {
+  border-color: var(--border);
+  color: var(--fg-muted);
+}
+
+/* 钉住的语域用实心底，与"自动判出来的"一眼分得开。 */
+.register-chip.register-pinned {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.register-chip[hidden] {
+  display: none;
+}
+
 /* 逐文件勾选。默认全选；一个都不选时 JS 会禁用「允许所选」。 */
 .tool-files {
   display: flex;

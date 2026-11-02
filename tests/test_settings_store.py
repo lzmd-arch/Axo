@@ -27,6 +27,9 @@ from axo.ui.settings_store import (
     PROVIDER_BUILTIN,
     PROVIDER_CLOUD,
     PROVIDER_OLLAMA,
+    ROUTING_AUTO,
+    ROUTING_CHAT,
+    ROUTING_TASK,
     BackendSettings,
     MemorySettings,
     ProactiveSettings,
@@ -410,6 +413,40 @@ def test_cloud_vision_roundtrip() -> None:
             SettingsStore(FakeBackend({"tools/cloud_vision": stored})).load_tools().cloud_vision
             is False
         ), f"{stored!r} 被读成了真值"
+
+
+def test_routing_mode_defaults_to_auto() -> None:
+    """默认自动：每一轮按那句话判。钉住是用户显式要的出口，不是出厂姿态。"""
+    assert SettingsStore(FakeBackend()).load_tools().routing_mode == ROUTING_AUTO
+
+
+def test_routing_mode_roundtrip() -> None:
+    store = SettingsStore(FakeBackend())
+    store.save_tools(ToolSettings(routing_mode=ROUTING_TASK))
+    assert store.load_tools().routing_mode == ROUTING_TASK
+    store.save_tools(ToolSettings(routing_mode=ROUTING_CHAT))
+    assert store.load_tools().routing_mode == ROUTING_CHAT
+
+
+def test_routing_mode_is_case_insensitive() -> None:
+    """注册表里手写的 ``"TASK"`` 不该把设置整格作废——大小写不是选择，是写法。"""
+    settings = SettingsStore(FakeBackend({"tools/routing_mode": "TASK"})).load_tools()
+    assert settings.routing_mode == ROUTING_TASK
+
+
+@pytest.mark.parametrize("stored", ["", "nonsense", 3])
+def test_an_unknown_routing_mode_falls_back_to_auto(stored: object) -> None:
+    """不认识的值意味着设置是更新的版本写的。**回落自动**而不抛：钉错方向会让
+    另一侧的语域整段消失，而自动最多是"没有按你想要的切"。"""
+    settings = SettingsStore(FakeBackend({"tools/routing_mode": stored})).load_tools()
+    assert settings.routing_mode == ROUTING_AUTO
+
+
+def test_saving_an_unknown_routing_mode_writes_auto() -> None:
+    """写的一侧也过一遍：手改出来的坏值不该被原样保存回去。"""
+    backend = FakeBackend()
+    SettingsStore(backend).save_tools(ToolSettings(routing_mode="nonsense"))
+    assert backend.data["tools/routing_mode"] == ROUTING_AUTO
 
 
 def test_speech_settings_defaults_are_the_product_stance() -> None:

@@ -216,3 +216,44 @@ def test_workspace_context_is_in_environment_only_when_given() -> None:
     assert "工作区：" not in base
     assert "工作区：D:/repo" in with_ws and "git：main，干净" in with_ws
     assert with_ws.startswith(base.splitlines()[0])
+
+
+# ── 语域：这一轮按任务还是闲聊处理 ──────────────────────────────────────────
+
+
+def test_a_task_turn_says_so_out_loud() -> None:
+    """任务轮与闲聊轮的区别**只在工具表里有什么**——模型看不见自己缺了哪些工具。
+
+    同一条"帮我查一下"的消息，两轮收到的指令文本一模一样；不说的话，不动工具的那
+    一轮看起来就像她不肯动手（与"这一轮没有工具"那句同一个理由）。
+    """
+    text = build_environment(register="task")
+    assert "这一轮按**任务**处理" in text
+    assert "闲聊" not in text
+
+
+def test_a_chat_turn_says_what_it_does_not_have() -> None:
+    text = build_environment(register="chat")
+    assert "这一轮按**闲聊**处理" in text
+    assert "只读工具" in text
+    assert "改状态的动作这一轮没有" in text
+
+
+def test_no_register_means_no_line() -> None:
+    """默认空串 = 不表态。老调用方与既有测试的输出逐字节不变。"""
+    assert "语域" not in build_environment()
+    assert "这一轮按" not in build_environment()
+
+
+def test_the_register_line_needs_tools_to_be_declared() -> None:
+    """没有工具时不重复说——"这一轮没有工具可用"那句已经说清了。"""
+    text = build_environment(register="chat", tools_declared=False)
+    assert "这一轮按**闲聊**处理" not in text
+    assert "这一轮没有工具可用" in text
+
+
+def test_an_ambiguous_turn_does_not_also_claim_a_register() -> None:
+    """歧义轮只请她反问，不替她决定这一轮按什么处理。"""
+    text = build_environment(register="chat", needs_clarification=True)
+    assert "这一轮按**闲聊**处理" not in text
+    assert "先反问一句确认" in text

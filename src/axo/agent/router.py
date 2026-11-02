@@ -94,6 +94,7 @@ __all__ = [
     "decide",
     "decide_turn",
     "parse_slash",
+    "pinned_decision",
     "route_turn",
     "rule_register",
 ]
@@ -745,6 +746,13 @@ class RouteSource(str, Enum):
     DEFAULT = "default"
     """一条都没命中，退回 :attr:`Register.CHAT` 并标歧义。"""
 
+    SETTING = "setting"
+    """用户在设置里**钉住**了语域（"始终任务 / 始终闲聊"），这一轮按它走。
+
+    与 :attr:`SLASH` 的区别：斜杠是**这一轮**的显式指定，压过钉住；钉住反过来只
+    压过规则层。两者都不是"猜"，所以都不进迟滞。
+    """
+
     def __str__(self) -> str:
         return self.value
 
@@ -890,6 +898,26 @@ def decide(
         source=RouteSource.DEFAULT,
         confidence=confidence,
         ambiguous=True,
+    )
+
+
+def pinned_decision(decision: RouteDecision, register: Register) -> RouteDecision:
+    """把设置里钉住的语域套到一次路由结论上。**斜杠优先。**
+
+    ``ambiguous`` 一并清掉：钉住的意思是"用户已经决定了"——还标歧义的话，
+    :attr:`RoutedTurn.uses_tools` 会继续为假，钉住「始终任务」等于没钉。
+    而歧义只影响"要不要工具"与"要不要反问"，不影响语域本身，所以清掉它不会让
+    别的判断跟着变。
+    """
+    if decision.source is RouteSource.SLASH:
+        return decision
+    if decision.register is register and not decision.ambiguous:
+        return decision
+    return replace(
+        decision,
+        register=register,
+        source=RouteSource.SETTING,
+        ambiguous=False,
     )
 
 

@@ -61,6 +61,9 @@ from axo.ui.settings_store import (
     DEFAULT_HOST,
     PROVIDER_CLOUD,
     PROVIDER_OLLAMA,
+    ROUTING_AUTO,
+    ROUTING_CHAT,
+    ROUTING_TASK,
     BackendSettings,
     MemorySettings,
     MusicSettings,
@@ -2116,3 +2119,37 @@ def test_the_music_page_clears_the_root(qapp: Any, tmp_path: Path) -> None:
     page._on_clear()
     assert page.settings().library_root is None
     assert seen and seen[-1].library_root is None
+
+
+# ── 工具页：钉住的语域 ──────────────────────────────────────────────────────
+
+
+def test_the_routing_combo_states_the_current_mode_and_reports_changes() -> None:
+    """语域那一格与"可读目录"同一页、同一套"改了立刻出去"的形状。
+
+    它存在的理由是让语域**可见可预期**：顶栏那枚标签说的是"这一轮实际是什么"，
+    而这一格说的是"是你钉的还是她判的"。
+    """
+    page = ToolPage()
+    page.set_state(ToolSettings(routing_mode=ROUTING_TASK))
+    assert page.routing_mode() == ROUTING_TASK
+
+    seen: list[str] = []
+    page.routing_changed.connect(seen.append)
+    index = page.routing_combo.findData(ROUTING_CHAT)
+    page.routing_combo.setCurrentIndex(index)
+    assert seen == [ROUTING_CHAT]
+
+
+def test_revert_puts_the_routing_combo_back() -> None:
+    """「撤销修改」要连这一格一起回——只回一半的话，用户按了撤销却看到它还亮着。"""
+    page = ToolPage()
+    page.set_state(ToolSettings(routing_mode=ROUTING_AUTO))
+    seen: list[str] = []
+    page.routing_changed.connect(seen.append)
+
+    page.routing_combo.setCurrentIndex(page.routing_combo.findData(ROUTING_TASK))
+    page.revert()
+
+    assert page.routing_mode() == ROUTING_AUTO
+    assert seen == [ROUTING_TASK, ROUTING_AUTO]

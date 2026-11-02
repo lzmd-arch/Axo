@@ -81,6 +81,10 @@ from .settings_store import (
     PROVIDER_BUILTIN,
     PROVIDER_CLOUD,
     PROVIDER_OLLAMA,
+    ROUTING_AUTO,
+    ROUTING_CHAT,
+    ROUTING_MODES,
+    ROUTING_TASK,
     BackendSettings,
     MemorySettings,
     MusicSettings,
@@ -1027,6 +1031,8 @@ class ToolPage(QWidget):
     web_approval_changed = Signal(bool)
     weather_changed = Signal(bool)
     commands_changed = Signal(bool)
+    routing_changed = Signal(str)
+    """语域钉住的方式变了（``auto`` / ``chat`` / ``task``）。"""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1044,6 +1050,37 @@ class ToolPage(QWidget):
         self._web_approval_snapshot = False
         self._weather_snapshot = True
         self._commands_snapshot = False
+        self._routing_snapshot = ROUTING_AUTO
+
+        # ── 语域 ────────────────────────────────────────────────────────────
+        #
+        # **放在最上面**：它是"这一页其余开关会不会出现"的上一层——钉住闲聊时，
+        # 下面那些写目录、跑命令的开关仍然要配置，但这一轮根本不会声明那些工具。
+        # 用户先看到"现在是自动还是钉住"，再往下读权限，顺序才对。
+        outer.addWidget(_section("语域"))
+        routing_row = QHBoxLayout()
+        routing_row.setSpacing(8)
+        routing_row.addWidget(QLabel("这一轮按", self))
+        self.routing_combo = QComboBox(self)
+        self.routing_combo.setObjectName("routingMode")
+        for value, text in (
+            (ROUTING_AUTO, "自动（按你说的那句话判）"),
+            (ROUTING_CHAT, "始终闲聊（只有只读工具）"),
+            (ROUTING_TASK, "始终任务（每轮都给全量工具）"),
+        ):
+            self.routing_combo.addItem(text, value)
+        self.routing_combo.currentIndexChanged.connect(self._on_routing_changed)
+        routing_row.addWidget(self.routing_combo, 1)
+        outer.addLayout(routing_row)
+        outer.addWidget(
+            _hint(
+                "自动时每一轮按你说的这句话判：像「帮我查一下」就是任务，像「今天有点累」就是闲聊；"
+                "刚做完一件事时，下一两句会先沿用任务语域（迟滞），这是为了让做到一半的事"
+                "不会因为一句「好的」而丢掉工具。钉住之后不再变，代价是另一侧的语域不再出现。"
+                "窗口顶栏那枚小标签一直写着这一轮实际是什么。"
+                "斜杠命令 /task、/chat 仍然临时覆盖这一格。"
+            )
+        )
 
         outer.addWidget(_section("可读目录"))
 
@@ -1214,6 +1251,13 @@ class ToolPage(QWidget):
         blocked = self.audio_box.blockSignals(True)
         self.audio_box.setChecked(settings.audio_in)
         self.audio_box.blockSignals(blocked)
+        self._routing_snapshot = (
+            settings.routing_mode if settings.routing_mode in ROUTING_MODES else ROUTING_AUTO
+        )
+        blocked = self.routing_combo.blockSignals(True)
+        index = self.routing_combo.findData(self._routing_snapshot)
+        self.routing_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.routing_combo.blockSignals(blocked)
         for box, value, name in (
             (self.web_box, settings.web_enabled, "_web_snapshot"),
             (self.web_approval_box, settings.web_require_approval, "_web_approval_snapshot"),
@@ -1248,6 +1292,14 @@ class ToolPage(QWidget):
 
     def allow_commands(self) -> bool:
         return self.commands_box.isChecked()
+
+    def routing_mode(self) -> str:
+        """钉住的语域：``auto`` / ``chat`` / ``task``。"""
+        value = str(self.routing_combo.currentData() or ROUTING_AUTO)
+        return value if value in ROUTING_MODES else ROUTING_AUTO
+
+    def _on_routing_changed(self, _index: int) -> None:
+        self.routing_changed.emit(self.routing_mode())
 
     def _on_web_toggled(self, checked: bool) -> None:
         self.web_changed.emit(bool(checked))
@@ -1295,6 +1347,12 @@ class ToolPage(QWidget):
             self.audio_box.setChecked(self._audio_snapshot)
             self.audio_box.blockSignals(blocked)
             self.audio_changed.emit(self._audio_snapshot)
+        if self.routing_mode() != self._routing_snapshot:
+            blocked = self.routing_combo.blockSignals(True)
+            index = self.routing_combo.findData(self._routing_snapshot)
+            self.routing_combo.setCurrentIndex(index if index >= 0 else 0)
+            self.routing_combo.blockSignals(blocked)
+            self.routing_changed.emit(self._routing_snapshot)
         for box, value, signal, _name in (
             (self.web_box, self._web_snapshot, self.web_changed, "_web_snapshot"),
             (
@@ -2671,6 +2729,7 @@ class SettingsDialog(QDialog):
     weather_changed = Signal(bool)
     commands_changed = Signal(bool)
     vision_changed = Signal(bool)
+    routing_changed = Signal(str)
     voice_changed = Signal(object)
     music_changed = Signal(object)
     sync_changed = Signal(object)
@@ -2836,6 +2895,7 @@ class SettingsDialog(QDialog):
         self.tools.commands_changed.connect(self.commands_changed)
         self.tools.vision_changed.connect(self.vision_changed)
         self.tools.audio_changed.connect(self.audio_changed)
+        self.tools.routing_changed.connect(self.routing_changed)
         self.speech.changed.connect(self.voice_changed)
         self.speech.set_state(voice if voice is not None else SpeechSettings())
         self.music.changed.connect(self.music_changed)

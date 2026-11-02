@@ -40,6 +40,10 @@ from .theme import (
 
 __all__ = [
     "BackendSettings",
+    "ROUTING_AUTO",
+    "ROUTING_CHAT",
+    "ROUTING_MODES",
+    "ROUTING_TASK",
     "MemorySettings",
     "MusicSettings",
     "ProactiveSettings",
@@ -86,6 +90,7 @@ _K_LOCAL_CONTEXT = "backend/local_context"
 _K_READ_ROOTS = "tools/read_roots"
 _K_CLOUD_VISION = "tools/cloud_vision"
 _K_AUDIO_IN = "tools/audio_in"
+_K_ROUTING_MODE = "tools/routing_mode"
 
 _K_WRITE_ROOTS = "tools/write_roots"
 _K_WEB_ENABLED = "tools/web_enabled"
@@ -315,6 +320,18 @@ class BackendSettings:
         return self.provider == PROVIDER_BUILTIN
 
 
+#: 语域自动切换。**默认**——每一轮按这句话自己判。
+ROUTING_AUTO = "auto"
+#: 始终闲聊：只声明只读工具，改状态的动作永远不出现。
+ROUTING_CHAT = "chat"
+#: 始终任务：每轮都声明全量工具。
+ROUTING_TASK = "task"
+ROUTING_MODES = (ROUTING_AUTO, ROUTING_CHAT, ROUTING_TASK)
+"""钉住语域的三种取值。**存在是为了"让语域可见"这件事真的可解释**：自动切换在
+少数场合（尤其迟滞）会让用户觉得"她刚才明明能干活，怎么又不干了"。钉住之后行为
+完全可预期，代价是另一侧的语域永远不出现。"""
+
+
 @dataclass(frozen=True)
 class ToolSettings:
     """工具设置。P3a 只有一项。
@@ -360,6 +377,15 @@ class ToolSettings:
     """每次联网都确认一次（给在意隐私的人）。默认关，只保留总开关。"""
     cloud_vision: bool = False
     audio_in: bool = False
+    routing_mode: str = ROUTING_AUTO
+    """语域：``auto`` / ``chat`` / ``task``。
+
+        ``auto`` 是默认：每一轮按用户这句话判（规则层），跨轮带迟滞。另外两档把
+        语域**钉住**——用户明确要求"有时候她刚才还能干活，怎么又不动了"不再发生，
+        代价是另一侧的语域在这一档里永远不出现。
+
+        斜杠命令（``/task`` / ``/chat``）仍然临时覆盖它：显式指定比设置更近。
+        """
     """**当前模型听得见原声吗**——由用户声明，与 :attr:`cloud_vision` 同一族。
 
         本机 Ollama 恒为假（协议不收音频，实测）；OpenAI 兼容那条路问不到能力，
@@ -760,6 +786,7 @@ class SettingsStore:
             web_require_approval=_as_bool(self._backend.value(_K_WEB_REQUIRE_APPROVAL, False)),
             cloud_vision=_as_bool(self._backend.value(_K_CLOUD_VISION, False)),
             audio_in=_as_bool(self._backend.value(_K_AUDIO_IN, False)),
+            routing_mode=_as_routing_mode(self._backend.value(_K_ROUTING_MODE, ROUTING_AUTO)),
         )
 
     def save_tools(self, settings: ToolSettings) -> None:
@@ -773,6 +800,7 @@ class SettingsStore:
         self._backend.setValue(_K_WEB_REQUIRE_APPROVAL, settings.web_require_approval)
         self._backend.setValue(_K_CLOUD_VISION, settings.cloud_vision)
         self._backend.setValue(_K_AUDIO_IN, settings.audio_in)
+        self._backend.setValue(_K_ROUTING_MODE, _as_routing_mode(settings.routing_mode))
 
     # ── 语音输出（她开口） ──────────────────────────────────────────────────
 
@@ -1018,6 +1046,16 @@ class SettingsStore:
         """取一个字符串键。非字符串一律当空——注册表里可能存着别的东西。"""
         value = self._backend.value(key, "")
         return value if isinstance(value, str) else ""
+
+
+def _as_routing_mode(value: object) -> str:
+    """读到不认识的值一律回落 ``auto``。
+
+    与 ``provider`` 那条同一个理由：不认识的值意味着设置是在更新的版本里写的。
+    两种猜法都是猜错，但"回落自动"是那个**不减少功能**的错法——钉错方向会让另一侧
+    的语域整段消失，而自动最多是"没有按你想要的切"。"""
+    text = str(value or "").strip().lower()
+    return text if text in ROUTING_MODES else ROUTING_AUTO
 
 
 def _as_bool(value: object, default: bool = False) -> bool:

@@ -27,6 +27,7 @@ from PySide6.QtWidgets import QApplication
 from axo.ui import main_window as main_window_module
 from axo.ui.main_window import MainWindow
 from axo.ui.settings_store import (
+    ROUTING_AUTO,
     BackendSettings,
     MusicSettings,
     ProactiveSettings,
@@ -75,6 +76,8 @@ def _window() -> SimpleNamespace:
         _web_require_approval=False,
         _weather_enabled=True,
         _allow_commands=False,
+        # 语域：自动（设置页新增的"钉住"那一格）。
+        _routing_mode=ROUTING_AUTO,
         _voice_settings=SpeechSettings(),
         _music_settings=MusicSettings(),
         # 记忆页那一份：**任务记忆关着**，与一个刚装好的终端一模一样。
@@ -104,6 +107,7 @@ def _window() -> SimpleNamespace:
         _on_web_approval_changed=lambda *_args: None,
         _on_weather_changed=lambda *_args: None,
         _on_commands_changed=lambda *_args: None,
+        _on_routing_changed=lambda *_args: None,
         _on_voice_settings_changed=lambda *_args: None,
         _on_music_settings_changed=lambda *_args: None,
         _on_memory_changed=lambda *_args: None,
@@ -156,6 +160,7 @@ def _consolidate_signals() -> SimpleNamespace:
         "web_approval_changed",
         "weather_changed",
         "commands_changed",
+        "routing_changed",
         "voice_changed",
         "music_changed",
         "graph_rebuild_requested",

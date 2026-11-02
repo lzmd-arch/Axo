@@ -36,6 +36,7 @@
   var callMute = document.getElementById("call-mute");
   var callHangup = document.getElementById("call-hangup");
   var statusLabel = document.getElementById("status");
+  var registerChip = document.getElementById("register");
   var emptyState = document.getElementById("empty");
   var welcome = document.getElementById("welcome");
   var welcomeBuiltin = document.getElementById("welcome-builtin");
@@ -465,6 +466,26 @@
 
     setStatus: function (text) {
       statusLabel.textContent = text || "";
+    },
+
+    /* 顶栏那枚语域小标签。``kind`` 是 "task" / "chat"，空串 = 隐藏；
+       ``pinned`` 表示这是设置里钉住的、不是路由判的。 */
+    setRegister: function (kind, pinned) {
+      if (!registerChip) return;
+      var value = typeof kind === "string" ? kind : "";
+      if (!value) {
+        registerChip.hidden = true;
+        registerChip.textContent = "";
+        registerChip.className = "register-chip";
+        return;
+      }
+      var task = value === "task";
+      registerChip.hidden = false;
+      registerChip.className =
+        "register-chip " + (task ? "register-task" : "register-chat") + (pinned ? " register-pinned" : "");
+      registerChip.textContent = pinned
+        ? (task ? "任务 · 已钉住" : "闲聊 · 已钉住")
+        : (task ? "任务 · 全量工具" : "闲聊 · 只读工具");
     },
 
     /* 后台作业的增量日志。Python 侧按字节游标轮询，只把新增的那一段送过来；
