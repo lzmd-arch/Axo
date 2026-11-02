@@ -1,0 +1,105 @@
+{
+ "kind": "axo locomo retrieval baseline",
+ "arm": "lexical",
+ "data_sha256": "553cd5a15e25f2ceccc6ed185221eba645080c93e5b91087560a91aa5961f365",
+ "samples": 10,
+ "memories": 5882,
+ "queries": 1973,
+ "model": "lexical",
+ "space_id": "",
+ "excluded": {
+  "empty_evidence": 4,
+  "missing_id": 9
+ },
+ "per_sample": [
+  {
+   "sample_id": "conv-26",
+   "memories": 419,
+   "queries": 196
+  },
+  {
+   "sample_id": "conv-30",
+   "memories": 369,
+   "queries": 105
+  },
+  {
+   "sample_id": "conv-41",
+   "memories": 663,
+   "queries": 193
+  },
+  {
+   "sample_id": "conv-42",
+   "memories": 629,
+   "queries": 258
+  },
+  {
+   "sample_id": "conv-43",
+   "memories": 680,
+   "queries": 241
+  },
+  {
+   "sample_id": "conv-44",
+   "memories": 675,
+   "queries": 158
+  },
+  {
+   "sample_id": "conv-47",
+   "memories": 689,
+   "queries": 189
+  },
+  {
+   "sample_id": "conv-48",
+   "memories": 681,
+   "queries": 239
+  },
+  {
+   "sample_id": "conv-49",
+   "memories": 509,
+   "queries": 193
+  },
+  {
+   "sample_id": "conv-50",
+   "memories": 568,
+   "queries": 201
+  }
+ ],
+ "metrics": {
+  "hit@1": 0.05676634566649772,
+  "hit@3": 0.10440952863659402,
+  "hit@5": 0.13938165230613278,
+  "hit@8": 0.17181956411556007,
+  "recall@1": 0.040157762638938686,
+  "recall@3": 0.07386159913947651,
+  "recall@5": 0.09860164933667981,
+  "recall@8": 0.12190749372534959,
+  "mrr": 0.09019260010136838,
+  "answered": 1973
+ },
+ "per_category": {
+  "1": {
+   "answered": 278,
+   "hit@5": 0.07194244604316546,
+   "recall@8": 0.028901734104046242
+  },
+  "2": {
+   "answered": 320,
+   "hit@5": 0.15625,
+   "recall@8": 0.1657754010695187
+  },
+  "3": {
+   "answered": 89,
+   "hit@5": 0.056179775280898875,
+   "recall@8": 0.03553299492385787
+  },
+  "4": {
+   "answered": 840,
+   "hit@5": 0.1630952380952381,
+   "recall@8": 0.187010078387458
+  },
+  "5": {
+   "answered": 446,
+   "hit@5": 0.1412556053811659,
+   "recall@8": 0.17173913043478262
+  }
+ }
+}
