@@ -89,7 +89,7 @@ BOOT_ACTS: tuple[BootAct, ...] = (
     ),
     BootAct(
         "permission",
-        "记忆只属于这台机器",
+        "权限核验",
         "PERMISSION · LOCAL ONLY",
         1200,
         confirm=True,
