@@ -78,6 +78,7 @@ from .settings_store import (
     DEFAULT_HOST,
     DEFAULT_LOCAL_CONTEXT,
     DEFAULT_RECALL_MIN_SCORE,
+    EXPRESSION_DEFAULT_MODEL,
     PROVIDER_BUILTIN,
     PROVIDER_CLOUD,
     PROVIDER_OLLAMA,
@@ -86,6 +87,7 @@ from .settings_store import (
     ROUTING_MODES,
     ROUTING_TASK,
     BackendSettings,
+    ExpressionSettings,
     MemorySettings,
     MusicSettings,
     ProactiveSettings,
@@ -1033,6 +1035,8 @@ class ToolPage(QWidget):
     commands_changed = Signal(bool)
     routing_changed = Signal(str)
     """语域钉住的方式变了（``auto`` / ``chat`` / ``task``）。"""
+    expression_changed = Signal(object)
+    """表达层开关或渲染模型变了。"""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1051,6 +1055,7 @@ class ToolPage(QWidget):
         self._weather_snapshot = True
         self._commands_snapshot = False
         self._routing_snapshot = ROUTING_AUTO
+        self._expression_snapshot = ExpressionSettings()
 
         # ── 语域 ────────────────────────────────────────────────────────────
         #
@@ -1079,6 +1084,33 @@ class ToolPage(QWidget):
                 "不会因为一句「好的」而丢掉工具。钉住之后不再变，代价是另一侧的语域不再出现。"
                 "窗口顶栏那枚小标签一直写着这一轮实际是什么。"
                 "斜杠命令 /task、/chat 仍然临时覆盖这一格。"
+            )
+        )
+
+        # ── 表达层（实验） ──────────────────────────────────────────────────
+        outer.addSpacing(6)
+        outer.addWidget(_section("表达层（实验）"))
+        self.expression_box = QCheckBox(
+            "启用分离表达层：后端只决定说什么，她怎么说由本地小模型统一", self
+        )
+        self.expression_box.setObjectName("expressionBox")
+        self.expression_box.toggled.connect(self._on_expression_toggled)
+        outer.addWidget(self.expression_box)
+        model_row = QHBoxLayout()
+        model_row.setSpacing(8)
+        model_row.addWidget(QLabel("渲染模型（Ollama）", self))
+        self.expression_model_edit = QLineEdit(self)
+        self.expression_model_edit.setObjectName("expressionModel")
+        self.expression_model_edit.setPlaceholderText(EXPRESSION_DEFAULT_MODEL)
+        self.expression_model_edit.editingFinished.connect(self._on_expression_model_changed)
+        model_row.addWidget(self.expression_model_edit, 1)
+        outer.addLayout(model_row)
+        outer.addWidget(
+            _hint(
+                "打开后，主模型写的正文**先不显示**：先用一个本地小模型按人格重写一遍，"
+                "核对事实一个没丢再显示；重写失败或改动了数字/路径/专名，就原样显示主模型的草稿。"
+                "只对不带工具的那一轮生效。代价是这一轮多一次本地调用、首字更晚。"
+                "需要本机 Ollama 里有这个模型（默认 qwen2.5:0.5b）。"
             )
         )
 
@@ -1232,7 +1264,9 @@ class ToolPage(QWidget):
     def _open_language_dialog(self) -> None:
         LanguageServersDialog(self).exec()
 
-    def set_state(self, settings: ToolSettings) -> None:
+    def set_state(
+        self, settings: ToolSettings, expression: ExpressionSettings | None = None
+    ) -> None:
         """**打开窗口时调，陈述现状。** 顺带重置快照（同外观页的道理：撤销回到的
         是**这一次**打开时的样子）。
 
@@ -1251,6 +1285,14 @@ class ToolPage(QWidget):
         blocked = self.audio_box.blockSignals(True)
         self.audio_box.setChecked(settings.audio_in)
         self.audio_box.blockSignals(blocked)
+        expression = expression or ExpressionSettings()
+        self._expression_snapshot = expression
+        blocked = self.expression_box.blockSignals(True)
+        self.expression_box.setChecked(bool(expression.enabled))
+        self.expression_box.blockSignals(blocked)
+        blocked = self.expression_model_edit.blockSignals(True)
+        self.expression_model_edit.setText(expression.model)
+        self.expression_model_edit.blockSignals(blocked)
         self._routing_snapshot = (
             settings.routing_mode if settings.routing_mode in ROUTING_MODES else ROUTING_AUTO
         )
@@ -1292,6 +1334,22 @@ class ToolPage(QWidget):
 
     def allow_commands(self) -> bool:
         return self.commands_box.isChecked()
+
+    def expression(self) -> ExpressionSettings:
+        """表达层那一组。"""
+        return ExpressionSettings(
+            enabled=self.expression_box.isChecked(),
+            model=self.expression_model_edit.text().strip(),
+        )
+
+    def _on_expression_toggled(self, _checked: bool) -> None:
+        self.expression_changed.emit(self.expression())
+
+    def _on_expression_model_changed(self) -> None:
+        # ``editingFinished`` 在勾选框切换时也会触发——**值没变就不发**，否则设置页
+        # 每点一下都写一遍同样的东西（与「撤销修改」那条同一个理由）。
+        if self.expression() != self._expression_snapshot:
+            self.expression_changed.emit(self.expression())
 
     def routing_mode(self) -> str:
         """钉住的语域：``auto`` / ``chat`` / ``task``。"""
@@ -1347,6 +1405,14 @@ class ToolPage(QWidget):
             self.audio_box.setChecked(self._audio_snapshot)
             self.audio_box.blockSignals(blocked)
             self.audio_changed.emit(self._audio_snapshot)
+        if self.expression() != self._expression_snapshot:
+            blocked = self.expression_box.blockSignals(True)
+            self.expression_box.setChecked(self._expression_snapshot.enabled)
+            self.expression_box.blockSignals(blocked)
+            blocked = self.expression_model_edit.blockSignals(True)
+            self.expression_model_edit.setText(self._expression_snapshot.model)
+            self.expression_model_edit.blockSignals(blocked)
+            self.expression_changed.emit(self._expression_snapshot)
         if self.routing_mode() != self._routing_snapshot:
             blocked = self.routing_combo.blockSignals(True)
             index = self.routing_combo.findData(self._routing_snapshot)
@@ -2730,6 +2796,7 @@ class SettingsDialog(QDialog):
     commands_changed = Signal(bool)
     vision_changed = Signal(bool)
     routing_changed = Signal(str)
+    expression_changed = Signal(object)
     voice_changed = Signal(object)
     music_changed = Signal(object)
     sync_changed = Signal(object)
@@ -2772,6 +2839,7 @@ class SettingsDialog(QDialog):
         voice: SpeechSettings | None = None,
         music: MusicSettings | None = None,
         sync: SyncSettings | None = None,
+        expression: ExpressionSettings | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("设置")
@@ -2896,6 +2964,7 @@ class SettingsDialog(QDialog):
         self.tools.vision_changed.connect(self.vision_changed)
         self.tools.audio_changed.connect(self.audio_changed)
         self.tools.routing_changed.connect(self.routing_changed)
+        self.tools.expression_changed.connect(self.expression_changed)
         self.speech.changed.connect(self.voice_changed)
         self.speech.set_state(voice if voice is not None else SpeechSettings())
         self.music.changed.connect(self.music_changed)
@@ -2938,6 +3007,7 @@ class SettingsDialog(QDialog):
             voice=voice if voice is not None else SpeechSettings(),
             music=music if music is not None else MusicSettings(),
             sync=sync if sync is not None else SyncSettings(),
+            expression=expression,
         )
 
     # ── 状态进出 ────────────────────────────────────────────────────────────
@@ -2975,6 +3045,7 @@ class SettingsDialog(QDialog):
         voice: SpeechSettings,
         music: MusicSettings | None = None,
         sync: SyncSettings | None = None,
+        expression: ExpressionSettings | None = None,
     ) -> None:
         """**打开窗口时调。** 顺带把快照换成这一份——「撤销修改」回到的是**这一次**
         打开时的样子，而不是上一次的。
@@ -2987,7 +3058,7 @@ class SettingsDialog(QDialog):
         self.set_glass(resolved.accent, motion=theme.motion)
         self.appearance.set_state(theme, resolved)
         self.backend.set_state(backend, note)
-        self.tools.set_state(tools)
+        self.tools.set_state(tools, expression)
         self.memory.set_state(memory)
         self.reminders.set_state(reminders)
         self.proactive.set_state(proactive)

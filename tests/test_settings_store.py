@@ -31,6 +31,7 @@ from axo.ui.settings_store import (
     ROUTING_CHAT,
     ROUTING_TASK,
     BackendSettings,
+    ExpressionSettings,
     MemorySettings,
     ProactiveSettings,
     ReminderSettings,
@@ -413,6 +414,19 @@ def test_cloud_vision_roundtrip() -> None:
             SettingsStore(FakeBackend({"tools/cloud_vision": stored})).load_tools().cloud_vision
             is False
         ), f"{stored!r} 被读成了真值"
+
+
+def test_expression_layer_is_off_by_default() -> None:
+    """表达层默认关：打开它意味着每轮多一次本地调用、首字更晚，那该由用户决定。"""
+    settings = SettingsStore(FakeBackend()).load_expression()
+    assert settings.enabled is False
+    assert settings.model == ""
+
+
+def test_expression_settings_roundtrip() -> None:
+    store = SettingsStore(FakeBackend())
+    store.save_expression(ExpressionSettings(enabled=True, model="qwen2.5:0.5b"))
+    assert store.load_expression() == ExpressionSettings(enabled=True, model="qwen2.5:0.5b")
 
 
 def test_routing_mode_defaults_to_auto() -> None:

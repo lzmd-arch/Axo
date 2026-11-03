@@ -40,6 +40,8 @@ from .theme import (
 
 __all__ = [
     "BackendSettings",
+    "EXPRESSION_DEFAULT_MODEL",
+    "ExpressionSettings",
     "ROUTING_AUTO",
     "ROUTING_CHAT",
     "ROUTING_MODES",
@@ -91,6 +93,8 @@ _K_READ_ROOTS = "tools/read_roots"
 _K_CLOUD_VISION = "tools/cloud_vision"
 _K_AUDIO_IN = "tools/audio_in"
 _K_ROUTING_MODE = "tools/routing_mode"
+_K_EXPRESSION_ENABLED = "expression/enabled"
+_K_EXPRESSION_MODEL = "expression/model"
 
 _K_WRITE_ROOTS = "tools/write_roots"
 _K_WEB_ENABLED = "tools/web_enabled"
@@ -330,6 +334,27 @@ ROUTING_MODES = (ROUTING_AUTO, ROUTING_CHAT, ROUTING_TASK)
 """钉住语域的三种取值。**存在是为了"让语域可见"这件事真的可解释**：自动切换在
 少数场合（尤其迟滞）会让用户觉得"她刚才明明能干活，怎么又不干了"。钉住之后行为
 完全可预期，代价是另一侧的语域永远不出现。"""
+
+
+#: 表达层默认用的小模型。**本版只支持 Ollama 里的名字**——随包 llama.cpp 只能同时
+#: 跑一个模型（主对话那个），换模型要再起一个实例与一份显存，8 GB 卡上不划算。
+#: 用户装过 Ollama 时这是最省事的路；没装的话表达层会退回草稿并说一句为什么。
+EXPRESSION_DEFAULT_MODEL = "qwen2.5:0.5b"
+
+
+@dataclass(frozen=True)
+class ExpressionSettings:
+    """分离表达层（实验）。
+
+    Attributes:
+        enabled: 开不开。**默认关**：打开意味着每轮多一次本地模型调用，而且这一轮
+            的主模型文本**先不显示**、等渲染完再一起出来。关着时行为与以前逐字节
+            相同（主窗口直接接流式文本，不经过这一层）。
+        model: 渲染用的 Ollama 模型名。空串 = :data:`EXPRESSION_DEFAULT_MODEL`。
+    """
+
+    enabled: bool = False
+    model: str = ""
 
 
 @dataclass(frozen=True)
@@ -801,6 +826,18 @@ class SettingsStore:
         self._backend.setValue(_K_CLOUD_VISION, settings.cloud_vision)
         self._backend.setValue(_K_AUDIO_IN, settings.audio_in)
         self._backend.setValue(_K_ROUTING_MODE, _as_routing_mode(settings.routing_mode))
+
+    # ── 表达层（实验） ──────────────────────────────────────────────────────
+
+    def load_expression(self) -> ExpressionSettings:
+        return ExpressionSettings(
+            enabled=_as_bool(self._backend.value(_K_EXPRESSION_ENABLED, False)),
+            model=self._text(_K_EXPRESSION_MODEL),
+        )
+
+    def save_expression(self, settings: ExpressionSettings) -> None:
+        self._backend.setValue(_K_EXPRESSION_ENABLED, settings.enabled)
+        self._backend.setValue(_K_EXPRESSION_MODEL, settings.model)
 
     # ── 语音输出（她开口） ──────────────────────────────────────────────────
 

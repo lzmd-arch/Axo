@@ -65,6 +65,7 @@ from axo.ui.settings_store import (
     ROUTING_CHAT,
     ROUTING_TASK,
     BackendSettings,
+    ExpressionSettings,
     MemorySettings,
     MusicSettings,
     ProactiveSettings,
@@ -2153,3 +2154,31 @@ def test_revert_puts_the_routing_combo_back() -> None:
 
     assert page.routing_mode() == ROUTING_AUTO
     assert seen == [ROUTING_TASK, ROUTING_AUTO]
+
+
+# ── 工具页：表达层（实验） ──────────────────────────────────────────────────
+
+
+def test_the_expression_switch_states_itself_and_reports_changes() -> None:
+    page = ToolPage()
+    page.set_state(ToolSettings(), ExpressionSettings(enabled=True, model="qwen2.5:0.5b"))
+    assert page.expression() == ExpressionSettings(enabled=True, model="qwen2.5:0.5b")
+
+    seen: list[object] = []
+    page.expression_changed.connect(seen.append)
+    page.expression_box.setChecked(False)
+    assert seen and seen[-1].enabled is False
+
+
+def test_revert_puts_the_expression_group_back() -> None:
+    page = ToolPage()
+    page.set_state(ToolSettings(), ExpressionSettings())
+    seen: list[object] = []
+    page.expression_changed.connect(seen.append)
+
+    page.expression_box.setChecked(True)
+    page.expression_model_edit.setText("custom:0.5b")
+    page.revert()
+
+    assert page.expression() == ExpressionSettings()
+    assert seen and seen[-1] == ExpressionSettings()

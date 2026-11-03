@@ -122,6 +122,8 @@ from ..agent.workspace import build_workspace_context
 from ..asr import Transcription
 from ..attachments import Attachment, attachment_for, body_of
 from ..busd.launcher import launch_blocked_reason, spawn_daemon, stop_daemon
+from ..expression.layer import ExpressionLayer
+from ..expression.sir import parse as parse_sir
 from ..llm.base import ChatBackendError, ChatRequest, EmbeddingBackend
 from ..llm.llama_server import MODEL_ID_PREFIX as BUILTIN_MODEL_ID_PREFIX
 from ..llm.llama_server import BuiltinLlamaBackend
@@ -208,6 +210,7 @@ from .consolidation_scheduler import MIN_DELAY_MS, ConsolidationScheduler
 from .data_move import MoveKind, MovePlan, plan_move
 from .data_root import MoveReport, discard_source, stage_move
 from .errorlog import log_ui_error
+from .expression_worker import ExpressionWorker
 from .glass import AuroraBackdrop
 from .layout import plan_pane_sizes
 from .llama_worker import LlamaRuntimeWorker
@@ -234,11 +237,13 @@ from .screen import grab as capture_screen
 from .screen import own_window_rects
 from .settings_dialog import SettingsDialog
 from .settings_store import (
+    EXPRESSION_DEFAULT_MODEL,
     PROVIDER_OLLAMA,
     ROUTING_AUTO,
     ROUTING_MODES,
     ROUTING_TASK,
     BackendSettings,
+    ExpressionSettings,
     MemorySettings,
     MusicSettings,
     ProactiveSettings,
@@ -393,6 +398,18 @@ def _used_screen(tool_trace: Sequence[Mapping[str, Any]]) -> bool:
     :meth:`MainWindow._remember` 手上了。
     """
     return any(entry.get("name") == _SCREEN_TOOL for entry in tool_trace)
+
+
+def _add_optional(left: int | None, right: int | None) -> int | None:
+    """两份 token 统计相加。**一边没有数时取另一边**，两边都没有才返回 ``None``。
+
+    表达层是同一轮里的第二次调用，页脚那个数应当是这一轮真正花掉的总量——只报主
+    模型那一份会让"多了一次调用"从账上消失。
+    """
+    values = [
+        value for value in (left, right) if isinstance(value, int) and not isinstance(value, bool)
+    ]
+    return sum(values) if values else None
 
 
 def usage_footer(prompt: int | None, completion: int | None) -> str:
@@ -725,6 +742,11 @@ class MainWindow(QMainWindow):
         self._web_require_approval: bool = self._tool_settings.web_require_approval
         self._allow_commands: bool = self._tool_settings.allow_commands
         self._weather_enabled: bool = self._tool_settings.weather_enabled
+        #: 分离表达层（实验）。**默认关**；关着时这一层的代码一个都不执行。
+        self._expression_settings: ExpressionSettings = self._settings_store.load_expression()
+        #: 表达层打开时，主模型这一轮的增量**先攒在这里**，渲染完再一起显示。
+        self._draft_parts: list[str] = []
+        self._expression_worker: ExpressionWorker | None = None
         #: 钉住的语域（``auto`` / ``chat`` / ``task``）。``auto`` = 每轮按那句话判；
         #: 另两档压过规则层、压不过斜杠。见 :func:`~axo.agent.router.pinned_decision`。
         self._routing_mode: str = (
@@ -2512,16 +2534,107 @@ class MainWindow(QMainWindow):
         )
         thread = QThread(self)
         worker = ChatWorker(self._backend, request)
-        worker.chunk.connect(self.chat_view.push_token)
-        worker.chunk.connect(self._on_pipeline_chunk)
+        self._draft_parts = []
+        if self._expression_settings.enabled:
+            # 表达层：**先不显示**。正文攒起来，渲染与事实核对都通过之后才出屏幕
+            # （见 :meth:`_on_draft_ready`）。关着时走下面那两条，与以前逐字节相同。
+            worker.chunk.connect(self._collect_draft)
+            worker.finished.connect(self._on_draft_ready)
+        else:
+            worker.chunk.connect(self.chat_view.push_token)
+            worker.chunk.connect(self._on_pipeline_chunk)
+            worker.finished.connect(self._on_reply_finished)
         worker.notice.connect(self._on_notice)
-        worker.finished.connect(self._on_reply_finished)
         worker.failed.connect(self._on_reply_failed)
         worker.finished.connect(thread.quit)
         worker.failed.connect(thread.quit)
         self._track(thread, worker, what="生成线程", slot="chat")
         self.chat_view.set_status("正在生成…")
         thread.start()
+
+    # ── 分离表达层（实验） ──────────────────────────────────────────────────
+
+    def _collect_draft(self, text: str) -> None:
+        if text:
+            self._draft_parts.append(text)
+
+    def _expression_persona(self) -> str:
+        from ..memory.persona import persona_texts
+
+        return "\n\n".join(persona_texts(self._memory))
+
+    def _expression_backend(self):
+        """渲染用的后端：**一个独立的 Ollama 小模型**。
+
+        不跟主对话共用模型：表达层要解决的正是"主模型是谁"的文体差异，用同一个大
+        模型只是把同一段文体再念一遍。随包 llama.cpp 只能同时跑一个模型（再起一个
+        实例要多一份显存），所以这里只走 Ollama；它没起时渲染会退回草稿并说一句。
+        """
+        model = self._expression_settings.model.strip() or EXPRESSION_DEFAULT_MODEL
+        settings = getattr(self, "_backend_settings", None)
+        kwargs: dict[str, object] = {"model": model}
+        if (
+            settings is not None
+            and getattr(settings, "provider", "") == PROVIDER_OLLAMA
+            and getattr(settings, "host", "")
+        ):
+            kwargs["host"] = settings.host
+        try:
+            return OllamaChatBackend(**kwargs)  # type: ignore[arg-type]
+        except Exception:  # noqa: BLE001 —— 构造失败等于这一层不可用，退回草稿
+            return None
+
+    def _on_draft_ready(self, text: str, statistics: dict[str, Any]) -> None:
+        """主模型写完了：决定要不要交给表达层重写。"""
+        draft = "".join(self._draft_parts) or text
+        self._draft_parts = []
+        if statistics.get("interrupted") or not draft.strip():
+            self._deliver_reply(draft, statistics)
+            return
+        backend = self._expression_backend()
+        if backend is None:
+            self._deliver_reply(draft, statistics, "表达层没有可用的渲染模型，已用原文")
+            return
+        layer = ExpressionLayer(backend, self._expression_persona())
+        sir = parse_sir(draft)
+        thread = QThread(self)
+        worker = ExpressionWorker(layer, sir)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(
+            lambda outcome, d=draft, st=statistics: self._on_styled_ready(outcome, d, st)
+        )
+        # ``thread.started → worker.run`` 由 :meth:`_track` 连（``DirectConnection``，
+        # 见 thread_tracking 的说明）——这里再连一次会让同一段渲染跑两遍。
+        self._expression_worker = worker
+        self._track(thread, worker, what="表达层线程", slot="expression")
+        self.chat_view.set_status("正在统一语气…")
+        thread.start()
+
+    def _on_styled_ready(self, outcome: object, draft: str, statistics: dict[str, Any]) -> None:
+        """表达层收工：**无论成败都要把这一轮收掉**。"""
+        self._expression_worker = None
+        merged = dict(statistics)
+        prompt_tokens = getattr(outcome, "prompt_tokens", None)
+        completion_tokens = getattr(outcome, "completion_tokens", None)
+        merged["prompt_tokens"] = _add_optional(statistics.get("prompt_tokens"), prompt_tokens)
+        merged["completion_tokens"] = _add_optional(
+            statistics.get("completion_tokens"), completion_tokens
+        )
+        reason = str(getattr(outcome, "reason", "") or "")
+        if reason == "渲染被停止":
+            merged["interrupted"] = True
+        if getattr(outcome, "source", "draft") != "styled" and reason:
+            self.chat_view.append_message("system", f"表达层没有接手：{reason}")
+        text = str(getattr(outcome, "text", "") or draft)
+        self._deliver_reply(text, merged)
+
+    def _deliver_reply(self, text: str, statistics: dict[str, Any], note: str = "") -> None:
+        """把最终文本交出去：显示、喂语音管线、走同一段收尾。"""
+        if note:
+            self.chat_view.append_message("system", note)
+        self.chat_view.push_token(text)
+        self._on_pipeline_chunk(text)
+        self._on_reply_finished(text, statistics)
 
     def _should_say_uncertain(self, ledger: Any) -> bool:
         """记忆里一条都没有、而这一句又是在问记忆：**直说不确定，不再调模型。**
@@ -4606,6 +4719,8 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(False)
         self._chat_worker = None
         self._chat_thread = None
+        self._expression_worker = None
+        self._draft_parts = []
         self._agent_worker = None
         self._agent_thread = None
         self._prepare_worker = None
@@ -4655,6 +4770,13 @@ class MainWindow(QMainWindow):
             self._agent_worker.stop()
             self.stop_button.setEnabled(False)
             self.chat_view.set_status("已请求停止，当前这一步做完就停")
+            return
+        if self._expression_worker is not None:
+            # 表达层：主模型已经写完，用户是在"等她说得像千岁"这一段落里按的停止。
+            # 停下之后仍会退回草稿并正常收尾——不能把这一轮留在半空。
+            self._expression_worker.stop()
+            self.stop_button.setEnabled(False)
+            self.chat_view.set_status("已请求停止，当前这句说完就停")
             return
         if self._chat_worker is not None:
             # 直连：stop 只是翻一个布尔，不需要跨线程排队
@@ -4926,11 +5048,13 @@ class MainWindow(QMainWindow):
                     reminders=self._reminder_settings,
                     proactive=self._proactive_settings,
                     sync=getattr(self, "_sync_settings", SyncSettings()),
+                    expression=self._expression_settings,
                 )
                 dialog.theme_changed.connect(self._on_theme_changed)
                 dialog.backend_changed.connect(self._on_backend_changed)
                 dialog.tools_changed.connect(self._on_tools_changed)
                 dialog.routing_changed.connect(self._on_routing_changed)
+                dialog.expression_changed.connect(self._on_expression_changed)
                 dialog.vision_changed.connect(self._on_cloud_vision_changed)
                 dialog.audio_changed.connect(self._on_cloud_audio_changed)
                 dialog.web_changed.connect(self._on_web_changed)
@@ -4977,6 +5101,7 @@ class MainWindow(QMainWindow):
                     reminders=self._reminder_settings,
                     proactive=self._proactive_settings,
                     sync=getattr(self, "_sync_settings", SyncSettings()),
+                    expression=self._expression_settings,
                 )
             # 图状态那一行**每次打开都重新对齐**（同人设页的道理，也是同一种真源：
             # 图是在这个窗口存在的时候才建的）。不回填的话，用户在设置页看着"还没建"
@@ -5103,6 +5228,12 @@ class MainWindow(QMainWindow):
             audio_in=self._audio_in,
             routing_mode=getattr(self, "_routing_mode", ROUTING_AUTO),
         )
+
+    @Slot(object)
+    def _on_expression_changed(self, settings: ExpressionSettings) -> None:
+        """表达层开关或渲染模型改了。**下一轮生效**——这一轮的 worker 已经起来了。"""
+        self._expression_settings = settings
+        self._settings_store.save_expression(settings)
 
     @Slot(str)
     def _on_routing_changed(self, mode: str) -> None:

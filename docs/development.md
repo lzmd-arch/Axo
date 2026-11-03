@@ -357,6 +357,9 @@ src/
       gate.py         确认策略 + ApprovalSlot（跨线程握手，无一行 Qt）
       handoff.py      通用的跨线程握手槽（ApprovalSlot 与截图槽共用的那一套：token 身份 + 有界等待）
       router.py       斜杠 + 规则层 + 模型自分类（默认关）+ 不对称迟滞
+    expression/       分离表达层（实验，默认关）：SIR 与一次渲染（**不 import Qt/httpx**）
+      sir.py          SIR、<think> 解析、从草稿降级、事实抽取与核对、风格指标
+      layer.py        一次渲染：SIR + 人格 → 文本；失败/丢事实/问句变陈述句一律退回草稿
     llm/              模型后端：Ollama（本机）+ OpenAI 兼容端点（云端，只做对话）
       base.py         ChatBackend / EmbeddingBackend 两个协议
       ollama.py       本机推理：NDJSON 流式
@@ -386,6 +389,7 @@ src/
       window_place.py   把窗口放到光标所在那块屏（主窗口与记忆窗口共用）
       chat_view.py      网页对话区：QWebChannel 桥 + 外观三件套 + 人设卡片 + 确认卡片
       agent_worker.py   AgentWorker(QObject)：Qt 信号 ↔ 纯层的桥（gui 腿）
+      expression_worker.py  ExpressionWorker(QObject)：在工作线程里跑一次表达层渲染
       speech_player.py  SpeechPlayer（QAudioSink 直推 PCM）+ TtsWorker（合成，不 moveToThread）
       tray.py           系统托盘：程序化画的图标 + 三项菜单 + 一条气泡
       reminder_scheduler.py 单发 QTimer：到点了发一个 `Alert`（**不认识窗口，也不认识托盘**）
