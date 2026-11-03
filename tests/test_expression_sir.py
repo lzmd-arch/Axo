@@ -224,6 +224,17 @@ def test_a_backend_error_falls_back_without_raising() -> None:
     assert "ChatBackendError" in outcome.reason
 
 
+def test_an_empty_draft_is_never_rendered() -> None:
+    """空草稿只剩规则文本，模型会回一句"要点：无"——那不能被当成正文。"""
+    sir = SIR(intent="answer", key_points=(), draft="")
+    backend = ScriptedBackend([[text_chunk("不该被调用")]])
+    outcome = ExpressionLayer(backend, PERSONA).render(sir)
+    assert outcome.source == "draft"
+    assert outcome.text == ""
+    assert "空草稿" in outcome.reason
+    assert backend.calls == 0
+
+
 def test_an_empty_render_falls_back() -> None:
     sir = SIR(intent="answer", key_points=("甲",), draft="草稿正文。")
     outcome = _layer([[text_chunk("   ", done=True)]]).render(sir)

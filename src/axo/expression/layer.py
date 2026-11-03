@@ -104,6 +104,11 @@ class ExpressionLayer:
         ``keep_going`` 每收到一片调用一次；返回假时停止读取并退回草稿（用户按了停止）。
         """
         draft = sir.draft.strip()
+        if not draft:
+            # **空草稿不渲染。** 否则模型只会看到一段没有内容的规则文本，回一句
+            # "要点：无"，而那会被当成"表达层写的正文"显示出来。生产路径
+            # （main_window）本来就会先跳过空正文，这一条是给直接调用的地方兜底。
+            return ExpressionOutcome(draft, "draft", "空草稿，没什么可渲染的")
         request = self.request(sir)
         pieces: list[str] = []
         prompt_tokens: int | None = None
