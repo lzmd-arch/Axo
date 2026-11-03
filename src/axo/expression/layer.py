@@ -63,6 +63,8 @@ class ExpressionLayer:
             族会思考，而思考与正文共用同一个输出额度——2026-11-03 实测 256 token 的
             预算下它把额度全花在思考上、正文一片空白（与主对话那个"空回复"是同一个
             坑）。Ollama 认这个顶层字段；OpenAI 兼容端点不认它的话传 ``None``。
+        temperature: 采样温度。默认 0.7（与产品一致）；**验收对比时用 0**——
+            否则同一段 SIR 两次渲染不同，风格距离的读数会跟着抖。
     """
 
     def __init__(
@@ -73,12 +75,14 @@ class ExpressionLayer:
         max_tokens: int | None = None,
         style_note: str = "",
         think: bool | None = False,
+        temperature: float = 0.7,
     ) -> None:
         self._backend = backend
         self._persona = persona or ""
         self._max_tokens = max_tokens
         self._style_note = style_note
         self._think = think
+        self._temperature = float(temperature)
 
     def request(self, sir: SIR) -> ChatRequest:
         """渲染请求。**单独一个方法是为了让测试能逐字检查提示词。**"""
@@ -90,6 +94,7 @@ class ExpressionLayer:
                 ChatMessage(role="user", content=task),
             ),
             max_tokens=self._max_tokens,
+            temperature=self._temperature,
             extra={} if self._think is None else {"think": bool(self._think)},
         )
 

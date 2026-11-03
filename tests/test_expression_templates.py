@@ -112,6 +112,27 @@ def test_a_template_that_drops_a_fact_is_not_used() -> None:
     assert hit is None, "0.898 不在模板正文里，应该判定为丢事实"
 
 
+def test_a_failing_candidate_does_not_block_a_later_one() -> None:
+    """2026-11-03 实测过的坏法：先命中的那条丢事实，正确的那条被挡住。
+
+    选择仍要确定性——所以不是"挨个随机试"，而是按草稿哈希定起点、环形展开。
+    """
+    bank = TemplateBank(
+        [
+            Template("plain", "{key_point:0}。", intents=("answer",), lengths=("short",)),
+            Template(
+                "with-facts", "{key_point:0}：{facts}。", intents=("answer",), lengths=("short",)
+            ),
+        ]
+    )
+    sir = SIR(
+        intent="answer", length="short", key_points=("分数",), facts=("0.898",), draft="分数 0.898"
+    )
+    hit = bank.render(sir)
+    assert hit is not None and hit.template_id == "with-facts"
+    assert "0.898" in hit.text
+
+
 def test_a_template_that_includes_the_fact_is_used() -> None:
     bank = _bank(Template("a", "{key_point:0}（{facts}）。", intents=("answer",)))
     sir = SIR(intent="answer", key_points=("分数",), facts=("0.898",), draft="分数 0.898")

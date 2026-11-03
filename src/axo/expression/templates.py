@@ -121,10 +121,32 @@ _DEFAULT_TEMPLATES: tuple[Template, ...] = (
         intents=("answer",),
         lengths=("medium",),
     ),
-    Template("ask-short", "{key_point:0}？", kind="skeleton", intents=("ask",)),
+    # **带事实的回答**：要点在前、事实用冒号接在后面。没有这一条时，凡是带数字/URL
+    # 的短回答都会整族落到模型路径——模板覆盖率会被这一族拖掉一半。
     Template(
-        "comfort", "嗯，{key_point:0}。", kind="skeleton", intents=("emotion",), tones=("comfort",)
+        "answer-short-facts",
+        "{key_point:0}：{facts}。",
+        intents=("answer",),
+        lengths=("short",),
+        facts_min=1,
     ),
+    Template(
+        "answer-medium-facts",
+        "{key_point:0}。{key_point:1}：{facts}。",
+        intents=("answer",),
+        lengths=("medium",),
+        facts_min=1,
+    ),
+    Template("ask-short", "{key_point:0}？", kind="skeleton", intents=("ask",)),
+    Template("emotion-casual", "嗯，{key_point:0}。", intents=("emotion",), tones=("casual",)),
+    Template("emotion-formal", "好的，{key_point:0}。", intents=("emotion",), tones=("formal",)),
+    Template("emotion-direct", "{key_point:0}。", intents=("emotion",), tones=("direct",)),
+    Template("emotion-comfort", "嗯，{key_point:0}。", intents=("emotion",), tones=("comfort",)),
+    Template("action-casual", "{key_point:0}，好。", intents=("action",), tones=("casual",)),
+    Template(
+        "action-formal", "好的，{key_point:0}，我去办。", intents=("action",), tones=("formal",)
+    ),
+    Template("action-direct", "{key_point:0}，我去办。", intents=("action",), tones=("direct",)),
 )
 
 #: 随包内置的一组**中性**模板。它们只负责形状，不承载人格措辞；
@@ -182,27 +204,34 @@ class TemplateBank:
             )
         return cls(templates)
 
-    def match(self, sir: SIR) -> Template | None:
-        """按 SIR 选一条模板。**确定性**：同一段草稿永远选同一条。"""
+    def _ordered(self, sir: SIR) -> list[Template]:
+        """满足条件的模板，按草稿哈希定一个起点、再环形展开。
+
+        **不能只选一条。** 一条丢事实的模板先被选中时，正确的那条就被挡住了——
+        2026-11-03 实测过：带事实的短回答有专门的模板，但"不带事实"的那条先命中，
+        整族落在模型路径上。这里改成"从哈希位置开始，逐条试到能过检查为止"：
+        选择仍是确定性的，但不会因为第一条不合适就放弃。
+        """
         candidates = [template for template in self.templates if template.matches(sir)]
         if not candidates:
-            return None
-        weighted: list[Template] = []
-        for template in candidates:
-            weighted.extend([template] * max(1, template.weight))
-        index = zlib.crc32(sir.draft.encode("utf-8")) % len(weighted)
-        return weighted[index]
+            return []
+        start = zlib.crc32(sir.draft.encode("utf-8")) % len(candidates)
+        return candidates[start:] + candidates[:start]
+
+    def match(self, sir: SIR) -> Template | None:
+        """按 SIR 选第一条候选。**确定性**：同一段草稿永远选同一条。"""
+        ordered = self._ordered(sir)
+        return ordered[0] if ordered else None
 
     def render(self, sir: SIR) -> TemplateHit | None:
         """命中并填好、且**事实与问句检查通过**时返回；否则 ``None``。"""
-        template = self.match(sir)
-        if template is None:
-            return None
-        text = template.render(sir)
-        if text is None:
-            return None
-        if facts_preserved(text, sir.facts):
-            return None
-        if sir.intent == "ask" and ("？" not in text and "?" not in text):
-            return None
-        return TemplateHit(template.id, text)
+        for template in self._ordered(sir):
+            text = template.render(sir)
+            if text is None:
+                continue
+            if facts_preserved(text, sir.facts):
+                continue
+            if sir.intent == "ask" and ("？" not in text and "?" not in text):
+                continue
+            return TemplateHit(template.id, text)
+        return None

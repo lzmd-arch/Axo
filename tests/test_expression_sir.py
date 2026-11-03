@@ -210,6 +210,16 @@ def test_url_case_is_significant_but_chinese_is_not() -> None:
     assert facts_preserved("见 https://example.com/a", ("https://example.com/a",)) == ()
 
 
+def test_temperature_is_configurable_for_reproducible_comparisons() -> None:
+    """默认 0.7（与产品一致）；验收对比用 0，否则同一段 SIR 两次渲染不同。"""
+    layer = ExpressionLayer(ScriptedBackend([[text_chunk("好", done=True)]]), PERSONA)
+    assert layer.request(SIR(draft="草稿")).temperature == 0.7
+    frozen = ExpressionLayer(
+        ScriptedBackend([[text_chunk("好", done=True)]]), PERSONA, temperature=0.0
+    )
+    assert frozen.request(SIR(draft="草稿")).temperature == 0.0
+
+
 def test_the_render_request_turns_thinking_off_by_default() -> None:
     layer = _layer([[text_chunk("好", done=True)]])
     assert layer.request(SIR(draft="草稿")).extra == {"think": False}
