@@ -23,16 +23,27 @@ class BootCheckWorker(QThread):
     done = Signal(object)
     """``tuple[BootCheck, ...]``。自检本身异常时发空元组，不把启动拖垮。"""
 
-    def __init__(self, backend: Any, tools: Any, parent: Any = None) -> None:
+    def __init__(
+        self,
+        backend: Any,
+        tools: Any,
+        security: Any = None,
+        device: Any = None,
+        parent: Any = None,
+    ) -> None:
         super().__init__(parent)
         self._backend = backend
         self._tools = tools
+        self._security = security
+        self._device = device
 
     def run(self) -> None:  # noqa: D401 - QThread 入口
         from .boot_checks import collect_checks
 
         try:
-            checks = collect_checks(self._backend, self._tools)
+            checks = collect_checks(
+                self._backend, self._tools, security=self._security, device=self._device
+            )
         except Exception:  # noqa: BLE001 —— 自检坏掉不该拦住启动
             checks = ()
         self.done.emit(checks)

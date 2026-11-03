@@ -49,6 +49,7 @@ from axo.ui.settings_dialog import (
     BackendPage,
     MusicPage,
     ReminderPage,
+    SecurityPage,
     SettingsDialog,
     SpeechPage,
     SyncPage,
@@ -71,6 +72,7 @@ from axo.ui.settings_store import (
     MusicSettings,
     ProactiveSettings,
     ReminderSettings,
+    SecuritySettings,
     SpeechSettings,
     SyncSettings,
     ToolSettings,
@@ -1016,6 +1018,7 @@ def test_the_categories_line_up_with_the_pages(qapp, data_root) -> None:
         "音乐",
         "同步",
         "数据",
+        "安全",
     ]
     assert dialog.pages.count() == len(labels)
     for row, page in enumerate(
@@ -2249,3 +2252,33 @@ def test_the_banner_is_part_of_the_theme_and_edits_immediately(qapp) -> None:
     assert seen and seen[-1].banner_text == "阿螈"
     page.banner_slider.setValue(20)
     assert seen[-1].banner_opacity == 20
+
+
+def test_the_security_page_reports_policy_and_actions() -> None:
+    page = SecurityPage()
+    changed: list[object] = []
+    passwords_seen: list[tuple[str, str]] = []
+    recovery_seen: list[str] = []
+    trust_seen: list[str] = []
+    page.changed.connect(changed.append)
+    page.password_change_requested.connect(lambda old, new: passwords_seen.append((old, new)))
+    page.recovery_regenerate_requested.connect(recovery_seen.append)
+    page.retrust_requested.connect(trust_seen.append)
+
+    page.set_state(SecuritySettings(auto_lock_enabled=False, idle_timeout_s=900))
+    assert page.minutes.isEnabled() is False
+    page.auto_box.setChecked(True)
+    assert page.minutes.isEnabled() is True
+    assert changed and changed[-1].auto_lock_enabled is True
+
+    page.current.setText("old")
+    page.new_password.setText("new password")
+    page.confirm_password.setText("new password")
+    page._on_password()
+    assert passwords_seen[-1] == ("old", "new password")
+
+    page.current.setText("old")
+    page._on_recovery()
+    page._on_trust()
+    assert recovery_seen[-1] == "old"
+    assert trust_seen[-1] == "old"

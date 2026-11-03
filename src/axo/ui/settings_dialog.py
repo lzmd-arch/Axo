@@ -32,6 +32,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -93,6 +94,7 @@ from .settings_store import (
     MusicSettings,
     ProactiveSettings,
     ReminderSettings,
+    SecuritySettings,
     SpeechSettings,
     SyncSettings,
     ToolSettings,
@@ -2976,6 +2978,149 @@ class MusicPage(QWidget):
         self._on_toggled()
 
 
+class SecurityPage(QWidget):
+    """安全页：自动锁定、改密码、恢复码、设备信任与预留接口说明。"""
+
+    changed = Signal(object)
+    password_change_requested = Signal(str, str)
+    recovery_regenerate_requested = Signal(str)
+    retrust_requested = Signal(str)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._security = SecuritySettings()
+        self._snapshot = self._security
+        self._syncing = False
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(10)
+        outer.addWidget(_hint("每次启动都必须输入应用密码；这一项不可关闭。"))
+        self.auto_box = QCheckBox("无操作时自动锁定", self)
+        self.auto_box.toggled.connect(self._on_changed)
+        outer.addWidget(self.auto_box)
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        row.addWidget(QLabel("无操作", self))
+        self.minutes = QSpinBox(self)
+        self.minutes.setRange(1, 1440)
+        self.minutes.setSuffix(" 分钟")
+        self.minutes.valueChanged.connect(self._on_changed)
+        row.addWidget(self.minutes)
+        row.addStretch(1)
+        outer.addLayout(row)
+
+        outer.addWidget(_section("修改密码"))
+        self.current = QLineEdit(self)
+        self.current.setEchoMode(QLineEdit.EchoMode.Password)
+        self.current.setPlaceholderText("当前密码")
+        outer.addWidget(self.current)
+        self.new_password = QLineEdit(self)
+        self.new_password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.new_password.setPlaceholderText("新密码（至少 8 个字符）")
+        outer.addWidget(self.new_password)
+        self.confirm_password = QLineEdit(self)
+        self.confirm_password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.confirm_password.setPlaceholderText("再次输入新密码")
+        outer.addWidget(self.confirm_password)
+        self.change_button = QPushButton("修改密码（会同时换恢复码）", self)
+        self.change_button.clicked.connect(self._on_password)
+        outer.addWidget(self.change_button)
+
+        outer.addWidget(_section("恢复码"))
+        self.recovery_note = QLabel("", self)
+        self.recovery_note.setObjectName("hint")
+        self.recovery_note.setWordWrap(True)
+        outer.addWidget(self.recovery_note)
+        self.regenerate_button = QPushButton("生成新的恢复码", self)
+        self.regenerate_button.clicked.connect(self._on_recovery)
+        outer.addWidget(self.regenerate_button)
+
+        outer.addWidget(_section("设备"))
+        self.device_note = QLabel("", self)
+        self.device_note.setWordWrap(True)
+        self.device_note.setObjectName("hint")
+        outer.addWidget(self.device_note)
+        self.trust_button = QPushButton("重新信任此设备", self)
+        self.trust_button.clicked.connect(self._on_trust)
+        outer.addWidget(self.trust_button)
+        self.note = QLabel("", self)
+        self.note.setObjectName("hint")
+        self.note.setWordWrap(True)
+        outer.addWidget(self.note)
+        outer.addWidget(
+            _hint(
+                "锁屏只隐藏界面，不加密 mem.db；同一系统账户下的程序仍可读取数据库。"
+                "设备识别只警告、不拦截。硬件密钥封装接口已预留，当前未启用。"
+            )
+        )
+        outer.addStretch(1)
+
+    def set_state(self, settings: SecuritySettings, *, device_detail: str = "") -> None:
+        self._security = settings
+        self._snapshot = settings
+        self._syncing = True
+        try:
+            self.auto_box.setChecked(settings.auto_lock_enabled)
+            self.minutes.setValue(max(1, round(settings.idle_timeout_s / 60)))
+            self.recovery_note.setText(
+                "已设置恢复码。" if settings.has_recovery else "尚未设置恢复码。"
+            )
+            self.device_note.setText(device_detail or "首次运行，将登记本机。")
+        finally:
+            self._syncing = False
+        self._sync_enabled()
+        self.current.clear()
+        self.new_password.clear()
+        self.confirm_password.clear()
+        self.note.clear()
+
+    def _sync_enabled(self) -> None:
+        self.minutes.setEnabled(self.auto_box.isChecked())
+
+    def current_settings(self) -> SecuritySettings:
+        return replace(
+            self._security,
+            auto_lock_enabled=self.auto_box.isChecked(),
+            idle_timeout_s=max(60, min(86_400, self.minutes.value() * 60)),
+        )
+
+    def revert(self) -> None:
+        self.set_state(self._snapshot, device_detail=self.device_note.text())
+        self.changed.emit(self.current_settings())
+
+    def _on_changed(self, *_args: object) -> None:
+        self._sync_enabled()
+        if not self._syncing:
+            self.changed.emit(self.current_settings())
+
+    def _on_password(self) -> None:
+        current = self.current.text()
+        new = self.new_password.text()
+        if len(new) < 8 or len(new) > 1024:
+            self.note.setText("新密码需要 8–1024 个字符。")
+            return
+        if new != self.confirm_password.text():
+            self.note.setText("两次输入的新密码不一致。")
+            return
+        self.password_change_requested.emit(current, new)
+
+    def _on_recovery(self) -> None:
+        self.recovery_regenerate_requested.emit(self.current.text())
+
+    def _on_trust(self) -> None:
+        self.retrust_requested.emit(self.current.text())
+
+    def show_note(self, text: str) -> None:
+        self.note.setText(text)
+
+    def show_recovery_code(self, code: str) -> None:
+        from .. import passwords
+
+        self.recovery_note.setText(
+            "新恢复码（只显示这一次）：" + passwords.display_recovery_code(code)
+        )
+
+
 class SettingsDialog(QDialog):
     """设置窗口本体。非模态——改一下就要看一眼主窗口，模态会把这件事变成
     "关窗 → 看效果 → 再开窗"。"""
@@ -2996,6 +3141,10 @@ class SettingsDialog(QDialog):
     sync_changed = Signal(object)
     sync_pair_requested = Signal()
     sync_revoke_requested = Signal(str)
+    security_changed = Signal(object)
+    password_change_requested = Signal(str, str)
+    recovery_regenerate_requested = Signal(str)
+    retrust_requested = Signal(str)
     audio_changed = Signal(bool)
     """语音输出那一页变了（出声/音量/音色/组件地址），由 :class:`SpeechPage` 转发。"""
     """「当前模型看得见图」变了。由工具页转发（见 :class:`ToolPage`）。"""
@@ -3033,6 +3182,7 @@ class SettingsDialog(QDialog):
         voice: SpeechSettings | None = None,
         music: MusicSettings | None = None,
         sync: SyncSettings | None = None,
+        security: SecuritySettings | None = None,
         expression: ExpressionSettings | None = None,
         boot: BootSettings | None = None,
     ) -> None:
@@ -3085,6 +3235,7 @@ class SettingsDialog(QDialog):
             "音乐",
             "同步",
             "数据",
+            "安全",
         ):
             item = QListWidgetItem(label)
             item.setSizeHint(QSize(0, item_height))
@@ -3105,6 +3256,7 @@ class SettingsDialog(QDialog):
         self.music = MusicPage(self)
         self.sync = SyncPage(self)
         self.data = DataPage(self)
+        self.security = SecurityPage(self)
         self.pages.addWidget(self.appearance)
         self.pages.addWidget(self.persona)
         self.pages.addWidget(self.backend)
@@ -3116,6 +3268,7 @@ class SettingsDialog(QDialog):
         self.pages.addWidget(self.music)
         self.pages.addWidget(self.sync)
         self.pages.addWidget(self.data)
+        self.pages.addWidget(self.security)
         # **页面放进滚动区**：窗口高度不再由最长的那一页决定。没有这一层时，
         # 内容更高的页面会把 QDialog 一路撑高，在 1080p 屏上接近满高。
         self.page_scroll = QScrollArea(self)
@@ -3191,6 +3344,10 @@ class SettingsDialog(QDialog):
         self.data.change_location_requested.connect(self.change_data_location_requested)
         self.data.restore_default_requested.connect(self.restore_data_location_requested)
         self.data.onboarding_requested.connect(self.onboarding_requested)
+        self.security.changed.connect(self.security_changed)
+        self.security.password_change_requested.connect(self.password_change_requested)
+        self.security.recovery_regenerate_requested.connect(self.recovery_regenerate_requested)
+        self.security.retrust_requested.connect(self.retrust_requested)
 
         self.set_state(
             theme,
@@ -3203,6 +3360,7 @@ class SettingsDialog(QDialog):
             voice=voice if voice is not None else SpeechSettings(),
             music=music if music is not None else MusicSettings(),
             sync=sync if sync is not None else SyncSettings(),
+            security=security,
             expression=expression,
             boot=boot,
         )
@@ -3242,6 +3400,7 @@ class SettingsDialog(QDialog):
         voice: SpeechSettings,
         music: MusicSettings | None = None,
         sync: SyncSettings | None = None,
+        security: SecuritySettings | None = None,
         expression: ExpressionSettings | None = None,
         boot: BootSettings | None = None,
     ) -> None:
@@ -3264,6 +3423,7 @@ class SettingsDialog(QDialog):
         self.speech.set_state(voice if voice is not None else SpeechSettings())
         self.music.set_state(music if music is not None else MusicSettings())
         self.sync.set_state(sync if sync is not None else SyncSettings())
+        self.security.set_state(security if security is not None else SecuritySettings())
 
     def set_resolved(self, resolved: Resolved) -> None:
         self.appearance.set_resolved(resolved)
@@ -3336,6 +3496,7 @@ class SettingsDialog(QDialog):
         self.memory.revert()
         self.reminders.revert()
         self.music.revert()
+        self.security.revert()
 
     # ── 连接测试 ────────────────────────────────────────────────────────────
 

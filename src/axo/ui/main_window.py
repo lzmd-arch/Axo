@@ -64,6 +64,7 @@ from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QImage, QK
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -86,7 +87,7 @@ from memcore.graph import GraphIndex
 from memcore.recall import RecallConfig
 from memcore.store import MemoryStore
 
-from .. import autostart
+from .. import autostart, passwords
 from ..agent.background import CommandJobs
 from ..agent.catalog import CHAT_TOOL_NAMES, default_tools
 from ..agent.checkpoints import CheckpointStore
@@ -123,6 +124,7 @@ from ..agent.workspace import build_workspace_context
 from ..asr import Transcription
 from ..attachments import Attachment, attachment_for, body_of
 from ..busd.launcher import launch_blocked_reason, spawn_daemon, stop_daemon
+from ..device_identity import compare_device, trust_current_device
 from ..expression.layer import ExpressionLayer, ExpressionOutcome
 from ..expression.mix import MixedRenderer
 from ..expression.sir import parse as parse_sir
@@ -215,8 +217,10 @@ from .data_root import MoveReport, discard_source, stage_move
 from .errorlog import log_ui_error
 from .expression_worker import ExpressionWorker
 from .glass import AuroraBackdrop
+from .idle import IdleMonitor
 from .layout import plan_pane_sizes
 from .llama_worker import LlamaRuntimeWorker
+from .lock_overlay import LockOverlay
 from .memory_window import MemoryWindow
 from .memory_worker import (
     AUTO_GRAPH_MAX,
@@ -251,6 +255,7 @@ from .settings_store import (
     MusicSettings,
     ProactiveSettings,
     ReminderSettings,
+    SecuritySettings,
     SettingsStore,
     SyncSettings,
     ToolSettings,
@@ -259,6 +264,7 @@ from .settings_store import (
 from .speech_pipeline import SpeechPipeline
 from .speech_player import SpeechPlayer, TtsWorker
 from .speech_process import SpeechLauncher
+from .startup_gate import StartupGate
 from .sync_dialog import PairApprovalBroker, SyncPairingDialog
 from .theme import Resolved, Theme, resolve
 from .theme_qt import QSettingsBackend, apply_theme, os_color_scheme
@@ -268,6 +274,16 @@ from .voice import DecodeWorker, SegmentWorker, VoiceRecorder
 from .weather_watch_worker import WeatherWatchWorker
 from .widgets import SESSION_TIME_ROLE, SESSION_TITLE_ROLE, ElidedLabel, SessionItemDelegate
 from .window_place import place_window
+
+
+def _notify_tray(owner: Any, title: str, body: str) -> None:
+    """锁定时把托盘正文换成通用文案；解锁后照旧。模块级，便于测试替身。"""
+    if getattr(owner, "_locked", False):
+        body = "已锁定：解锁后查看。"
+    tray = getattr(owner, "_tray", None)
+    if tray is not None:
+        tray.show_message(title, body)
+
 
 __all__ = ["MainWindow"]
 
@@ -778,6 +794,19 @@ class MainWindow(QMainWindow):
         self._reminder_settings: ReminderSettings = self._settings_store.load_reminders()
         self._proactive_settings: ProactiveSettings = self._settings_store.load_proactive()
         self._sync_settings: SyncSettings = self._settings_store.load_sync()
+        self._security_settings: SecuritySettings = self._settings_store.load_security()
+        self._locked = False
+        self._last_activity_touch = 0.0
+        self._lock_overlay: LockOverlay | None = None
+        self._fullscreen = True
+        self._pre_lock_sizes: list[int] | None = None
+        self._pre_lock_ledger = False
+        self._pre_lock_windows: dict[str, bool] = {}
+        self._idle = IdleMonitor(
+            timeout_s=self._security_settings.idle_timeout_s,
+            enabled=self._security_settings.auto_lock_enabled,
+            parent=self,
+        )
         self._sync_controller: SyncController | None = None
         self._sync_broker = PairApprovalBroker()
         self._sync_dialog: SyncPairingDialog | None = None
@@ -925,6 +954,7 @@ class MainWindow(QMainWindow):
         #: 放在 ``_build_ui`` 之前：图标要在窗口第一次显示时就位。
         self._tray = TrayController(parent=self)
         self._tray.show_requested.connect(self._on_tray_show)
+        self._tray.lock_requested.connect(lambda: self._lock("manual"))
         # 「立即巩固」。**与定时那条路共用一个 worker，只差一个 force**——手动按下
         # 就是"我不在乎有没有新东西，现在就跑一遍"，而那正是 GraphWorker 的 force
         # 那一档。两条路分开写两套启动逻辑的话，单飞守卫与推迟分支就会有两份实现，
@@ -1175,6 +1205,10 @@ class MainWindow(QMainWindow):
         # 把错过的收掉，所以有那个顺序约束），这里没有。
         self._proactive.start()
         self._start_bus_daemon()
+        app_instance = QApplication.instance()
+        if app_instance is not None:
+            app_instance.installEventFilter(self)
+        self._idle.start()
 
         # **接管周期巩固。** 排在这里没有提醒那条的时序约束（``start()`` 不同步发
         # 信号），所以它其实可以更早；放在一起是让"这个程序里有两块表"这件事只有
@@ -1301,8 +1335,31 @@ class MainWindow(QMainWindow):
         super().changeEvent(event)
         if event.type() == QEvent.Type.WindowStateChange:
             view = getattr(self, "chat_view", None)
-            if view is not None:
+            if view is not None and not getattr(self, "_locked", False):
                 view.set_wallpaper_playing(not self.isMinimized())
+
+    def eventFilter(self, _watched: Any, event: Any) -> bool:  # noqa: N802
+        """应用级输入活动 → 重置 idle 计时。返回 False，不拦截事件。"""
+        if getattr(self, "_locked", False):
+            return False
+        if event.type() in (
+            QEvent.Type.MouseMove,
+            QEvent.Type.MouseButtonPress,
+            QEvent.Type.MouseButtonDblClick,
+            QEvent.Type.KeyPress,
+            QEvent.Type.KeyRelease,
+            QEvent.Type.Wheel,
+            QEvent.Type.TouchBegin,
+            QEvent.Type.TouchUpdate,
+            QEvent.Type.TabletMove,
+            QEvent.Type.FocusIn,
+            QEvent.Type.WindowActivate,
+        ):
+            now = time.monotonic()
+            if now - self._last_activity_touch >= 1.0:
+                self._last_activity_touch = now
+                self._idle.touch()
+        return False
 
     def _on_os_color_scheme_changed(self, _scheme: Any = None) -> None:
         """系统明暗变了。**这就是裁决 5「两侧一起跟」的落点。**
@@ -1322,6 +1379,8 @@ class MainWindow(QMainWindow):
         backdrop = getattr(self, "_backdrop", None)
         if backdrop is not None and self.centralWidget() is not None:
             backdrop.setGeometry(self.centralWidget().rect())
+        if self._lock_overlay is not None and self.centralWidget() is not None:
+            self._lock_overlay.setGeometry(self.centralWidget().rect())
 
     def showEvent(self, event: Any) -> None:  # noqa: N802
         super().showEvent(event)
@@ -1329,7 +1388,7 @@ class MainWindow(QMainWindow):
         if backdrop is not None:
             backdrop.set_animated(self._theme.motion)
         view = getattr(self, "chat_view", None)
-        if view is not None and not self.isMinimized():
+        if view is not None and not self.isMinimized() and not getattr(self, "_locked", False):
             # 关窗只是收托盘：网页与视频壁纸在隐藏期间应当停，回来再继续。
             view.set_wallpaper_playing(True)
 
@@ -1356,8 +1415,10 @@ class MainWindow(QMainWindow):
         outer = QVBoxLayout(central)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
-        outer.addWidget(self._build_header())
-        outer.addWidget(self._build_context_strip())
+        self._header = self._build_header()
+        outer.addWidget(self._header)
+        self._context_strip = self._build_context_strip()
+        outer.addWidget(self._context_strip)
 
         splitter = QSplitter(Qt.Orientation.Horizontal, central)
         splitter.addWidget(self._build_session_pane())
@@ -1457,6 +1518,10 @@ class MainWindow(QMainWindow):
         self.settings_button = QPushButton("设置", header)
         self.settings_button.setToolTip("外观（主色 / 明暗 / 壁纸）与后端（服务地址）")
         row.addWidget(self.settings_button)
+
+        self.lock_button = QPushButton("锁定", header)
+        self.lock_button.setToolTip("立即锁定界面（Ctrl+L）；解锁需要应用密码")
+        row.addWidget(self.lock_button)
 
         self.ledger_button = QPushButton("注入 ▸", header)
         self.ledger_button.setCheckable(True)
@@ -1633,6 +1698,8 @@ class MainWindow(QMainWindow):
         self.memory_button.clicked.connect(self._on_open_memory)
         self.music_button.clicked.connect(self._on_open_music)
         self.settings_button.clicked.connect(self._on_open_settings)
+        self.lock_button.clicked.connect(lambda: self._lock("manual"))
+        self._idle.idle.connect(lambda: self._lock("idle"))
         self.session_list.currentItemChanged.connect(self._on_session_selected)
         self.delete_session_button.clicked.connect(self._on_delete_session)
 
@@ -1648,6 +1715,16 @@ class MainWindow(QMainWindow):
         # 按它正是因为想结束进程。
         quit_action.triggered.connect(self._quit)
         self.addAction(quit_action)
+
+        lock_action = QAction("锁定", self)
+        lock_action.setShortcut(QKeySequence("Ctrl+L"))
+        lock_action.triggered.connect(lambda: self._lock("manual"))
+        self.addAction(lock_action)
+
+        fullscreen_action = QAction("全屏/窗口", self)
+        fullscreen_action.setShortcut(QKeySequence("F11"))
+        fullscreen_action.triggered.connect(self._toggle_fullscreen)
+        self.addAction(fullscreen_action)
 
     # ── 会话 ────────────────────────────────────────────────────────────────
 
@@ -2265,6 +2342,8 @@ class MainWindow(QMainWindow):
         audio: bytes = "",
         sticker: Sticker | None = None,
     ) -> None:
+        if getattr(self, "_locked", False):
+            return
         # **用户开口 = 她让路。** 这一句排在下面 ``_streaming`` 那一支**之前**：
         # 生成中再提交会被忽略，但"她正在说"与生成是两件事——她说话**不锁输入框**
         # （那正是这一条链的立论），所以用户完全可能在她说到一半时开口。
@@ -3317,7 +3396,7 @@ class MainWindow(QMainWindow):
             open_external=lambda target, kind: self._ui_call(self._open_external, target, kind),
             clipboard_read=lambda: self._ui_call(lambda: QApplication.clipboard().text()),
             clipboard_write=lambda text: self._ui_call(self._write_clipboard, text),
-            notify=lambda title, body: self._ui_call(lambda: self._tray.show_message(title, body)),
+            notify=lambda title, body: self._ui_call(lambda: _notify_tray(self, title, body)),
             music=(
                 self._music_channel() if callable(getattr(self, "_music_channel", None)) else None
             ),
@@ -3591,6 +3670,8 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def _on_call_utterance(self, result: Transcription) -> None:
         """通话识别出一句：走与打字同一条提交路。"""
+        if getattr(self, "_locked", False):
+            return
         if not result.ok:
             return
         self._on_submit(result.text, spoken=True, audio=result.audio)
@@ -3889,7 +3970,13 @@ class MainWindow(QMainWindow):
 
         措辞不在这里定：:class:`~axo.agent.reminders.Alert` 在纯层。
         """
-        self._tray.show_message(alert.heading(), alert.body())
+        if getattr(self, "_locked", False):
+            # 锁屏上不显示提醒正文；只告诉用户“解锁后查看”。提醒本身仍写进隐藏的
+            # 对话流，解锁后能看到。
+            self._tray.show_message(alert.heading(), "已锁定：解锁后查看。")
+            self._tell_reminder(alert)
+            return
+        _notify_tray(self, alert.heading(), alert.body())
         if self._reminder_settings.wake_on_alert:
             self._wake_up()
         if (
@@ -4539,7 +4626,7 @@ class MainWindow(QMainWindow):
         由 :meth:`_on_tts_done` 说一句——两种收场不一样：一个是"我不要"，一个是
         "我要但做不到"，后者必须说出来。
         """
-        if not self._voice_settings.enabled or not text.strip():
+        if getattr(self, "_locked", False) or not self._voice_settings.enabled or not text.strip():
             return
         thread = QThread(self)
         worker = TtsWorker(self._speech_backend, text, self._voice_settings.voice)
@@ -5105,6 +5192,7 @@ class MainWindow(QMainWindow):
                     reminders=self._reminder_settings,
                     proactive=self._proactive_settings,
                     sync=getattr(self, "_sync_settings", SyncSettings()),
+                    security=self._security_settings,
                     expression=self._expression_settings,
                     boot=self._settings_store.load_boot(),
                 )
@@ -5123,6 +5211,10 @@ class MainWindow(QMainWindow):
                 dialog.voice_changed.connect(self._on_voice_settings_changed)
                 dialog.music_changed.connect(self._on_music_settings_changed)
                 dialog.memory_changed.connect(self._on_memory_changed)
+                dialog.security_changed.connect(self._on_security_changed)
+                dialog.password_change_requested.connect(self._on_password_change_requested)
+                dialog.recovery_regenerate_requested.connect(self._on_recovery_regenerate_requested)
+                dialog.retrust_requested.connect(self._on_retrust_requested)
                 dialog.reminders_changed.connect(self._on_reminders_changed)
                 dialog.proactive_changed.connect(self._on_proactive_settings_changed)
                 if hasattr(dialog, "sync_changed"):
@@ -5155,6 +5247,7 @@ class MainWindow(QMainWindow):
                     reminders=self._reminder_settings,
                     proactive=self._proactive_settings,
                     sync=getattr(self, "_sync_settings", SyncSettings()),
+                    security=self._security_settings,
                     expression=self._expression_settings,
                     boot=self._settings_store.load_boot(),
                 )
@@ -5180,6 +5273,11 @@ class MainWindow(QMainWindow):
             # 这个**进程**的事实）。搬迁跨重启才生效，所以这里读到的与设置里那一格
             # 未必是同一个值——那正是要显示的东西。
             self._settings_dialog.set_data(self._data_root, self._data_source)
+            if hasattr(self._settings_dialog, "security"):
+                self._settings_dialog.security.set_state(
+                    self._settings_store.load_security(),
+                    device_detail=self._device_detail(),
+                )
         except Exception as exc:  # noqa: BLE001 —— 见 docstring：要把它变成一句人话
             # 构造失败时上面那句赋值没跑到，于是 `_settings_dialog` 仍是 None：
             # 再点一次会重试，而不是永远拿着一个坏掉的对象。
@@ -5235,6 +5333,128 @@ class MainWindow(QMainWindow):
         # 被调暗过，用原色画出来的图标会和窗口对不上。
         if self._settings_dialog is not None:
             self._settings_dialog.set_resolved(resolved)
+
+    # ── 锁定 ────────────────────────────────────────────────────────────────
+
+    def _ensure_lock_overlay(self) -> LockOverlay:
+        if self._lock_overlay is None:
+            self._lock_overlay = LockOverlay(self.centralWidget(), accent=self._resolved.accent)
+            self._lock_overlay.unlock_requested.connect(self._unlock)
+            self._lock_overlay.recovery_requested.connect(self._lock_recovery)
+            self._lock_overlay.quit_requested.connect(self._quit)
+        return self._lock_overlay
+
+    def _lock(self, reason: str = "manual") -> None:
+        """锁定界面。**不写库、不 clear 对话**；只隐藏并停掉会漏内容的出口。"""
+        if getattr(self, "_locked", False):
+            return
+        self._locked = True
+        self._idle.stop()
+        for name, kwargs in (
+            ("_on_stop", {}),
+            ("_end_voice", {"discard": True}),
+            ("_end_call", {}),
+            ("_stop_speech", {"tell": False}),
+        ):
+            action = getattr(self, name, None)
+            if callable(action):
+                with contextlib.suppress(Exception):
+                    action(**kwargs)
+        music = getattr(self, "_music_service", None)
+        if music is not None and hasattr(music, "control"):
+            with contextlib.suppress(Exception):
+                music.control("pause")
+
+        self._pre_lock_sizes = self._splitter.sizes()
+        self._pre_lock_ledger = self.ledger_button.isChecked()
+        self._pre_lock_windows = {}
+        for name in (
+            "_memory_window",
+            "_settings_dialog",
+            "_music_window",
+            "_onboarding",
+            "_sync_dialog",
+        ):
+            window = getattr(self, name, None)
+            if window is not None and window.isVisible():
+                self._pre_lock_windows[name] = True
+                window.hide()
+        self._pre_lock_title = self.windowTitle()
+        self._header.hide()
+        self._context_strip.hide()
+        self._splitter.hide()
+        self.chat_view.set_wallpaper_playing(False)
+        self.setWindowTitle("Axo · 已锁定")
+        overlay = self._ensure_lock_overlay()
+        overlay.set_reason("长时间无操作" if reason == "idle" else "手动锁定")
+        overlay.reset()
+        overlay.setGeometry(self.centralWidget().rect())
+        if not self.isVisible() and reason == "manual":
+            self.showFullScreen()
+        overlay.show()
+        overlay.raise_()
+        overlay.focus_password()
+
+    def _unlock(self, password: str) -> None:
+        if not getattr(self, "_locked", False):
+            return
+        if not self._security_settings.has_password:
+            self._ensure_lock_overlay().show_error("没有可用的密码记录。")
+            return
+        from .. import passwords
+
+        if not passwords.verify_password(password, self._security_settings.password_verifier):
+            overlay = self._ensure_lock_overlay()
+            overlay.show_error("密码不正确。")
+            return
+        self._finish_unlock()
+
+    def _lock_recovery(self) -> None:
+        """锁屏上的恢复码入口：复用启动闸门的 recovery 模式。"""
+        security = self._settings_store.load_security()
+        gate = StartupGate(
+            theme=self._theme,
+            resolved=self._resolved,
+            security=security,
+            save=self._settings_store.save_security,
+            mode="recovery",
+            parent=self,
+        )
+        if gate.exec() == QDialog.DialogCode.Accepted:
+            self._security_settings = self._settings_store.load_security()
+            self._finish_unlock()
+        gate.close()
+
+    def _finish_unlock(self) -> None:
+        self._locked = False
+        overlay = self._ensure_lock_overlay()
+        overlay.hide()
+        self._header.show()
+        self._context_strip.show()
+        self._splitter.show()
+        if self._pre_lock_sizes:
+            self._splitter.setSizes(self._pre_lock_sizes)
+        self.ledger_button.setChecked(self._pre_lock_ledger)
+        self.chat_view.set_wallpaper_playing(not self.isMinimized())
+        self.setWindowTitle(self._pre_lock_title)
+        for name in self._pre_lock_windows:
+            window = getattr(self, name, None)
+            if window is not None:
+                window.show()
+        self._pre_lock_windows = {}
+        self._idle.touch()
+        self._idle.start()
+        self.chat_view.setFocus()
+
+    def _toggle_fullscreen(self) -> None:
+        if getattr(self, "_locked", False):
+            return
+        if self.isFullScreen():
+            self._fullscreen = False
+            self.showNormal()
+        else:
+            self._fullscreen = True
+            self.showFullScreen()
 
     @Slot(object)
     def _on_backend_changed(self, backend: BackendSettings) -> None:
@@ -5425,6 +5645,96 @@ class MainWindow(QMainWindow):
             self._settings_dialog.set_reminder_note(
                 "已设成开机自启。" if changed and settings.autostart else ""
             )
+
+    @Slot(object)
+    def _on_security_changed(self, settings: SecuritySettings) -> None:
+        # 页面只改策略；**密码/恢复码 verifier 以 store 为准**。否则用户刚改完密码/
+        # 恢复码，再勾一下自动锁定，就会把页面里那份旧 verifier 写回去。
+        from dataclasses import replace
+
+        current = self._settings_store.load_security()
+        updated = replace(
+            current,
+            auto_lock_enabled=settings.auto_lock_enabled,
+            idle_timeout_s=settings.idle_timeout_s,
+        )
+        self._security_settings = updated
+        self._settings_store.save_security(updated)
+        self._idle.configure(
+            timeout_s=updated.idle_timeout_s,
+            enabled=updated.auto_lock_enabled,
+        )
+
+    def _security_note(self, text: str) -> None:
+        if self._settings_dialog is not None and hasattr(self._settings_dialog, "security"):
+            self._settings_dialog.security.show_note(text)
+
+    def _verify_current_password(self, current: str) -> bool:
+        if not passwords.verify_password(current, self._security_settings.password_verifier):
+            self._security_note("当前密码不正确。")
+            return False
+        return True
+
+    @Slot(str, str)
+    def _on_password_change_requested(self, current: str, new_password: str) -> None:
+        if not self._verify_current_password(current):
+            return
+        if len(new_password) > 1024:
+            self._security_note("新密码太长。")
+            return
+        code = passwords.new_recovery_code()
+        updated = self._settings_store.load_security()
+        from dataclasses import replace
+
+        updated = replace(
+            updated,
+            password_verifier=passwords.hash_password(new_password),
+            recovery_verifier=passwords.hash_recovery_code(code),
+        )
+        self._settings_store.save_security(updated)
+        self._security_settings = updated
+        self._security_note(
+            "密码已修改。新恢复码（只显示这一次）：" + passwords.display_recovery_code(code)
+        )
+
+    @Slot(str)
+    def _on_recovery_regenerate_requested(self, current: str) -> None:
+        if not self._verify_current_password(current):
+            return
+        from dataclasses import replace
+
+        code = passwords.new_recovery_code()
+        updated = replace(
+            self._settings_store.load_security(),
+            recovery_verifier=passwords.hash_recovery_code(code),
+        )
+        self._settings_store.save_security(updated)
+        self._security_settings = updated
+        self._security_note("新恢复码（只显示这一次）：" + passwords.display_recovery_code(code))
+
+    @Slot(str)
+    def _on_retrust_requested(self, current: str) -> None:
+        if not self._verify_current_password(current):
+            return
+        from ..device_identity import ensure_identity
+        from ..paths import identity_dir
+
+        path = identity_dir() / "device.json"
+        identity = ensure_identity(path)
+        try:
+            updated = trust_current_device(path, identity)
+        except OSError:
+            self._security_note("无法写入设备身份文件。")
+            return
+        self._security_note(f"已信任当前设备（{updated.device_id[:8]}）。")
+
+    def _device_detail(self) -> str:
+        from ..device_identity import ensure_identity
+        from ..paths import identity_dir
+
+        identity = ensure_identity(identity_dir() / "device.json")
+        state, detail = compare_device(identity)
+        return f"{detail} · {identity.device_id[:8]}"
 
     @Slot(object)
     def _on_memory_changed(self, settings: MemorySettings) -> None:
@@ -5729,7 +6039,7 @@ class MainWindow(QMainWindow):
             # **只有手动那趟弹气泡。** 自动那趟每天一次，弹出来就是噪音，而它的结果
             # 落在热度面板上（见上）。手动那趟不弹就等于"点了没反应"，而那个动作的
             # 全部意义就是这个回声。
-            self._tray.show_message("睡眠巩固", line)
+            _notify_tray(self, "睡眠巩固", line)
 
     @Slot()
     def _on_consolidation_skipped(self) -> None:
@@ -5768,7 +6078,7 @@ class MainWindow(QMainWindow):
             self._settings_dialog.set_consolidate_busy(False)
             self._settings_dialog.set_consolidate_note(text)
         if manual:
-            self._tray.show_message("睡眠巩固", text)
+            _notify_tray(self, "睡眠巩固", text)
 
     def _note_consolidate(self, text: str) -> None:
         """把"手动按下去之后发生了什么"说出去。**两个出口，因为两个入口。**
@@ -5783,7 +6093,7 @@ class MainWindow(QMainWindow):
         if self._settings_dialog is not None:
             self._settings_dialog.set_consolidate_busy(False)
             self._settings_dialog.set_consolidate_note(text)
-        self._tray.show_message("睡眠巩固", text)
+        _notify_tray(self, "睡眠巩固", text)
 
     def _push_context_to_memory_window(self) -> None:
         """把「用户在哪个会话」「当前嵌入后端是哪个」推给记忆窗口。
@@ -5910,9 +6220,18 @@ class MainWindow(QMainWindow):
         * ``activateWindow()``——拿到键盘焦点。只 ``show`` 的话窗口会出现在最底层，
           用户以为没反应，然后再点一次图标。
         """
-        self.show()
+        if self._fullscreen:
+            self.showFullScreen()
+        else:
+            self.show()
         self.raise_()
         self.activateWindow()
+        if getattr(self, "_locked", False):
+            overlay = self._ensure_lock_overlay()
+            overlay.setGeometry(self.centralWidget().rect())
+            overlay.show()
+            overlay.raise_()
+            overlay.focus_password()
 
     @Slot()
     def _on_open_data_folder(self) -> None:
@@ -6250,6 +6569,9 @@ class MainWindow(QMainWindow):
         self._refresh_sync_status()
 
     def _poll_sync_approval(self) -> None:
+        if getattr(self, "_locked", False):
+            # 不要 pop：配对请求先留在队列里，解锁后再弹，避免设备名/IP 出现在锁屏上。
+            return
         box = self._sync_broker.pop_pending()
         if box is None:
             return
@@ -6285,6 +6607,15 @@ class MainWindow(QMainWindow):
         if self._shutting_down:
             return
         self._shutting_down = True
+        idle = getattr(self, "_idle", None)
+        if idle is not None:
+            idle.stop()
+        app_instance = QApplication.instance()
+        if app_instance is not None:
+            app_instance.removeEventFilter(self)
+        overlay = getattr(self, "_lock_overlay", None)
+        if overlay is not None:
+            overlay.hide()
         runtime = getattr(self, "_runtime", None)
         if runtime is not None:
             runtime.stop()

@@ -115,6 +115,9 @@ class TrayController(QObject):
     show_requested = Signal()
     """菜单里的「显示主窗口」/ 双击图标。"""
 
+    lock_requested = Signal()
+    """菜单里的「锁定」。与 show/consolidate 同形：托盘只把点击说出去。"""
+
     consolidate_requested = Signal()
     """菜单里的「立即巩固」。**与 :attr:`show_requested` 同形**：托盘不认识主窗口，
     更不认识巩固是什么，它只把"用户按了这一项"说出去。
@@ -149,6 +152,9 @@ class TrayController(QObject):
         self._show_action = QAction("显示主窗口", self._menu)
         self._show_action.triggered.connect(self.show_requested)
         self._menu.addAction(self._show_action)
+        self._lock_action = QAction("锁定", self._menu)
+        self._lock_action.triggered.connect(self.lock_requested)
+        self._menu.addAction(self._lock_action)
         # 排在「显示」之后、「退出」之前：它是一次真的计算（几秒到几分钟），而分隔线
         # 那一边是"结束进程"。夹在中间，误点的代价最小——最坏是白跑一轮。
         self._consolidate_action = QAction("立即巩固", self._menu)

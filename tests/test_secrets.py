@@ -80,10 +80,14 @@ def test_macos_keychain_keeps_the_key_out_of_the_settings(monkeypatch: pytest.Mo
     monkeypatch.setattr(secrets, "_WINDOWS", False)
     monkeypatch.setattr(secrets, "_keychain_available", lambda: True)
     monkeypatch.setattr(
-        secrets, "_keychain_store", lambda value: vault.__setitem__("key", value) or True
+        secrets,
+        "_keychain_store",
+        lambda value, _account=None: vault.__setitem__("key", value) or True,
     )
-    monkeypatch.setattr(secrets, "_keychain_load", lambda: vault.get("key", ""))
-    monkeypatch.setattr(secrets, "_keychain_delete", lambda: vault.pop("key", None) is not None)
+    monkeypatch.setattr(secrets, "_keychain_load", lambda _account=None: vault.get("key", ""))
+    monkeypatch.setattr(
+        secrets, "_keychain_delete", lambda _account=None: vault.pop("key", None) is not None
+    )
 
     stored = secrets.protect(_FAKE_KEY)
 

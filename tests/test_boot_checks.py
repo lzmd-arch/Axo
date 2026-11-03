@@ -211,3 +211,39 @@ def test_one_broken_check_does_not_wipe_the_panel(monkeypatch, tmp_path: Path) -
     assert "检测失败" in checks["backend"].detail
     # 在它之前查到的结果还在
     assert checks["data"].ok is True
+
+
+def test_identity_check_is_warning_only(monkeypatch, tmp_path) -> None:
+    from axo import device_identity
+    from axo.device_identity import DeviceIdentity
+    from axo.ui.boot_checks import collect_checks
+
+    _isolate(monkeypatch, tmp_path)
+    device = DeviceIdentity("dev", "本机", "Windows", "", "windows-machine-guid", "now")
+    monkeypatch.setattr(
+        device_identity,
+        "compare_device",
+        lambda _identity: ("mismatch", "设备指纹与登记不同（仅提醒）"),
+    )
+    checks = {check.key: check for check in collect_checks(device=device)}
+    assert checks["identity"].ok is False
+    assert "仅提醒" in checks["identity"].detail
+
+
+def test_password_check_reports_record_health(monkeypatch, tmp_path) -> None:
+    from axo import passwords
+    from axo.ui.boot_checks import collect_checks
+    from axo.ui.settings_store import SecuritySettings
+
+    _isolate(monkeypatch, tmp_path)
+    missing = {check.key: check for check in collect_checks(security=SecuritySettings())}
+    assert missing["password"].ok is False
+    assert "设置流程" in missing["password"].detail
+
+    good = passwords.hash_password("correct horse", iterations=100_000)
+    ready = {
+        check.key: check
+        for check in collect_checks(security=SecuritySettings(password_verifier=good))
+    }
+    assert ready["password"].ok is True
+    assert "PBKDF2" in ready["password"].detail

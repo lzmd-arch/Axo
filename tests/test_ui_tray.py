@@ -121,7 +121,7 @@ def test_an_available_tray_has_three_menu_items(qapp: Any) -> None:
     assert tray.active is True
 
     actions = [one for one in tray._menu.actions() if not one.isSeparator()]
-    assert [one.text() for one in actions] == ["显示主窗口", "立即巩固", "退出"]
+    assert [one.text() for one in actions] == ["显示主窗口", "锁定", "立即巩固", "退出"]
 
 
 def test_the_menu_items_emit_their_signals(qapp: Any) -> None:

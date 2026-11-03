@@ -766,8 +766,10 @@ class SplashScreen(QWidget):
             )
 
         # 中段：档案面板显示**真实自检结果**（app 在启动前跑好传进来）
-        if act.kind == "glass" or act.id == "permission":
-            if act.kind == "glass":
+        if act.kind == "glass" or act.id in ("permission", "identity"):
+            if act.id == "identity":
+                keys = (("identity", "设备识别"), ("password", "启动口令"))
+            elif act.kind == "glass":
                 keys = (("data", "数据目录"), ("archive", "记忆库"), ("persona", "人格锚"))
             else:
                 keys = (("backend", "后端"), ("scope", "数据边界"), ("tools", "工具沙箱"))

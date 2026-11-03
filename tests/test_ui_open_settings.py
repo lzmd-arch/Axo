@@ -35,6 +35,7 @@ from axo.ui.settings_store import (
     MusicSettings,
     ProactiveSettings,
     ReminderSettings,
+    SecuritySettings,
     SpeechSettings,
 )
 from axo.ui.theme import Theme, resolve
@@ -83,6 +84,7 @@ def _window() -> SimpleNamespace:
         _routing_mode=ROUTING_AUTO,
         # 表达层（实验）：默认关，与一个刚装好的终端一模一样。
         _expression_settings=ExpressionSettings(),
+        _security_settings=SecuritySettings(),
         # 启动动画设置：从设置库里读；替身只要给出一份默认值。
         # 记忆设置也走同一个 store；**故意给两个非默认值**，用来钉住设置页
         # 不能再把这四个字段漏掉后写回默认。
@@ -128,6 +130,10 @@ def _window() -> SimpleNamespace:
         _on_voice_settings_changed=lambda *_args: None,
         _on_music_settings_changed=lambda *_args: None,
         _on_memory_changed=lambda *_args: None,
+        _on_security_changed=lambda *_args: None,
+        _on_password_change_requested=lambda *_args: None,
+        _on_recovery_regenerate_requested=lambda *_args: None,
+        _on_retrust_requested=lambda *_args: None,
         _on_reminders_changed=lambda *_args: None,
         _on_proactive_settings_changed=lambda *_args: None,
         _on_rebuild_graph=lambda *_args: None,
@@ -180,6 +186,10 @@ def _consolidate_signals() -> SimpleNamespace:
         "routing_changed",
         "expression_changed",
         "boot_changed",
+        "security_changed",
+        "password_change_requested",
+        "recovery_regenerate_requested",
+        "retrust_requested",
         "voice_changed",
         "music_changed",
         "graph_rebuild_requested",
@@ -310,6 +320,7 @@ def test_the_settings_window_receives_the_full_memory_settings(
     qapp: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`propose_enabled` / `recall_min_score` 不能再被四个字段的 dataclass 吃掉。"""
+    warned = _catch_warnings(monkeypatch)
     captured: dict[str, Any] = {}
     fake = SimpleNamespace(
         **_consolidate_signals().__dict__,
@@ -329,5 +340,6 @@ def test_the_settings_window_receives_the_full_memory_settings(
     monkeypatch.setattr(main_window_module, "SettingsDialog", build)
     window = _window()
     MainWindow._on_open_settings(window)  # type: ignore[arg-type]
+    assert warned == [], warned
     assert captured["memory"].propose_enabled is True
     assert captured["memory"].recall_min_score == 0.37

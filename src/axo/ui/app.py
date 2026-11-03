@@ -169,13 +169,25 @@ def _remind_once() -> int:
     from .data_root import resolve_data_root
     from .notify import show_balloon
 
-    resolve_data_root(make_settings())
+    settings = make_settings()
+    resolve_data_root(settings)
+    from .settings_store import SettingsStore
+    from .theme_qt import QSettingsBackend
+
+    security = SettingsStore(QSettingsBackend(settings)).load_security()
+    if security.has_password:
+
+        def notify(title: str, body: str) -> None:
+            del body
+            show_balloon(title, "你有到点的提醒，打开 Axo 查看。")
+    else:
+        notify = show_balloon
     return run(
         reminders=ReminderStore(reminders_path()),
         fired=FiredStore(reminders_fired_path()),
         cancelled=CancelledStore(reminders_cancelled_path()),
         now=time.time(),
-        notify=show_balloon,
+        notify=notify,
     )
 
 
@@ -250,19 +262,19 @@ def main(argv: list[str] | None = None) -> int:
     # ``_apply_theme`` 是应用级样式表的唯一入口，但开屏要赶在它之前画；两处
     # 读的是同一个 ``QSettings``、同一份 ``SettingsStore.load()``，所以颜色
     # 不会分叉。隔离模式与 ``AXO_NO_SPLASH`` 由 :func:`splash_enabled` 判。
+    from .settings_store import SettingsStore
     from .splash import splash_enabled
+    from .theme import resolve
+    from .theme_qt import QSettingsBackend, os_color_scheme
 
     settings = make_settings()
+    store_now = SettingsStore(QSettingsBackend(settings))
+    theme_now = store_now.load()
     splash = None
     boot = None
     if splash_enabled():
-        from .settings_store import SettingsStore
         from .splash import SplashScreen
-        from .theme import resolve
-        from .theme_qt import QSettingsBackend, os_color_scheme
 
-        store_now = SettingsStore(QSettingsBackend(settings))
-        theme_now = store_now.load()
         boot_settings = store_now.load_boot()
         if boot_settings.enabled:
             from datetime import date
@@ -319,6 +331,14 @@ def main(argv: list[str] | None = None) -> int:
         on_progress=_move_progress if splash is not None else None,
     )
 
+    # 安全自检需要应用级设置与数据根里的设备身份；两者都在主线程读好，worker
+    # 不碰 QSettings。
+    from ..device_identity import ensure_identity
+    from ..paths import identity_dir
+
+    security = store_now.load_security()
+    device = ensure_identity(identity_dir() / "device.json")
+
     # ── 真实自检：六幕里显示的是这一台机器刚跑出来的结果 ──────────────────
     # 数据目录写探针、记忆库只读打开数条数、人格锚、后端、数据边界、工具沙箱。
     # **失败不拦启动**：只把 ✗ 与日志写出来；主窗口之后会给出真正的错误。
@@ -329,6 +349,8 @@ def main(argv: list[str] | None = None) -> int:
             worker = BootCheckWorker(
                 store_now.load_backend(),
                 store_now.load_tools(),
+                security=security,
+                device=device,
                 parent=app,
             )
 
@@ -358,6 +380,30 @@ def main(argv: list[str] | None = None) -> int:
         if worker is not None:
             worker.wait(1500)
 
+    # ── 启动闸门：六幕之后、主窗口之前 ────────────────────────────────────
+    # 主窗口在这里**还不存在**，所以解锁前没有任何聊天内容可被看到。闸门每轮启动
+    # 都出现；`AXO_ISOLATED_STATE` 只给打包自检/冒烟用，`AXO_NO_SPLASH` 不绕过。
+    if not os.environ.get("AXO_ISOLATED_STATE"):
+        from PySide6.QtWidgets import QDialog
+
+        from .startup_gate import StartupGate
+
+        if splash is not None:
+            splash.hide()
+        gate = StartupGate(
+            theme=theme_now,
+            resolved=resolve(theme_now, os_color_scheme()),
+            security=store_now.load_security(),
+            save=store_now.save_security,
+        )
+        app.startup_gate = gate  # type: ignore[attr-defined]
+        accepted = gate.exec() == QDialog.DialogCode.Accepted
+        gate.close()
+        if not accepted:
+            if splash is not None:
+                splash.close()
+            return 0
+
     # 内置表情包只在第一次播种。**目录归用户**：删掉一张默认表情是用户的决定，
     # 每次启动补回来会让"删除"看起来没生效（见 ``axo.stickers.seed_default_stickers``）。
     from ..paths import stickers_dir
@@ -380,7 +426,7 @@ def main(argv: list[str] | None = None) -> int:
     # 保持引用。父级为 None 的顶层窗口在 Python 侧如果没有别的引用，会被 GC 掉
     # 并连带销毁原生窗口——表现为"窗口一闪而过"。挂在 app 上是最省事的锚点。
     app.main_window = window  # type: ignore[attr-defined]
-    window.show()
+    window.showFullScreen()
     if splash is not None:
         splash.set_stage("就绪")
         splash.finish()

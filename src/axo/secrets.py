@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import base64
 import ctypes
+import hashlib
 import shutil
 import subprocess
 import sys
@@ -38,7 +39,14 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-__all__ = ["KEYCHAIN_MARKER", "is_available", "protect", "unprotect"]
+__all__ = [
+    "KEYCHAIN_MARKER",
+    "is_available",
+    "protect",
+    "protect_bytes",
+    "unprotect",
+    "unprotect_bytes",
+]
 
 #: ``CRYPTPROTECT_UI_FORBIDDEN``——**绝不让系统弹 UI**。没有它，某些配置下加密会弹一个
 #: 授权对话框；对一个后台线程里跑的设置保存来说，那就是一次无声的挂起。
@@ -132,7 +140,22 @@ def _keychain_available() -> bool:
     return bool(_security_binary())
 
 
-def _keychain_store(secret: str) -> bool:
+def _context_account(context: str) -> str:
+    """空 context 用旧账户；非空则按域名分离，避免 macOS 上互相覆盖。"""
+    if not context:
+        return _KEYCHAIN_ACCOUNT
+    digest = hashlib.sha256(("axo-secret-context-v1\0" + context).encode("utf-8")).hexdigest()
+    return f"axo:{digest[:16]}"
+
+
+def _context_entropy(context: str) -> bytes | None:
+    """Windows DPAPI 的 optional entropy；空 context 保持旧密文可解。"""
+    if not context:
+        return None
+    return hashlib.sha256(("axo-secret-entropy-v1\0" + context).encode("utf-8")).digest()
+
+
+def _keychain_store(secret: str, account: str = _KEYCHAIN_ACCOUNT) -> bool:
     """把 key 写进登录钥匙串。**失败返回 ``False``，不抛。**
 
     ``-U`` 是"已有就更新"：用户换了一个 key 时不能留下两条同名记录，否则 ``find``
@@ -152,7 +175,7 @@ def _keychain_store(secret: str) -> bool:
                 "-s",
                 _KEYCHAIN_SERVICE,
                 "-a",
-                _KEYCHAIN_ACCOUNT,
+                account,
                 "-w",
                 secret,
             ],
@@ -167,7 +190,7 @@ def _keychain_store(secret: str) -> bool:
     return done.returncode == 0
 
 
-def _keychain_load() -> str:
+def _keychain_load(account: str = _KEYCHAIN_ACCOUNT) -> str:
     security = _security_binary()
     if not security:
         return ""
@@ -179,7 +202,7 @@ def _keychain_load() -> str:
                 "-s",
                 _KEYCHAIN_SERVICE,
                 "-a",
-                _KEYCHAIN_ACCOUNT,
+                account,
                 "-w",
             ],
             capture_output=True,
@@ -195,7 +218,7 @@ def _keychain_load() -> str:
     return done.stdout.rstrip("\r\n")
 
 
-def _keychain_delete() -> bool:
+def _keychain_delete(account: str = _KEYCHAIN_ACCOUNT) -> bool:
     security = _security_binary()
     if not security:
         return False
@@ -207,7 +230,7 @@ def _keychain_delete() -> bool:
                 "-s",
                 _KEYCHAIN_SERVICE,
                 "-a",
-                _KEYCHAIN_ACCOUNT,
+                account,
             ],
             capture_output=True,
             text=True,
@@ -225,69 +248,18 @@ def is_available() -> bool:
     return _crypt32() is not None or _keychain_available()
 
 
-def protect(plaintext: str) -> str:
-    """明文 → 写进设置里的一串。空串进、空串出；失败也是空串。
-
-    macOS 上还会顺手清掉旧记录：``protect("")`` 是"用户把 key 删了"，留着钥匙串里
-    那条记录只会让下一次 ``find`` 找出一个用户以为已经删掉的 key。
-    """
-    if not plaintext:
-        if _keychain_available():
-            _keychain_delete()
-        return ""
-    if _WINDOWS:
-        loaded = _crypt32()
-        if loaded is None:
-            return ""
-        crypt32, kernel32 = loaded
-        source = _blob_from(plaintext.encode("utf-8"))
-        out = _DataBlob()
-        ok = crypt32.CryptProtectData(
-            ctypes.byref(source),
-            None,
-            None,
-            None,
-            None,
-            _CRYPTPROTECT_UI_FORBIDDEN,
-            ctypes.byref(out),
-        )
-        if not ok:
-            return ""
-        try:
-            cipher = ctypes.string_at(out.pbData, out.cbData)
-        finally:
-            # **DPAPI 分配的内存只能用它自己的 LocalFree 还**，不能用 Python 的释放器。
-            kernel32.LocalFree(out.pbData)
-        return base64.b64encode(cipher).decode("ascii")
-    if _keychain_available() and _keychain_store(plaintext):
-        return KEYCHAIN_MARKER
-    return ""
-
-
-def unprotect(stored: str) -> str:
-    """设置里那一串 → 明文。**任何一步不对都返回空串，绝不抛**（见模块 docstring）。"""
-    if not stored:
-        return ""
-    if stored == KEYCHAIN_MARKER:
-        return _keychain_load() if _keychain_available() else ""
-    if not _WINDOWS:
-        return ""
+def _dpapi_unprotect(cipher: bytes, entropy: bytes | None) -> str:
     loaded = _crypt32()
     if loaded is None:
         return ""
     crypt32, kernel32 = loaded
-    try:
-        cipher = base64.b64decode(stored, validate=True)
-    except (ValueError, TypeError):
-        return ""
-    if not cipher:
-        return ""
     source = _blob_from(cipher)
+    entropy_blob = None if entropy is None else _blob_from(entropy)
     out = _DataBlob()
     ok = crypt32.CryptUnprotectData(
         ctypes.byref(source),
         None,
-        None,
+        None if entropy_blob is None else ctypes.byref(entropy_blob),
         None,
         None,
         _CRYPTPROTECT_UI_FORBIDDEN,
@@ -303,3 +275,86 @@ def unprotect(stored: str) -> str:
         return raw.decode("utf-8")
     except UnicodeDecodeError:
         return ""
+
+
+def protect(plaintext: str, *, context: str = "") -> str:
+    """明文 → 写进设置里的一串。空串进、空串出；失败也是空串。
+
+    ``context`` 用于域分离：macOS 按它派生 Keychain account；Windows 按它生成
+    DPAPI optional entropy。**默认空 context 完全保持旧行为**，旧密文仍可解。
+    """
+    account = _context_account(context)
+    if not plaintext:
+        if _keychain_available():
+            _keychain_delete(account)
+        return ""
+    if _WINDOWS:
+        loaded = _crypt32()
+        if loaded is None:
+            return ""
+        crypt32, kernel32 = loaded
+        source = _blob_from(plaintext.encode("utf-8"))
+        entropy = _context_entropy(context)
+        entropy_blob = None if entropy is None else _blob_from(entropy)
+        out = _DataBlob()
+        ok = crypt32.CryptProtectData(
+            ctypes.byref(source),
+            None,
+            None if entropy_blob is None else ctypes.byref(entropy_blob),
+            None,
+            None,
+            _CRYPTPROTECT_UI_FORBIDDEN,
+            ctypes.byref(out),
+        )
+        if not ok:
+            return ""
+        try:
+            cipher = ctypes.string_at(out.pbData, out.cbData)
+        finally:
+            # **DPAPI 分配的内存只能用它自己的 LocalFree 还**，不能用 Python 的释放器。
+            kernel32.LocalFree(out.pbData)
+        return base64.b64encode(cipher).decode("ascii")
+    if _keychain_available() and _keychain_store(plaintext, account):
+        return KEYCHAIN_MARKER if not context else f"keychain:v2:{account}"
+    return ""
+
+
+def unprotect(stored: str, *, context: str = "") -> str:
+    """设置里那一串 → 明文。**任何一步不对都返回空串，绝不抛**（见模块 docstring）。"""
+    if not stored:
+        return ""
+    if stored == KEYCHAIN_MARKER:
+        return _keychain_load(_context_account(context)) if _keychain_available() else ""
+    if stored.startswith("keychain:v2:"):
+        if not _keychain_available():
+            return ""
+        return _keychain_load(stored.removeprefix("keychain:v2:"))
+    if not _WINDOWS:
+        return ""
+    try:
+        cipher = base64.b64decode(stored, validate=True)
+    except (ValueError, TypeError):
+        return ""
+    if not cipher:
+        return ""
+    # context 非空是**新写入**的域分离密文；不能再退回无 entropy，否则不同
+    # context 会互相解开。旧调用方全部用默认空 context，仍然走无 entropy。
+    return _dpapi_unprotect(cipher, _context_entropy(context))
+
+
+def protect_bytes(data: bytes, *, context: str = "") -> str:
+    """二进制版；keywrap 用。空 bytes → 空串。"""
+    if not data:
+        return ""
+    return protect(base64.urlsafe_b64encode(data).decode("ascii"), context=context)
+
+
+def unprotect_bytes(stored: str, *, context: str = "") -> bytes | None:
+    """二进制版；失败/空输入返回 ``None``，绝不回退明文。"""
+    text = unprotect(stored, context=context)
+    if not text:
+        return None
+    try:
+        return base64.urlsafe_b64decode(text.encode("ascii"))
+    except (ValueError, UnicodeEncodeError):
+        return None

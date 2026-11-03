@@ -40,6 +40,7 @@ __all__ = [
     "default_data_dir",
     "env_data_root",
     "graph_path",
+    "identity_dir",
     "memory_db_path",
     "music_dir",
     "portable_data_root",
@@ -196,6 +197,11 @@ def wallpapers_dir() -> Path:
     path = data_dir() / "wallpapers"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def identity_dir() -> Path:
+    """设备身份文件目录（``identity/device.json``）。它跟着数据根搬迁。"""
+    return data_dir() / "identity"
 
 
 def memory_db_path() -> Path:

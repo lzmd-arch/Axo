@@ -21,7 +21,7 @@ def qapp() -> Any:
 
 def test_the_worker_emits_the_checks(monkeypatch: pytest.MonkeyPatch) -> None:
     expected = (BootCheck("data", "数据目录", True, "ok"),)
-    monkeypatch.setattr(boot_checks_module, "collect_checks", lambda *_args: expected)
+    monkeypatch.setattr(boot_checks_module, "collect_checks", lambda *_args, **_kwargs: expected)
     received: list[object] = []
     worker = BootCheckWorker(None, None)
     worker.done.connect(received.append)

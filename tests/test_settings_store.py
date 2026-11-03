@@ -1384,3 +1384,38 @@ def test_propose_is_off_by_default_and_round_trips():
     # 字符串 "true" 也要按真值读回来（QSettings 在 Windows 上会给字符串）
     backend.setValue("memory/propose_enabled", "true")
     assert store.load_memory().propose_enabled is True
+
+
+def test_security_defaults_and_roundtrip() -> None:
+    from axo.ui.settings_store import SecuritySettings
+
+    backend = FakeBackend({})
+    store = SettingsStore(backend)
+    assert store.load_security() == SecuritySettings()
+
+    store.save_security(
+        SecuritySettings(
+            auto_lock_enabled=False,
+            idle_timeout_s=1800,
+            password_verifier="pbkdf2-sha256$1$100000$AAAA$AAAA",
+            recovery_verifier="rec",
+        )
+    )
+    loaded = store.load_security()
+    assert loaded.auto_lock_enabled is False
+    assert loaded.idle_timeout_s == 1800
+    assert loaded.password_verifier.startswith("pbkdf2-")
+    assert loaded.has_password and loaded.has_recovery
+
+
+def test_security_timeout_is_clamped_and_bad_values_fall_back() -> None:
+    backend = FakeBackend(
+        {
+            "security/idle_timeout_s": 5,
+            "security/auto_lock_enabled": "not-a-bool",
+        }
+    )
+    store = SettingsStore(backend)
+    loaded = store.load_security()
+    assert loaded.idle_timeout_s == 60
+    assert loaded.auto_lock_enabled is False  # 坏字符串按 _as_bool 的既有语义落假

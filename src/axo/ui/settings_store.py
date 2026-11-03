@@ -56,6 +56,7 @@ __all__ = [
     "ReminderSettings",
     "SETTINGS_APP",
     "SETTINGS_ORG",
+    "SecuritySettings",
     "SettingsBackend",
     "SettingsStore",
     "SyncSettings",
@@ -140,6 +141,10 @@ _K_CONSOLIDATION_INTERVAL_S = "memory/consolidation_interval_s"
 #: 同步：只存非机密配置。证书私钥口令、设备 token、记忆专用密钥都不在这里。
 _K_BUS_ENABLED = "bus/enabled"
 _K_BUS_INTERVAL = "bus/interval_s"
+_K_SECURITY_AUTO_LOCK = "security/auto_lock_enabled"
+_K_SECURITY_IDLE = "security/idle_timeout_s"
+_K_SECURITY_PASSWORD = "security/password_verifier"
+_K_SECURITY_RECOVERY = "security/recovery_verifier"
 _K_SYNC_ENABLED = "sync/enabled"
 _K_SYNC_PORT = "sync/port"
 _K_SYNC_LAN_ENABLED = "sync/lan_enabled"
@@ -636,6 +641,28 @@ class MemorySettings:
 
 
 @dataclass(frozen=True)
+class SecuritySettings:
+    """应用锁的持久化状态。**设备身份不在其中**：它住在数据根的 identity 文件里。
+
+    ``password_verifier``/``recovery_verifier`` 是 PBKDF2 记录，不是明文；启动自检
+    只验记录格式，真实密码由启动闸门/锁屏输入校验。
+    """
+
+    auto_lock_enabled: bool = True
+    idle_timeout_s: int = 900
+    password_verifier: str = ""
+    recovery_verifier: str = ""
+
+    @property
+    def has_password(self) -> bool:
+        return bool(self.password_verifier)
+
+    @property
+    def has_recovery(self) -> bool:
+        return bool(self.recovery_verifier)
+
+
+@dataclass(frozen=True)
 class SyncSettings:
     """桌面 MemoryBridge 的非机密配置。
 
@@ -1055,6 +1082,22 @@ class SettingsStore:
             max_devices=max(1, min(16, devices)),
             server_name=str(name or "").strip()[:64],
         )
+
+    def load_security(self) -> SecuritySettings:
+        timeout = _as_int(self._backend.value(_K_SECURITY_IDLE, 900), 900)
+        timeout = max(60, min(86_400, timeout))
+        return SecuritySettings(
+            auto_lock_enabled=_as_bool(self._backend.value(_K_SECURITY_AUTO_LOCK, True), True),
+            idle_timeout_s=timeout,
+            password_verifier=str(self._backend.value(_K_SECURITY_PASSWORD, "") or ""),
+            recovery_verifier=str(self._backend.value(_K_SECURITY_RECOVERY, "") or ""),
+        )
+
+    def save_security(self, settings: SecuritySettings) -> None:
+        self._backend.setValue(_K_SECURITY_AUTO_LOCK, bool(settings.auto_lock_enabled))
+        self._backend.setValue(_K_SECURITY_IDLE, max(60, min(86_400, int(settings.idle_timeout_s))))
+        self._backend.setValue(_K_SECURITY_PASSWORD, settings.password_verifier)
+        self._backend.setValue(_K_SECURITY_RECOVERY, settings.recovery_verifier)
 
     def save_sync(self, settings: SyncSettings) -> None:
         self._backend.setValue(_K_SYNC_ENABLED, bool(settings.enabled))

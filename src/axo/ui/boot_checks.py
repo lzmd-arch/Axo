@@ -30,7 +30,8 @@ class BootCheck:
     """一项检测。
 
     Attributes:
-        key: ``data`` / ``archive`` / ``persona`` / ``backend`` / ``scope`` / ``tools``。
+        key: ``data`` / ``archive`` / ``persona`` / ``identity`` / ``password`` /
+            ``backend`` / ``scope`` / ``tools``。
         label: 面板上的中文名。
         ok: 通过与否。**首次启动的"还没有库"不算失败**；打不开才算。
         detail: 一行事实（条数、路径、模型名……）。
@@ -186,6 +187,26 @@ def _tools_check(tools) -> BootCheck:
     return BootCheck("tools", "工具沙箱", ok, detail)
 
 
+def _identity_check(device) -> BootCheck:
+    """设备一致性；**只警告不拦截**。不显示原始机器标识。"""
+    from ..device_identity import compare_device
+
+    state, detail = compare_device(device)
+    return BootCheck("identity", "设备识别", state != "mismatch", detail)
+
+
+def _password_check(security) -> BootCheck:
+    """只验 verifier 记录格式，不验任何候选密码；真实密码由启动闸门输入。"""
+    from ..passwords import password_record_ok
+
+    record = getattr(security, "password_verifier", "")
+    if not record:
+        return BootCheck("password", "启动口令", False, "未设置，将进入设置流程")
+    if not password_record_ok(record):
+        return BootCheck("password", "启动口令", False, "记录损坏，请用恢复码重设")
+    return BootCheck("password", "启动口令", True, "已设置（PBKDF2-SHA256）")
+
+
 def _run(factory, key: str, label: str) -> BootCheck:
     """跑一项检测；**单项坏掉只影响这一项**，不把整张面板清空。"""
     try:
@@ -194,13 +215,17 @@ def _run(factory, key: str, label: str) -> BootCheck:
         return BootCheck(key, label, False, f"检测失败：{type(exc).__name__}")
 
 
-def collect_checks(backend=None, tools=None) -> tuple[BootCheck, ...]:
+def collect_checks(backend=None, tools=None, security=None, device=None) -> tuple[BootCheck, ...]:
     """跑一遍启动自检。**任何一项失败都不抛**，只把 ok 置假。
 
     顺序是刻意的：与内置六幕的推进同序，启动账每幕多亮一行。
     """
     checks = [_data_dir_check()]
     checks.extend(_memory_checks())
+    if device is not None:
+        checks.append(_run(lambda: _identity_check(device), "identity", "设备识别"))
+    if security is not None:
+        checks.append(_run(lambda: _password_check(security), "password", "启动口令"))
     if backend is not None:
         checks.append(_run(lambda: _backend_check(backend), "backend", "后端"))
         checks.append(_run(lambda: _scope_check(backend), "scope", "数据边界"))
