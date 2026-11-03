@@ -461,8 +461,11 @@ class SplashScreen(QWidget):
             | QPainter.RenderHint.SmoothPixmapTransform
         )
 
-        if self._boot is not None and not self._boot_done:
-            self._paint_boot_screen(painter, accent)
+        if self._boot is not None:
+            if self._boot_done:
+                self._paint_boot_hold(painter, accent)
+            else:
+                self._paint_boot_screen(painter, accent)
             painter.end()
             return
 
@@ -487,24 +490,95 @@ class SplashScreen(QWidget):
 
     # ── 六幕的全屏绘制 ──────────────────────────────────────────────────────
 
+    def _paint_boot_hold(self, painter: QPainter, accent: QColor) -> None:
+        """六幕结束、主窗口还在构造：保持同一块暗色底，**不再回小卡片**。"""
+        width = float(self.width())
+        height = float(self.height())
+        bg, fg, muted = QColor("#080a0d"), QColor("#eef3f1"), QColor("#7d8785")
+        painter.fillRect(QRectF(0, 0, width, height), bg)
+        glow = QRadialGradient(width * 0.5, height * 0.40, max(width, height) * 0.6)
+        halo = QColor(accent)
+        halo.setAlpha(30)
+        glow.setColorAt(0.0, halo)
+        clear = QColor(accent)
+        clear.setAlpha(0)
+        glow.setColorAt(1.0, clear)
+        painter.fillRect(QRectF(0, 0, width, height), glow)
+        painter.setPen(QPen(QColor(255, 255, 255, 10), 1))
+        for y in range(0, int(height), 4):
+            painter.drawLine(0, y, int(width), y)
+
+        cx, cy = width * 0.5, height * 0.40
+        radius = min(width, height) * 0.13
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(accent, 2))
+        painter.drawArc(
+            QRectF(cx - radius, cy - radius, radius * 2, radius * 2),
+            int(self._boot_phase * 70 % 360) * 16,
+            250 * 16,
+        )
+        inner = QColor(accent)
+        inner.setAlpha(70)
+        painter.setPen(QPen(inner, 1))
+        painter.drawEllipse(
+            QRectF(cx - radius * 0.78, cy - radius * 0.78, radius * 1.56, radius * 1.56)
+        )
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(accent)
+        painter.drawEllipse(QRectF(cx - 3, cy - 3, 6, 6))
+
+        if self._still is not None and not self._still.isNull():
+            target_h = height * 0.34
+            scale = target_h / self._still.height()
+            target_w = self._still.width() * scale
+            painter.setOpacity(0.5)
+            painter.drawPixmap(
+                QRectF(cx - radius * 2.3 - target_w / 2, cy - target_h / 2, target_w, target_h),
+                self._still,
+                QRectF(self._still.rect()),
+            )
+            painter.setOpacity(1.0)
+
+        mono = QFont("Consolas")
+        mono.setPointSize(9)
+        mono.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2.0)
+        painter.setFont(mono)
+        painter.setPen(muted)
+        painter.drawText(QRectF(28, 22, 420, 20), Qt.AlignmentFlag.AlignLeft, "AXO // READY")
+
+        stage_font = QFont(self.font())
+        stage_font.setPointSize(int(max(18, min(34, min(width, height) * 0.028))))
+        painter.setFont(stage_font)
+        painter.setPen(fg)
+        painter.drawText(
+            QRectF(width * 0.12, cy + radius + 48, width * 0.76, 48),
+            Qt.AlignmentFlag.AlignHCenter,
+            self._stage,
+        )
+
+        bar_w = min(width * 0.42, 620)
+        bar = QRectF((width - bar_w) / 2, height - 66, bar_w, 3)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(fg.red(), fg.green(), fg.blue(), 40))
+        painter.drawRoundedRect(bar, 1.5, 1.5)
+        painter.setBrush(accent)
+        painter.drawRoundedRect(bar, 1.5, 1.5)
+
     def _paint_boot_screen(self, painter: QPainter, accent: QColor) -> None:
-        """全屏六幕：黑/暖白交替、环形准星、扫描线、打字机与故障揭幕。"""
+        """全屏六幕：暗色底、环形准星、扫描线、打字机与故障揭幕。"""
         assert self._boot is not None
         width = float(self.width())
         height = float(self.height())
         act = self._boot.acts[min(self._boot_index, len(self._boot.acts) - 1)]
         progress = self._boot_progress
-        warm = act.kind in ("type", "glass")
-        if warm:
-            bg, fg, muted = QColor("#f4efe9"), QColor("#1b1a18"), QColor("#6b645d")
-        else:
-            bg, fg, muted = QColor("#08090c"), QColor("#eef3f1"), QColor("#7d8785")
+        # **整体暗色**：六幕共用一套炭黑底，不再切暖白。
+        bg, fg, muted = QColor("#080a0d"), QColor("#eef3f1"), QColor("#7d8785")
 
         painter.fillRect(QRectF(0, 0, width, height), bg)
         glow = QRadialGradient(width * 0.5, height * 0.40, max(width, height) * 0.6)
         halo = QColor(accent)
         pulse = 0.75 + 0.25 * math.sin(self._boot_phase * 2.0 * math.pi * 0.5)
-        halo.setAlpha(int((34 if not warm else 24) * pulse))
+        halo.setAlpha(int(34 * pulse))
         glow.setColorAt(0.0, halo)
         clear = QColor(accent)
         clear.setAlpha(0)
@@ -512,7 +586,7 @@ class SplashScreen(QWidget):
         painter.fillRect(QRectF(0, 0, width, height), glow)
 
         # 扫描线：每 3 px 一条，极淡；它是"仪器感"最便宜的一层。
-        scan = QColor(0, 0, 0, 10) if warm else QColor(255, 255, 255, 10)
+        scan = QColor(255, 255, 255, 10)
         painter.setPen(QPen(scan, 1))
         for y in range(0, int(height), 4):
             painter.drawLine(0, y, int(width), y)
@@ -520,7 +594,7 @@ class SplashScreen(QWidget):
         # 暗角
         vignette = QRadialGradient(width * 0.5, height * 0.45, max(width, height) * 0.78)
         vignette.setColorAt(0.0, QColor(0, 0, 0, 0))
-        vignette.setColorAt(1.0, QColor(0, 0, 0, 110 if not warm else 26))
+        vignette.setColorAt(1.0, QColor(0, 0, 0, 110))
         painter.fillRect(QRectF(0, 0, width, height), vignette)
 
         cx, cy = width * 0.5, height * 0.40
@@ -625,7 +699,7 @@ class SplashScreen(QWidget):
         if act.kind == "glass" or act.id == "permission":
             panel = QRectF(cx - 300, text_top + title_size * 2.65, 600, 150)
             painter.setPen(QPen(QColor(accent.red(), accent.green(), accent.blue(), 90), 1))
-            panel_bg = QColor(255, 255, 255, 60) if warm else QColor(255, 255, 255, 10)
+            panel_bg = QColor(255, 255, 255, 10)
             painter.setBrush(panel_bg)
             painter.drawRoundedRect(panel, 12, 12)
             entries = (
@@ -657,14 +731,17 @@ class SplashScreen(QWidget):
                 )
 
         painter.setOpacity(1.0)
-        # 揭幕幕：人物剪影
-        if act.kind == "hero" and self._still is not None and not self._still.isNull():
-            target_h = height * 0.34
+        # 角色在**准星左侧**：全程都在，终幕更亮。
+        if self._still is not None and not self._still.isNull():
+            target_h = height * (0.42 if act.kind == "hero" else 0.34)
             scale = target_h / self._still.height()
             target_w = self._still.width() * scale
-            painter.setOpacity(min(1.0, progress * 2.0) * 0.92)
+            char_cx = cx - radius * (2.6 if act.kind == "hero" else 2.3)
+            painter.setOpacity(
+                (0.92 if act.kind == "hero" else 0.55) * min(1.0, 0.3 + progress * 2.0)
+            )
             painter.drawPixmap(
-                QRectF(cx - target_w / 2, 22, target_w, target_h),
+                QRectF(char_cx - target_w / 2, cy - target_h / 2, target_w, target_h),
                 self._still,
                 QRectF(self._still.rect()),
             )
