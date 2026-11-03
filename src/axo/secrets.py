@@ -326,9 +326,14 @@ def unprotect(stored: str, *, context: str = "") -> str:
     if stored == KEYCHAIN_MARKER:
         return _keychain_load(_context_account(context)) if _keychain_available() else ""
     if stored.startswith("keychain:v2:"):
-        if not _keychain_available():
+        if not _keychain_available() or not context:
             return ""
-        return _keychain_load(stored.removeprefix("keychain:v2:"))
+        # **不能盲信 token 里的 account**：否则不同 context 可以互相解开，
+        # KeyWrapper 的域分离契约就失效了。必须与调用方 context 派生值一致。
+        account = stored.removeprefix("keychain:v2:")
+        if account != _context_account(context):
+            return ""
+        return _keychain_load(account)
     if not _WINDOWS:
         return ""
     try:

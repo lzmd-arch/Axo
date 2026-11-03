@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
-__all__ = ["BootCheck", "collect_checks"]
+__all__ = ["BootCheck", "collect_checks", "redact_checks"]
 
 
 @dataclass(frozen=True)
@@ -97,6 +97,22 @@ def _memory_checks() -> tuple[BootCheck, BootCheck]:
         )
     finally:
         store.close()
+
+
+def _memory_presence_checks() -> tuple[BootCheck, BootCheck]:
+    """闸门前的版本：只判断文件在不在，不打开库、不数条数/人格锚。"""
+    from ..paths import memory_db_path
+
+    path = memory_db_path()
+    if not path.is_file():
+        return (
+            BootCheck("archive", "记忆库", True, "首次启动，将新建"),
+            BootCheck("persona", "人格锚", True, "解锁后检查"),
+        )
+    return (
+        BootCheck("archive", "记忆库", True, "已找到（解锁后读取）"),
+        BootCheck("persona", "人格锚", True, "解锁后检查"),
+    )
 
 
 def _probe_ollama(host: str, timeout: float = 0.6) -> tuple[bool, str]:
@@ -199,6 +215,8 @@ def _password_check(security) -> BootCheck:
     """只验 verifier 记录格式，不验任何候选密码；真实密码由启动闸门输入。"""
     from ..passwords import password_record_ok
 
+    if getattr(security, "storage", "ok") == "corrupt":
+        return BootCheck("password", "启动口令", False, "安全状态文件损坏，启动会失败关闭")
     record = getattr(security, "password_verifier", "")
     if not record:
         return BootCheck("password", "启动口令", False, "未设置，将进入设置流程")
@@ -215,13 +233,39 @@ def _run(factory, key: str, label: str) -> BootCheck:
         return BootCheck(key, label, False, f"检测失败：{type(exc).__name__}")
 
 
-def collect_checks(backend=None, tools=None, security=None, device=None) -> tuple[BootCheck, ...]:
+_REDACTED = {
+    "data": ("可写", "不可写"),
+    "archive": ("可打开", "打不开"),
+    "persona": ("已核对", "未找到"),
+    "backend": ("可用", "不可用"),
+    "scope": ("已核对", "需检查"),
+    "tools": ("已授权", "需检查"),
+    "identity": ("已核对", "设备不同（仅提醒）"),
+    "password": ("已设置", "未设置或记录损坏"),
+}
+
+
+def redact_checks(checks: tuple[BootCheck, ...]) -> tuple[BootCheck, ...]:
+    """启动闸门之前的展示版：只保留 ✓/✗ 与一句状态，不泄露路径/条数/host。
+
+    自检本身仍然真实执行；这里只改 ``detail``，不伪造 ``ok``。
+    """
+    result = []
+    for check in checks:
+        good, bad = _REDACTED.get(check.key, ("通过", "未通过"))
+        result.append(BootCheck(check.key, check.label, check.ok, good if check.ok else bad))
+    return tuple(result)
+
+
+def collect_checks(
+    backend=None, tools=None, security=None, device=None, *, redacted: bool = False
+) -> tuple[BootCheck, ...]:
     """跑一遍启动自检。**任何一项失败都不抛**，只把 ok 置假。
 
     顺序是刻意的：与内置六幕的推进同序，启动账每幕多亮一行。
     """
     checks = [_data_dir_check()]
-    checks.extend(_memory_checks())
+    checks.extend(_memory_presence_checks() if redacted else _memory_checks())
     if device is not None:
         checks.append(_run(lambda: _identity_check(device), "identity", "设备识别"))
     if security is not None:

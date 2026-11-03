@@ -247,3 +247,47 @@ def test_password_check_reports_record_health(monkeypatch, tmp_path) -> None:
     }
     assert ready["password"].ok is True
     assert "PBKDF2" in ready["password"].detail
+
+
+def test_password_check_reports_corrupt_state_file(monkeypatch, tmp_path) -> None:
+    from axo.ui.boot_checks import collect_checks
+    from axo.ui.settings_store import SecuritySettings
+
+    _isolate(monkeypatch, tmp_path)
+    checks = {
+        check.key: check for check in collect_checks(security=SecuritySettings(storage="corrupt"))
+    }
+    assert checks["password"].ok is False
+    assert "失败关闭" in checks["password"].detail
+
+
+def test_redacted_checks_hide_paths_and_counts(monkeypatch, tmp_path: Path) -> None:
+    """闸门前的面板只留 ✓/✗ 与状态词；路径、条数、host 都不能出现。"""
+    from axo.ui.boot_checks import collect_checks, redact_checks
+
+    _isolate(monkeypatch, tmp_path)
+    shown = redact_checks(collect_checks())
+    by_key = {check.key: check for check in shown}
+    assert by_key["data"].detail == "可写"
+    assert by_key["archive"].detail == "可打开"
+    assert by_key["persona"].detail == "已核对"
+    assert str(tmp_path) not in " ".join(check.detail for check in shown)
+
+
+def test_redacted_collection_does_not_open_the_database(monkeypatch, tmp_path: Path) -> None:
+    """密码之前不许打开 mem.db；只判断文件在不在。"""
+    import axo.ui.boot_checks as boot_checks
+
+    _isolate(monkeypatch, tmp_path)
+    db = tmp_path / "memory" / "mem.db"
+    db.parent.mkdir(parents=True)
+    with MemoryStore(db):
+        pass
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("闸门前不许打开记忆库")
+
+    monkeypatch.setattr(boot_checks, "_memory_checks", _boom)
+    checks = {check.key: check for check in boot_checks.collect_checks(redacted=True)}
+    assert checks["archive"].ok is True
+    assert checks["archive"].detail == "已找到（解锁后读取）"

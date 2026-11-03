@@ -1419,3 +1419,83 @@ def test_security_timeout_is_clamped_and_bad_values_fall_back() -> None:
     loaded = store.load_security()
     assert loaded.idle_timeout_s == 60
     assert loaded.auto_lock_enabled is False  # 坏字符串按 _as_bool 的既有语义落假
+
+
+# ── 安全状态以数据根为准 ────────────────────────────────────────────────────
+
+
+def _record(fill: bytes = b"a") -> str:
+    """一条格式合法的 verifier（不跑 PBKDF2，parse 只验形状与长度）。"""
+    import base64
+
+    salt = base64.urlsafe_b64encode(fill * 16).decode("ascii").rstrip("=")
+    digest = base64.urlsafe_b64encode(fill * 32).decode("ascii").rstrip("=")
+    return f"pbkdf2-sha256$1$100000${salt}${digest}"
+
+
+def test_security_state_file_wins_over_qsettings(tmp_path: Path) -> None:
+    from axo import security_state
+
+    path = tmp_path / "security" / "state.json"
+    security_state.save_state(
+        path, password_verifier=_record(b"a"), recovery_verifier=_record(b"r")
+    )
+    backend = FakeBackend(
+        {
+            "security/password_verifier": _record(b"b"),
+            "security/recovery_verifier": _record(b"r"),
+        }
+    )
+    loaded = SettingsStore(backend, security_path=path).load_security()
+    assert loaded.password_verifier == _record(b"a")
+    assert loaded.recovery_verifier == _record(b"r")
+    assert loaded.storage == "ok"
+
+
+def test_security_migrates_legacy_qsettings_to_data_root(tmp_path: Path) -> None:
+    from axo import security_state
+
+    path = tmp_path / "security" / "state.json"
+    legacy = FakeBackend(
+        {
+            "security/password_verifier": _record(b"c"),
+            "security/recovery_verifier": _record(b"r"),
+        }
+    )
+    first = SettingsStore(legacy, security_path=path).load_security()
+    assert first.password_verifier == _record(b"c")
+
+    # 注册表被清空 / 换 Windows 用户：数据根里的那份仍然生效。
+    loaded = SettingsStore(FakeBackend({}), security_path=path).load_security()
+    assert loaded.password_verifier == _record(b"c")
+    assert security_state.load_state(path) is not None
+
+
+def test_security_corrupt_state_fails_closed(tmp_path: Path) -> None:
+    path = tmp_path / "security" / "state.json"
+    path.parent.mkdir()
+    path.write_text("{broken", encoding="utf-8")
+    backend = FakeBackend({"security/password_verifier": _record(b"d")})
+    loaded = SettingsStore(backend, security_path=path).load_security()
+    assert loaded.storage == "corrupt"
+    assert loaded.password_verifier == ""
+    assert not loaded.has_password
+
+
+def test_security_save_writes_authoritative_file(tmp_path: Path) -> None:
+    from axo.ui.settings_store import SecuritySettings
+
+    path = tmp_path / "security" / "state.json"
+    store = SettingsStore(FakeBackend({}), security_path=path)
+    store.save_security(
+        SecuritySettings(password_verifier=_record(b"e"), recovery_verifier=_record(b"r"))
+    )
+    loaded = SettingsStore(FakeBackend({}), security_path=path).load_security()
+    assert loaded.password_verifier == _record(b"e")
+    assert loaded.recovery_verifier == _record(b"r")
+
+
+def test_security_without_path_keeps_legacy_behavior() -> None:
+    """不传路径的调用点（单测、无头入口）不受影响。"""
+    store = SettingsStore(FakeBackend({"security/password_verifier": _record(b"f")}))
+    assert store.load_security().password_verifier == _record(b"f")

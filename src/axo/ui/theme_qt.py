@@ -60,6 +60,10 @@ class QSettingsBackend:
     def setValue(self, key: str, value: object) -> None:  # noqa: N802 (Qt 命名)
         self._settings.setValue(key, value)  # type: ignore[attr-defined]
 
+    def sync(self) -> None:
+        """立刻落盘；安全设置写入后必须调，不能等对象析构。"""
+        self._settings.sync()  # type: ignore[attr-defined]
+
 
 def os_color_scheme() -> str:
     """系统当前是明还是暗：``"dark"`` / ``"light"`` / ``"unknown"``。

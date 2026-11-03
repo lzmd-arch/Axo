@@ -72,3 +72,66 @@ def test_lock_overlay_emits_and_ignores_escape(qapp: Any) -> None:
     event = QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier)
     overlay.keyPressEvent(event)
     assert event.isAccepted() is False
+
+
+def test_corrupt_security_state_fails_closed_instead_of_setup(qapp: Any) -> None:
+    """文件坏了不能变成“首次设置”：那等于删坏文件就能重设密码。"""
+    gate, saved = _gate(SecuritySettings(storage="corrupt"))
+    assert gate._blocked is True
+    assert gate._setup_mode is False
+    assert gate._password.isHidden()
+    assert gate._confirm.isHidden()
+    assert gate._recovery_button.isHidden()
+    gate._password.setText("whatever")
+    gate._confirm.setText("whatever")
+    gate._submit()
+    assert saved == []
+    assert gate.result() != QDialog.DialogCode.Accepted
+
+
+def test_gate_does_not_show_setup_when_verifier_is_empty_without_state(qapp: Any) -> None:
+    """没有状态文件也没有 verifier 才是真正的首次启动。"""
+    gate, _saved = _gate(SecuritySettings())
+    assert gate._blocked is False
+    assert gate._setup_mode is True
+
+
+def test_unlock_throttles_repeated_failures(qapp: Any) -> None:
+    """锁屏不能比启动闸门更容易试密码；连续失败后进入冷却，冷却期内正确也不放行。"""
+    from types import SimpleNamespace
+
+    from axo.ui.main_window import MainWindow
+
+    class Overlay:
+        def __init__(self) -> None:
+            self.errors: list[str] = []
+            self.busy: list[bool] = []
+
+        def show_error(self, text: str) -> None:
+            self.errors.append(text)
+
+        def set_busy(self, value: bool) -> None:
+            self.busy.append(value)
+
+    overlay = Overlay()
+    fake = SimpleNamespace(
+        _locked=True,
+        _unlock_not_before=0.0,
+        _unlock_attempts=0,
+        _security_settings=SecuritySettings(
+            password_verifier=passwords.hash_password("correct horse", iterations=100_000)
+        ),
+        _ensure_lock_overlay=lambda: overlay,
+        _finish_unlock=lambda: overlay.errors.append("unlocked"),
+    )
+    for _ in range(3):
+        MainWindow._unlock(fake, "wrong")
+    assert fake._unlock_attempts == 3
+    assert fake._unlock_not_before > 0
+
+    MainWindow._unlock(fake, "correct horse")
+    assert "unlocked" not in overlay.errors
+
+    fake._unlock_not_before = 0.0
+    MainWindow._unlock(fake, "correct horse")
+    assert "unlocked" in overlay.errors

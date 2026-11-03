@@ -20,11 +20,14 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Protocol
 
+from .. import security_state
+from ..passwords import password_record_ok
 from ..paths import wallpapers_dir
 from ..secrets import protect, unprotect
 from ..tts import DEFAULT_SPEECH_ENDPOINT
@@ -653,9 +656,14 @@ class SecuritySettings:
     password_verifier: str = ""
     recovery_verifier: str = ""
 
+    #: ``"ok"`` 或 ``"corrupt"``。``"corrupt"`` = 数据根里的
+    #: ``security/state.json`` 存在但读不出来。**闸门必须失败关闭**，不能把这
+    #: 种情况当成首次启动——否则删坏一个文件就换来一次重设密码的机会。
+    storage: str = "ok"
+
     @property
     def has_password(self) -> bool:
-        return bool(self.password_verifier)
+        return bool(self.password_verifier) and self.storage != "corrupt"
 
     @property
     def has_recovery(self) -> bool:
@@ -769,8 +777,13 @@ class SettingsStore:
     的写入波及它不该碰的键。
     """
 
-    def __init__(self, backend: SettingsBackend) -> None:
+    def __init__(self, backend: SettingsBackend, *, security_path: Path | None = None) -> None:
         self._backend = backend
+        #: 密码/恢复码 verifier 的权威文件（``<data_root>/security/state.json``）。
+        #: ``None`` = 老行为（只读 QSettings），单测与不碰安全设置的入口用。
+        #: **生产入口必须传**：QSettings 按 Windows 用户分开，删掉/换用户/搬数据根
+        #: 都会让它变空，而数据根里的这份不会。
+        self._security_path = security_path
 
     # ── 外观 ────────────────────────────────────────────────────────────────
 
@@ -1086,18 +1099,60 @@ class SettingsStore:
     def load_security(self) -> SecuritySettings:
         timeout = _as_int(self._backend.value(_K_SECURITY_IDLE, 900), 900)
         timeout = max(60, min(86_400, timeout))
-        return SecuritySettings(
+        stored = SecuritySettings(
             auto_lock_enabled=_as_bool(self._backend.value(_K_SECURITY_AUTO_LOCK, True), True),
             idle_timeout_s=timeout,
             password_verifier=str(self._backend.value(_K_SECURITY_PASSWORD, "") or ""),
             recovery_verifier=str(self._backend.value(_K_SECURITY_RECOVERY, "") or ""),
         )
+        if self._security_path is None:
+            return stored
+        try:
+            state = security_state.load_state(self._security_path)
+        except security_state.SecurityStateError:
+            # 文件在但坏了：只看策略字段没有意义，闸门会按 storage=="corrupt" 失败关闭。
+            return replace(stored, password_verifier="", recovery_verifier="", storage="corrupt")
+        if state is not None:
+            # **文件说了算。** QSettings 只是镜像：它可能被删、属于另一个 Windows
+            # 用户、或者停留在一次崩溃前的旧值。
+            return replace(
+                stored,
+                password_verifier=state.password_verifier,
+                recovery_verifier=state.recovery_verifier,
+            )
+        if stored.password_verifier and password_record_ok(stored.password_verifier):
+            # 旧版本只有 QSettings：第一次运行时把记录迁到数据根。写失败不拦启动
+            # （只读数据目录不该让人进不去），下次启动再试。
+            with contextlib.suppress(OSError):
+                security_state.save_state(
+                    self._security_path,
+                    password_verifier=stored.password_verifier,
+                    # 恢复码记录坏了就不迁进去：状态文件对格式是严格的，迁一条坏
+                    # 记录等于把整个文件变成"损坏"，下次启动直接失败关闭。
+                    recovery_verifier=(
+                        stored.recovery_verifier
+                        if password_record_ok(stored.recovery_verifier)
+                        else ""
+                    ),
+                )
+        return stored
 
     def save_security(self, settings: SecuritySettings) -> None:
+        if self._security_path is not None:
+            # **先写权威文件，再写镜像。** 崩在两步之间时，下次启动读到的是新
+            # 密码，而不是"新密码 + 旧恢复码"这种半套状态。
+            security_state.save_state(
+                self._security_path,
+                password_verifier=settings.password_verifier,
+                recovery_verifier=settings.recovery_verifier,
+            )
         self._backend.setValue(_K_SECURITY_AUTO_LOCK, bool(settings.auto_lock_enabled))
         self._backend.setValue(_K_SECURITY_IDLE, max(60, min(86_400, int(settings.idle_timeout_s))))
         self._backend.setValue(_K_SECURITY_PASSWORD, settings.password_verifier)
         self._backend.setValue(_K_SECURITY_RECOVERY, settings.recovery_verifier)
+        sync = getattr(self._backend, "sync", None)
+        if callable(sync):
+            sync()
 
     def save_sync(self, settings: SyncSettings) -> None:
         self._backend.setValue(_K_SYNC_ENABLED, bool(settings.enabled))

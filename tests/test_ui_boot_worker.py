@@ -43,3 +43,17 @@ def test_a_broken_check_run_emits_none(monkeypatch: pytest.MonkeyPatch) -> None:
     worker.run()
 
     assert received == [()]
+
+
+def test_redact_flag_rewrites_details_before_display(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = (BootCheck("data", "数据目录", True, "D:/secret/path"),)
+    monkeypatch.setattr(boot_checks_module, "collect_checks", lambda *_args, **_kwargs: expected)
+    received: list[object] = []
+    worker = BootCheckWorker(None, None, redact=True)
+    worker.done.connect(received.append)
+
+    worker.run()
+
+    assert received == [(BootCheck("data", "数据目录", True, "可写"),)]

@@ -29,6 +29,7 @@ class BootCheckWorker(QThread):
         tools: Any,
         security: Any = None,
         device: Any = None,
+        redact: bool = False,
         parent: Any = None,
     ) -> None:
         super().__init__(parent)
@@ -36,14 +37,23 @@ class BootCheckWorker(QThread):
         self._tools = tools
         self._security = security
         self._device = device
+        self._redact = bool(redact)
 
     def run(self) -> None:  # noqa: D401 - QThread 入口
         from .boot_checks import collect_checks
 
         try:
             checks = collect_checks(
-                self._backend, self._tools, security=self._security, device=self._device
+                self._backend,
+                self._tools,
+                security=self._security,
+                device=self._device,
+                redacted=self._redact,
             )
+            if self._redact:
+                from .boot_checks import redact_checks
+
+                checks = redact_checks(checks)
         except Exception:  # noqa: BLE001 —— 自检坏掉不该拦住启动
             checks = ()
         self.done.emit(checks)

@@ -28,6 +28,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -102,6 +103,29 @@ def configure_isolated_state() -> None:
     QStandardPaths.setTestModeEnabled(True)
 
 
+def _isolated_gate_may_be_skipped() -> bool:
+    """只有“隔离设置 + 临时数据根”的自检/冒烟进程可以跳过启动闸门。
+
+    **不能只看 ``AXO_ISOLATED_STATE``。** 它只重定向 QSettings，不改数据根；只看它
+    会让任何能设环境变量的人用真实记忆库无密码启动。这里要求 ``AXO_DATA`` 同时指向
+    临时目录下的探测根；攻击者若把它指向真实库，闸门仍会出现。
+    """
+    state = os.environ.get("AXO_ISOLATED_STATE", "").strip()
+    data = os.environ.get("AXO_DATA", "").strip()
+    if not state or not data:
+        return False
+    try:
+        from ..paths import default_data_dir
+
+        root = Path(data).expanduser().resolve()
+        if root == default_data_dir().resolve():
+            return False
+        temp = Path(tempfile.gettempdir()).resolve()
+        return root == temp or root.is_relative_to(temp)
+    except (OSError, ValueError):
+        return False
+
+
 def make_settings() -> QSettings:
     """建一个 ``QSettings``。**建 QSettings 的地方都要走这里。**
 
@@ -165,7 +189,12 @@ def _remind_once() -> int:
     """
     from ..agent.reminders import CancelledStore, FiredStore, ReminderStore
     from ..headless import run
-    from ..paths import reminders_cancelled_path, reminders_fired_path, reminders_path
+    from ..paths import (
+        reminders_cancelled_path,
+        reminders_fired_path,
+        reminders_path,
+        security_state_path,
+    )
     from .data_root import resolve_data_root
     from .notify import show_balloon
 
@@ -174,8 +203,10 @@ def _remind_once() -> int:
     from .settings_store import SettingsStore
     from .theme_qt import QSettingsBackend
 
-    security = SettingsStore(QSettingsBackend(settings)).load_security()
-    if security.has_password:
+    security = SettingsStore(
+        QSettingsBackend(settings), security_path=security_state_path()
+    ).load_security()
+    if security.has_password or security.storage == "corrupt":
 
         def notify(title: str, body: str) -> None:
             del body
@@ -268,7 +299,9 @@ def main(argv: list[str] | None = None) -> int:
     from .theme_qt import QSettingsBackend, os_color_scheme
 
     settings = make_settings()
-    store_now = SettingsStore(QSettingsBackend(settings))
+    from ..paths import security_state_path
+
+    store_now = SettingsStore(QSettingsBackend(settings), security_path=security_state_path())
     theme_now = store_now.load()
     splash = None
     boot = None
@@ -351,6 +384,7 @@ def main(argv: list[str] | None = None) -> int:
                 store_now.load_tools(),
                 security=security,
                 device=device,
+                redact=True,
                 parent=app,
             )
 
@@ -383,7 +417,7 @@ def main(argv: list[str] | None = None) -> int:
     # ── 启动闸门：六幕之后、主窗口之前 ────────────────────────────────────
     # 主窗口在这里**还不存在**，所以解锁前没有任何聊天内容可被看到。闸门每轮启动
     # 都出现；`AXO_ISOLATED_STATE` 只给打包自检/冒烟用，`AXO_NO_SPLASH` 不绕过。
-    if not os.environ.get("AXO_ISOLATED_STATE"):
+    if not _isolated_gate_may_be_skipped():
         from PySide6.QtWidgets import QDialog
 
         from .startup_gate import StartupGate
@@ -417,7 +451,7 @@ def main(argv: list[str] | None = None) -> int:
         splash.set_stage("正在准备界面…")
         app.processEvents()
     try:
-        window = MainWindow()
+        window = MainWindow(security_path=security_state_path())
     except BaseException:
         # 构造失败时开屏不能留在屏幕上挡住 traceback 所在的桌面。
         if splash is not None:

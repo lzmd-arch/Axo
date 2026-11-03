@@ -60,10 +60,13 @@ class StartupGate(QDialog):
         self._not_before = 0.0
         self._pending: SecuritySettings | None = None
         record_ok = passwords.password_record_ok(security.password_verifier)
-        self._recovery_mode = mode == "recovery" or (
-            not record_ok and bool(security.recovery_verifier)
+        # 数据根里的状态文件存在但读不出来：**失败关闭**。能走到 setup 就等于
+        # "把文件删坏"是一种重置密码的方法，那这把锁就没有意义了。
+        self._blocked = security.storage == "corrupt"
+        self._recovery_mode = not self._blocked and (
+            mode == "recovery" or (not record_ok and bool(security.recovery_verifier))
         )
-        self._setup_mode = not record_ok and not self._recovery_mode
+        self._setup_mode = not self._blocked and not record_ok and not self._recovery_mode
         self._build()
         self.setStyleSheet(
             f"QDialog {{ background: #080a0d; color: #eef3f1; }}"
@@ -92,7 +95,11 @@ class StartupGate(QDialog):
         outer.addLayout(row)
         outer.addStretch(1)
 
-        title = QLabel("身份核验" if not self._setup_mode else "设置启动密码", card)
+        if self._blocked:
+            title_text = "安全状态不可用"
+        else:
+            title_text = "设置启动密码" if self._setup_mode else "身份核验"
+        title = QLabel(title_text, card)
         title.setStyleSheet("font-size: 46px; font-weight: 700;")
         title.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         inner.addWidget(title)
@@ -147,6 +154,25 @@ class StartupGate(QDialog):
         self._render_mode()
 
     def _render_mode(self) -> None:
+        if self._blocked:
+            for widget in (
+                self._password,
+                self._confirm,
+                self._recovery_input,
+                self._code_view,
+                self._saved,
+                self._recovery_button,
+            ):
+                widget.setVisible(False)
+            self._error.setText("数据根里的 security/state.json 存在但无法读取。")
+            self._hint.setText(
+                "为避免有人通过删改这个文件重设密码，Axo 不会进入设置流程。"
+                "请从备份恢复它；如果确实要重新开始，请有意删除它后再启动。"
+            )
+            self._submit_button.setText("退出 Axo")
+            self._submit_button.setEnabled(True)
+            self._quit_button.setVisible(False)  # 两个按钮做同一件事只会让人犹豫
+            return
         setup_fields = self._setup_mode and self._pending is None
         self._password.setVisible(
             setup_fields or (not self._recovery_mode and self._pending is None)
@@ -188,6 +214,9 @@ class StartupGate(QDialog):
         self._recovery_input.setFocus()
 
     def _submit(self) -> None:
+        if self._blocked:
+            self.reject()
+            return
         if time.monotonic() < self._not_before:
             return
         if self._pending is not None:

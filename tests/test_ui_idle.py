@@ -73,3 +73,17 @@ def test_stop_prevents_firing_and_configure_rearms(qapp: Any) -> None:
     clock.now += 121
     monitor.poll()
     assert fired == [True]
+
+
+def test_enabling_from_stopped_actually_rearms(qapp: Any) -> None:
+    clock = Clock()
+    monitor = IdleMonitor(timeout_s=60, enabled=False, clock=clock)
+    monitor.start()
+    assert monitor.running is False
+    monitor.configure(timeout_s=60, enabled=True)
+    assert monitor.running is True
+    clock.now += 61
+    fired: list[bool] = []
+    monitor.idle.connect(lambda: fired.append(True))
+    monitor.poll()
+    assert fired == [True]

@@ -721,13 +721,17 @@ class MainWindow(QMainWindow):
     ``RecallLedger`` 是 frozen 的，按值共享没有别名风险。
     """
 
-    def __init__(self, *, memory: MemoryStore | None = None) -> None:
+    def __init__(
+        self, *, memory: MemoryStore | None = None, security_path: Path | None = None
+    ) -> None:
         super().__init__()
         self.setWindowTitle("Axo")
         self._place_window()
 
         self._settings = make_settings()
-        self._settings_store = SettingsStore(QSettingsBackend(self._settings))
+        self._settings_store = SettingsStore(
+            QSettingsBackend(self._settings), security_path=security_path
+        )
 
         # **外观必须在建控件之前定好。** 应用级样式表与调色板一旦设置，之后建的
         # 控件都按它起手画第一次；反过来（先建控件再设）要靠一次全局 repolish
@@ -797,6 +801,8 @@ class MainWindow(QMainWindow):
         self._security_settings: SecuritySettings = self._settings_store.load_security()
         self._locked = False
         self._last_activity_touch = 0.0
+        self._unlock_attempts = 0
+        self._unlock_not_before = 0.0
         self._lock_overlay: LockOverlay | None = None
         self._fullscreen = True
         self._pre_lock_sizes: list[int] | None = None
@@ -5358,12 +5364,25 @@ class MainWindow(QMainWindow):
         ):
             action = getattr(self, name, None)
             if callable(action):
-                with contextlib.suppress(Exception):
+                try:
                     action(**kwargs)
+                except Exception:  # noqa: BLE001 —— 不能因为停不下就装作锁住了
+                    # 停机失败意味着麦克风/语音可能还在工作；锁屏必须留下证据。
+                    self._log_ui_error("锁定时停用 " + name + " 失败：" + traceback.format_exc())
         music = getattr(self, "_music_service", None)
         if music is not None and hasattr(music, "control"):
-            with contextlib.suppress(Exception):
+            try:
                 music.control("pause")
+            except Exception:  # noqa: BLE001
+                self._log_ui_error("锁定时暂停音乐失败：" + traceback.format_exc())
+
+        # 顶层模态框（同步确认、搬迁报告、删除确认……）不是 centralWidget 的子控件，
+        # 遮罩盖不住它们；而且模态嵌套事件循环里 idle 定时器仍会触发。先 reject 掉。
+        for widget in QApplication.topLevelWidgets():
+            if widget is self:
+                continue
+            if isinstance(widget, QDialog) and widget.isVisible():
+                widget.reject()
 
         self._pre_lock_sizes = self._splitter.sizes()
         self._pre_lock_ledger = self.ledger_button.isChecked()
@@ -5398,15 +5417,29 @@ class MainWindow(QMainWindow):
     def _unlock(self, password: str) -> None:
         if not getattr(self, "_locked", False):
             return
+        if time.monotonic() < self._unlock_not_before:
+            return
         if not self._security_settings.has_password:
             self._ensure_lock_overlay().show_error("没有可用的密码记录。")
             return
         from .. import passwords
 
         if not passwords.verify_password(password, self._security_settings.password_verifier):
+            self._unlock_attempts += 1
             overlay = self._ensure_lock_overlay()
-            overlay.show_error("密码不正确。")
+            delay = (
+                0 if self._unlock_attempts < 3 else min(30, 2 ** (self._unlock_attempts - 3) * 2)
+            )
+            if delay:
+                self._unlock_not_before = time.monotonic() + delay
+                overlay.set_busy(True)
+                overlay.show_error(f"密码不正确；再试请等约 {delay} 秒。")
+                QTimer.singleShot(delay * 1000, lambda: overlay.set_busy(False))
+            else:
+                overlay.show_error("密码不正确。")
             return
+        self._unlock_attempts = 0
+        self._unlock_not_before = 0.0
         self._finish_unlock()
 
     def _lock_recovery(self) -> None:
@@ -5659,7 +5692,10 @@ class MainWindow(QMainWindow):
             idle_timeout_s=settings.idle_timeout_s,
         )
         self._security_settings = updated
-        self._settings_store.save_security(updated)
+        try:
+            self._settings_store.save_security(updated)
+        except OSError:
+            self._security_note("安全设置没能写入数据目录，请检查权限。")
         self._idle.configure(
             timeout_s=updated.idle_timeout_s,
             enabled=updated.auto_lock_enabled,
@@ -5679,8 +5715,8 @@ class MainWindow(QMainWindow):
     def _on_password_change_requested(self, current: str, new_password: str) -> None:
         if not self._verify_current_password(current):
             return
-        if len(new_password) > 1024:
-            self._security_note("新密码太长。")
+        if len(new_password) < 8 or len(new_password) > 1024:
+            self._security_note("新密码需要 8–1024 个字符。")
             return
         code = passwords.new_recovery_code()
         updated = self._settings_store.load_security()
@@ -5691,7 +5727,11 @@ class MainWindow(QMainWindow):
             password_verifier=passwords.hash_password(new_password),
             recovery_verifier=passwords.hash_recovery_code(code),
         )
-        self._settings_store.save_security(updated)
+        try:
+            self._settings_store.save_security(updated)
+        except OSError:
+            self._security_note("安全设置没能写入数据目录，请检查权限后重试。")
+            return
         self._security_settings = updated
         self._security_note(
             "密码已修改。新恢复码（只显示这一次）：" + passwords.display_recovery_code(code)
@@ -5708,7 +5748,11 @@ class MainWindow(QMainWindow):
             self._settings_store.load_security(),
             recovery_verifier=passwords.hash_recovery_code(code),
         )
-        self._settings_store.save_security(updated)
+        try:
+            self._settings_store.save_security(updated)
+        except OSError:
+            self._security_note("安全设置没能写入数据目录，请检查权限后重试。")
+            return
         self._security_settings = updated
         self._security_note("新恢复码（只显示这一次）：" + passwords.display_recovery_code(code))
 

@@ -48,11 +48,13 @@ __all__ = [
     "reminders_cancelled_path",
     "reminders_fired_path",
     "reminders_path",
-    "voice_model_dir",
-    "voices_dir",
+    "security_dir",
+    "security_state_path",
     "sessions_dir",
     "set_data_root",
     "snapshot_dir",
+    "voice_model_dir",
+    "voices_dir",
     "wallpapers_dir",
 ]
 
@@ -202,6 +204,16 @@ def wallpapers_dir() -> Path:
 def identity_dir() -> Path:
     """设备身份文件目录（``identity/device.json``）。它跟着数据根搬迁。"""
     return data_dir() / "identity"
+
+
+def security_dir() -> Path:
+    """应用锁状态目录（``security/state.json``）。同样跟着数据根搬迁。"""
+    return data_dir() / "security"
+
+
+def security_state_path() -> Path:
+    """密码/恢复码 verifier 的权威副本。**不在这里创建文件**，见 security_state.py。"""
+    return security_dir() / "state.json"
 
 
 def memory_db_path() -> Path:

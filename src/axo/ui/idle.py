@@ -44,7 +44,12 @@ class IdleMonitor(QObject):
     def configure(self, *, timeout_s: int, enabled: bool) -> None:
         self._timeout_s = max(60, min(86_400, int(timeout_s)))
         self._enabled = bool(enabled)
-        if self._running:
+        if not self._enabled:
+            self.stop()
+        elif not self._running:
+            # 从“关”切到“开”时必须真的 arm；只改布尔会让自动锁定静默不生效。
+            self.start()
+        else:
             self._arm()
 
     def start(self) -> None:
