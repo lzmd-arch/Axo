@@ -15,7 +15,7 @@ from fakes import ScriptedBackend, text_chunk
 
 from axo.expression.layer import ExpressionLayer
 from axo.expression.mix import MixedRenderer
-from axo.expression.sir import SIR
+from axo.expression.sir import SIR, parse
 from axo.expression.templates import BUILTIN_TEMPLATES, Template, TemplateBank
 
 
@@ -176,3 +176,38 @@ def test_a_failing_model_still_falls_back_to_the_draft() -> None:
     outcome = MixedRenderer(_bank(), layer).render(sir)
     assert outcome.source == "draft"
     assert outcome.text == "草稿正文。"
+
+
+def test_a_multi_point_answer_does_not_use_a_one_point_template() -> None:
+    bank = TemplateBank.builtin()
+    assert bank.render(parse("第一点是这样。第二点是这样。")) is None
+
+
+def test_a_statement_plus_question_is_not_turned_into_a_question() -> None:
+    bank = TemplateBank.builtin()
+    assert bank.render(parse("这个项目已经完成了。你想看细节吗？")) is None
+
+
+def test_a_substantive_answer_starting_with_buneng_is_not_a_refusal() -> None:
+    sir = parse("不能只改这一行，还要改配置。")
+    assert sir.intent == "answer"
+    hit = TemplateBank.builtin().render(sir)
+    assert hit is None or "没印象" not in hit.text
+
+
+def test_max_points_only_matches_inputs_it_covers() -> None:
+    bank = _bank(Template("a", "{key_point:0}。", intents=("answer",), max_points=1))
+    assert bank.render(SIR(intent="answer", key_points=("甲",), draft="甲。")) is not None
+    assert bank.render(SIR(intent="answer", key_points=("甲", "乙"), draft="甲。乙。")) is None
+
+
+def test_a_mid_reply_question_is_not_dropped_by_the_model() -> None:
+    from fakes import ScriptedBackend, text_chunk
+
+    layer = ExpressionLayer(
+        ScriptedBackend([[text_chunk("我先说结论，然后再说细节。", done=True)]]),
+        "人设",
+    )
+    outcome = layer.render(parse("问一句？然后陈述。"))
+    assert outcome.source == "draft"
+    assert "问句" in outcome.reason

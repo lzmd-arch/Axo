@@ -43,6 +43,8 @@ class Template:
         pattern: 正文，槽位见模块文档。
         intents / tones / lengths: 触发条件；空元组 = 不限。
         facts_min / facts_max: 事实条数的上下限（``None`` = 不限）。
+        max_points: 最多允许几条要点。**模板只填自己覆盖的槽位**，草稿要点更多时
+            命中会把剩下的丢掉；这条闸门让模板只接它真正能完整覆盖的输入。
         weight: 同条件多条时的相对权重（整数化后参与确定性选择）。
     """
 
@@ -54,6 +56,7 @@ class Template:
     lengths: tuple[str, ...] = ()
     facts_min: int = 0
     facts_max: int | None = None
+    max_points: int | None = None
     weight: int = 1
 
     def matches(self, sir: SIR) -> bool:
@@ -62,6 +65,8 @@ class Template:
         if self.tones and sir.tone not in self.tones:
             return False
         if self.lengths and sir.length not in self.lengths:
+            return False
+        if self.max_points is not None and len(sir.key_points) > self.max_points:
             return False
         count = len(sir.facts)
         if count < self.facts_min:
@@ -112,7 +117,12 @@ _DEFAULT_TEMPLATES: tuple[Template, ...] = (
     Template("refuse-casual", "没找到。", kind="exact", intents=("refuse",), tones=("casual",)),
     Template("refuse-short", "没印象。", kind="exact", intents=("refuse",), lengths=("short",)),
     Template(
-        "answer-short", "{key_point:0}。", kind="skeleton", intents=("answer",), lengths=("short",)
+        "answer-short",
+        "{key_point:0}。",
+        kind="skeleton",
+        intents=("answer",),
+        lengths=("short",),
+        max_points=1,
     ),
     Template(
         "answer-medium",
@@ -120,6 +130,7 @@ _DEFAULT_TEMPLATES: tuple[Template, ...] = (
         kind="skeleton",
         intents=("answer",),
         lengths=("medium",),
+        max_points=2,
     ),
     # **带事实的回答**：要点在前、事实用冒号接在后面。没有这一条时，凡是带数字/URL
     # 的短回答都会整族落到模型路径——模板覆盖率会被这一族拖掉一半。
@@ -129,6 +140,7 @@ _DEFAULT_TEMPLATES: tuple[Template, ...] = (
         intents=("answer",),
         lengths=("short",),
         facts_min=1,
+        max_points=1,
     ),
     Template(
         "answer-medium-facts",
@@ -136,17 +148,65 @@ _DEFAULT_TEMPLATES: tuple[Template, ...] = (
         intents=("answer",),
         lengths=("medium",),
         facts_min=1,
+        max_points=2,
     ),
-    Template("ask-short", "{key_point:0}？", kind="skeleton", intents=("ask",)),
-    Template("emotion-casual", "嗯，{key_point:0}。", intents=("emotion",), tones=("casual",)),
-    Template("emotion-formal", "好的，{key_point:0}。", intents=("emotion",), tones=("formal",)),
-    Template("emotion-direct", "{key_point:0}。", intents=("emotion",), tones=("direct",)),
-    Template("emotion-comfort", "嗯，{key_point:0}。", intents=("emotion",), tones=("comfort",)),
-    Template("action-casual", "{key_point:0}，好。", intents=("action",), tones=("casual",)),
     Template(
-        "action-formal", "好的，{key_point:0}，我去办。", intents=("action",), tones=("formal",)
+        "ask-short",
+        "{key_point:0}？",
+        kind="skeleton",
+        intents=("ask",),
+        lengths=("short",),
+        max_points=1,
     ),
-    Template("action-direct", "{key_point:0}，我去办。", intents=("action",), tones=("direct",)),
+    Template(
+        "emotion-casual",
+        "嗯，{key_point:0}。",
+        intents=("emotion",),
+        tones=("casual",),
+        max_points=1,
+    ),
+    Template(
+        "emotion-formal",
+        "好的，{key_point:0}。",
+        intents=("emotion",),
+        tones=("formal",),
+        max_points=1,
+    ),
+    Template(
+        "emotion-direct",
+        "{key_point:0}。",
+        intents=("emotion",),
+        tones=("direct",),
+        max_points=1,
+    ),
+    Template(
+        "emotion-comfort",
+        "嗯，{key_point:0}。",
+        intents=("emotion",),
+        tones=("comfort",),
+        max_points=1,
+    ),
+    Template(
+        "action-casual",
+        "{key_point:0}，好。",
+        intents=("action",),
+        tones=("casual",),
+        max_points=1,
+    ),
+    Template(
+        "action-formal",
+        "好的，{key_point:0}，我去办。",
+        intents=("action",),
+        tones=("formal",),
+        max_points=1,
+    ),
+    Template(
+        "action-direct",
+        "{key_point:0}，我去办。",
+        intents=("action",),
+        tones=("direct",),
+        max_points=1,
+    ),
 )
 
 #: 随包内置的一组**中性**模板。它们只负责形状，不承载人格措辞；
@@ -225,13 +285,16 @@ class TemplateBank:
 
     def render(self, sir: SIR) -> TemplateHit | None:
         """命中并填好、且**事实与问句检查通过**时返回；否则 ``None``。"""
+        draft_has_question = "？" in sir.draft or "?" in sir.draft
         for template in self._ordered(sir):
             text = template.render(sir)
             if text is None:
                 continue
             if facts_preserved(text, sir.facts):
                 continue
-            if sir.intent == "ask" and ("？" not in text and "?" not in text):
+            if (sir.intent == "ask" or draft_has_question) and (
+                "？" not in text and "?" not in text
+            ):
                 continue
             return TemplateHit(template.id, text)
         return None

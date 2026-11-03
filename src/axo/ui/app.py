@@ -309,29 +309,54 @@ def main(argv: list[str] | None = None) -> int:
     # 要先定下来。开屏在搬迁期间已经显示第一幕，不会出现空桌面。
     from .data_root import boot_data_root
 
-    move_report = boot_data_root(settings)
+    def _move_progress(done: int, total: int) -> None:
+        if splash is not None:
+            splash.set_stage(f"正在搬迁数据 {done}/{total}…")
+            app.processEvents()
+
+    move_report = boot_data_root(
+        settings,
+        on_progress=_move_progress if splash is not None else None,
+    )
 
     # ── 真实自检：六幕里显示的是这一台机器刚跑出来的结果 ──────────────────
     # 数据目录写探针、记忆库只读打开数条数、人格锚、后端、数据边界、工具沙箱。
     # **失败不拦启动**：只把 ✗ 与日志写出来；主窗口之后会给出真正的错误。
     if splash is not None:
         if boot is not None and theme_now.motion:
-            from .boot_checks import collect_checks
+            from .boot_check_worker import BootCheckWorker
 
-            try:
-                checks = collect_checks(store_now.load_backend(), store_now.load_tools())
-            except Exception:  # noqa: BLE001 —— 自检坏掉不该拦住启动
-                logging.getLogger(__name__).exception("启动自检没有跑完")
-                checks = ()
-            splash.set_checks(checks)
-            for check in checks:
-                if not check.ok:
-                    logging.getLogger(__name__).warning(
-                        "启动自检未通过：%s — %s", check.label, check.detail
-                    )
+            worker = BootCheckWorker(
+                store_now.load_backend(),
+                store_now.load_tools(),
+                parent=app,
+            )
+
+            def _log_checks(checks: object) -> None:
+                if not checks:
+                    log_ui_error("启动自检没有跑完（worker 异常）。")
+                    return
+                for check in checks:  # type: ignore[union-attr]
+                    if not check.ok:
+                        log_ui_error(f"启动自检未通过：{check.label} — {check.detail}")
+                        logging.getLogger(__name__).warning(
+                            "启动自检未通过：%s — %s", check.label, check.detail
+                        )
+
+            # ``splash.set_checks`` 是主线程里的 QObject 方法，排队投递；
+            # 写日志那一条只碰文件，可以在 worker 线程里直接跑。
+            worker.done.connect(splash.set_checks)
+            worker.done.connect(_log_checks)
+            app.boot_check_worker = worker  # type: ignore[attr-defined]
+            worker.start()
         splash.set_stage("正在打开记忆库…")
         app.processEvents()
         splash.pre_roll()
+        # 用户一进场就按跳过时，六幕可能在一秒内结束；自检还在读库。等它一小会儿，
+        # 避免主窗口的写连接与只读检查在同一时刻打开同一个库。
+        worker = getattr(app, "boot_check_worker", None)
+        if worker is not None:
+            worker.wait(1500)
 
     # 内置表情包只在第一次播种。**目录归用户**：删掉一张默认表情是用户的决定，
     # 每次启动补回来会让"删除"看起来没生效（见 ``axo.stickers.seed_default_stickers``）。

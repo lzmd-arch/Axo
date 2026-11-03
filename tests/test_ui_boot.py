@@ -248,5 +248,19 @@ def test_the_startup_path_runs_the_checks_before_the_acts() -> None:
     from axo.ui import app
 
     source = inspect.getsource(app.main)
-    assert source.index("collect_checks(") < source.index("splash.pre_roll()")
-    assert "splash.set_checks(checks)" in source
+    assert source.index("BootCheckWorker(") < source.index("splash.pre_roll()")
+    assert "worker.done.connect(splash.set_checks)" in source
+    assert "worker.done.connect(_log_checks)" in source
+
+
+def test_the_data_move_forwards_progress_to_the_splash() -> None:
+    import inspect
+
+    from axo.ui import app
+
+    source = inspect.getsource(app.main)
+    assert "on_progress=_move_progress" in source
+    assert "正在搬迁数据" in source
+    assert "self._stage" in inspect.getsource(
+        __import__("axo.ui.splash", fromlist=["SplashScreen"]).SplashScreen._paint_boot_screen
+    )

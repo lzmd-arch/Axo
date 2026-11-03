@@ -172,12 +172,15 @@ class ExpressionLayer:
                 completion_tokens,
             )
         missing = facts_preserved(rendered, sir.facts)
-        if sir.intent == "ask" and ("？" not in rendered and "?" not in rendered):
+        draft_has_question = "？" in sir.draft or "?" in sir.draft
+        if (sir.intent == "ask" or draft_has_question) and (
+            "？" not in rendered and "?" not in rendered
+        ):
             # **问句不能写成陈述句。** 2026-11-03 实测：渲染把"需要我详细说说吗？"
             # 的句末问号吃掉了——字都对，语气全变了，而用户读起来像被通知而不是
             # 被询问。这一条不靠事实表（问号不是"事实"），单独判。
-            # 判据只看 intent，不看草稿末尾有没有问号：降级路径的 draft 会削掉句末
-            # 标点（见 ``sir.derive``），拿它比对等于把这一条放空。
+            # 判据同时看 intent 与草稿：草稿中间带问句、结尾是陈述句时，
+            # ``derive`` 会判成 answer；只看 intent 会漏掉这一整类。
             return ExpressionOutcome(
                 draft,
                 "draft",

@@ -456,6 +456,10 @@ class ChatView(QWidget):
         #: （区别于"载入了一个空会话"，后者要推空表把旧内容清掉）。
         self._history: list[dict[str, Any]] | None = None
 
+        #: 状态栏最后一次文字。页面后加载，``set_status`` 只推一次会落在空页面上；
+        #: 与历史同一条理由，缓存并在 ``_on_load_finished`` 重放。
+        self._status: str = ""
+
         #: 这一次页面加载是不是"渲染进程死后重启"。重启那一次**不推缓存**，改发
         #: :attr:`recovered`：缓存可能已经落后于逐字稿（见那个信号的说明）。
         self._recovering = False
@@ -510,7 +514,7 @@ class ChatView(QWidget):
         if self._wallpaper_opacity >= 0:
             self._call("setWallpaperOpacity", self._wallpaper_opacity)
         self._call("setMotion", self._motion)
-        if self._wallpaper:
+        if self._wallpaper or self._banner_text:
             self._call("setWallpaper", self._wallpaper, self._banner_text, self._banner_opacity)
         # 逐字稿紧挨着人设卡片之前重推（它在网页里创建节点，不动焦点）。渲染进程
         # 刚重启的那一次不推缓存：让主窗口用**当前**的逐字稿重推一遍（见
@@ -521,6 +525,10 @@ class ChatView(QWidget):
             self.recovered.emit()
         elif self._history is not None:
             self._call("loadHistory", self._history)
+        # 状态栏与历史同一条理由：它也可能在页面加载完成之前被设置（启动探测、
+        # 载入会话）。放在历史之后，避免被 loadHistory 的重置盖掉。
+        if self._status:
+            self._call("setStatus", self._status)
         # 人设卡片排最后：asking 时它会抢焦点（focus 到那个输入框），排在
         # setStatus 之类的后面才不会被别的东西把焦点拿走。
         if self._persona is not None:
@@ -597,8 +605,18 @@ class ChatView(QWidget):
         self._call("setCallPartial", text)
 
     def append_message(self, role: str, text: str, meta: dict[str, Any] | None = None) -> None:
-        """追加一条完整消息。"""
-        self._call("appendMessage", role, text, meta or {})
+        """追加一条完整消息。
+
+        **同时写进 ``_history``。** 这条消息可能发生在页面加载完成之前（启动时的
+        人设提示、错过的提醒、搬迁报告）；只写 JS 的话，页面一加载就被
+        ``loadHistory`` 的整体替换覆盖掉，用户永远看不到。缓存后由
+        :meth:`_on_load_finished` 重放，页面已经加载时则照旧即时显示。
+        """
+        item = {"role": role, "text": text, "meta": dict(meta or {})}
+        if self._history is None:
+            self._history = []
+        self._history.append(item)
+        self._call("appendMessage", role, text, item["meta"])
 
     def push_token(self, text: str) -> None:
         """推送一段流式增量。"""
@@ -619,7 +637,8 @@ class ChatView(QWidget):
         self._call("setBusy", busy)
 
     def set_status(self, text: str) -> None:
-        self._call("setStatus", text)
+        self._status = text or ""
+        self._call("setStatus", self._status)
 
     def set_register(self, register: str, *, pinned: bool = False) -> None:
         """顶栏那枚小标签：**这一轮按任务还是闲聊处理**。
@@ -677,14 +696,32 @@ class ChatView(QWidget):
         在数据目录下、**不在 web 根下**这一事实。后缀决定网页侧用图片层还是
         ``<video>`` 层（mp4/webm）。
         """
-        self._wallpaper = path or ""
-        self._banner_text = banner_text or ""
-        self._banner_opacity = int(banner_opacity)
+        path = path or ""
+        text = banner_text or ""
+        opacity = int(banner_opacity)
+        if (path, text, opacity) == (self._wallpaper, self._banner_text, self._banner_opacity):
+            return
+        self._wallpaper = path
+        self._banner_text = text
+        self._banner_opacity = opacity
         self._call("setWallpaper", self._wallpaper, self._banner_text, self._banner_opacity)
+
+    def set_banner(self, text: str, opacity: int) -> None:
+        """只改横幅。设置页拖浓度/改文字时走这条——不重设壁纸 URL，也不重载视频。"""
+        text = text or ""
+        opacity = int(opacity)
+        if (text, opacity) == (self._banner_text, self._banner_opacity):
+            return
+        self._banner_text = text
+        self._banner_opacity = opacity
+        self._call("setBanner", self._banner_text, self._banner_opacity)
 
     def set_motion(self, enabled: bool) -> None:
         """网页动效开关。静态玻璃仍然保留，只是不再流动/回弹/弹入。"""
-        self._motion = bool(enabled)
+        enabled = bool(enabled)
+        if enabled == self._motion:
+            return
+        self._motion = enabled
         self._call("setMotion", self._motion)
 
     def set_wallpaper_playing(self, playing: bool) -> None:
@@ -695,7 +732,10 @@ class ChatView(QWidget):
         """壁纸可见度，0–100。与 :attr:`~axo.ui.theme.Theme.wallpaper_visible`
         是同一个数，**不在这里夹紧**——夹紧是 ``Theme`` 的职责，这里再夹一次会让
         "设置里是 90、画出来是 70"变成两处各有一个说法。"""
-        self._wallpaper_opacity = int(percent)
+        percent = int(percent)
+        if percent == self._wallpaper_opacity:
+            return
+        self._wallpaper_opacity = percent
         self._call("setWallpaperOpacity", self._wallpaper_opacity)
 
     def set_theme(self, resolved: Resolved) -> None:
@@ -710,7 +750,10 @@ class ChatView(QWidget):
         焦点边与发送键，其余颜色由 ``[data-theme]`` 那一块按明暗给——那份值在
         ``css/app.css`` 里，与 :mod:`axo.ui.theme` 的 token 同源。
         """
-        self._theme = {"mode": resolved.mode, "accent": resolved.accent}
+        theme = {"mode": resolved.mode, "accent": resolved.accent}
+        if theme == self._theme:
+            return
+        self._theme = theme
         self._call("setTheme", self._theme)
 
     def set_persona_state(self, *, asking: bool, builtin: str) -> None:

@@ -2182,6 +2182,17 @@ def test_the_template_switch_is_part_of_the_expression_group() -> None:
     assert seen and seen[-1].templates is False
 
 
+def test_expression_controls_are_disabled_while_the_master_switch_is_off() -> None:
+    page = ToolPage()
+    page.set_state(ToolSettings(), ExpressionSettings())
+    assert page.expression_model_edit.isEnabled() is False
+    assert page.expression_templates_box.isEnabled() is False
+
+    page.expression_box.setChecked(True)
+    assert page.expression_model_edit.isEnabled() is True
+    assert page.expression_templates_box.isEnabled() is True
+
+
 def test_revert_puts_the_expression_group_back() -> None:
     page = ToolPage()
     page.set_state(ToolSettings(), ExpressionSettings())

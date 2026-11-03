@@ -1262,7 +1262,7 @@ class ToolPage(QWidget):
         outer.addSpacing(6)
         outer.addWidget(_section("表达层（实验）"))
         self.expression_box = QCheckBox(
-            "启用分离表达层：后端只决定说什么，她怎么说由本地小模型统一", self
+            "启用分离表达层（实验，需本机 Ollama）：按人格尝试重写", self
         )
         self.expression_box.setObjectName("expressionBox")
         self.expression_box.toggled.connect(self._on_expression_toggled)
@@ -1287,7 +1287,8 @@ class ToolPage(QWidget):
                 "打开后，主模型写的正文**先不显示**：先用一个本地小模型按人格重写一遍，"
                 "核对事实一个没丢再显示；重写失败或改动了数字/路径/专名，就原样显示主模型的草稿。"
                 "只对不带工具的那一轮生效。代价是这一轮多一次本地调用、首字更晚。"
-                "需要本机 Ollama 里有这个模型（默认 qwen2.5:0.5b）。"
+                "**表达层始终只连本机 Ollama**（即使主后端是云端或随包 llama.cpp）；"
+                "默认 qwen2.5:0.5b。T4 风格一致性未过，界面不承诺“语气统一”。"
             )
         )
 
@@ -1473,6 +1474,7 @@ class ToolPage(QWidget):
         blocked = self.expression_templates_box.blockSignals(True)
         self.expression_templates_box.setChecked(bool(expression.templates))
         self.expression_templates_box.blockSignals(blocked)
+        self._sync_expression_controls()
         self._routing_snapshot = (
             settings.routing_mode if settings.routing_mode in ROUTING_MODES else ROUTING_AUTO
         )
@@ -1524,7 +1526,14 @@ class ToolPage(QWidget):
         )
 
     def _on_expression_toggled(self, _checked: bool) -> None:
+        self._sync_expression_controls()
         self.expression_changed.emit(self.expression())
+
+    def _sync_expression_controls(self) -> None:
+        """总开关关着时，依赖它的两个控件也灰掉——否则用户会以为它们在生效。"""
+        enabled = self.expression_box.isChecked()
+        self.expression_model_edit.setEnabled(enabled)
+        self.expression_templates_box.setEnabled(enabled)
 
     def _on_expression_model_changed(self) -> None:
         # ``editingFinished`` 在勾选框切换时也会触发——**值没变就不发**，否则设置页

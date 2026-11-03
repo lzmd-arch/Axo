@@ -20,10 +20,26 @@ __all__ = ["ui_error_log_path", "log_ui_error"]
 #: 每条记录前面那行分隔。**读日志的人靠它切分**，所以三个写入方必须一致。
 _SEPARATOR = "----"
 
+#: 单个日志超过这个大小就轮转。窗口程序没有控制台，日志是唯一现场；不封顶会
+#: 让一个长期运行的终端把磁盘吃满，而旧记录通常早就不需要了。
+_MAX_BYTES = 2 * 1024 * 1024
+_BACKUPS = 3
+
 
 def ui_error_log_path():
     """``logs/ui-errors.log`` 的路径。目录不存在时**不在这里建**。"""
     return data_dir() / "logs" / "ui-errors.log"
+
+
+def _rotate_if_needed(path) -> None:
+    """超过上限就 ``.log`` → ``.log.1`` → … → ``.log.3``。失败由调用方吞掉。"""
+    if not path.exists() or path.stat().st_size < _MAX_BYTES:
+        return
+    for index in range(_BACKUPS - 1, 0, -1):
+        source = path.with_name(f"{path.name}.{index}")
+        if source.exists():
+            source.replace(path.with_name(f"{path.name}.{index + 1}"))
+    path.replace(path.with_name(f"{path.name}.1"))
 
 
 def log_ui_error(detail: str) -> None:
@@ -31,6 +47,7 @@ def log_ui_error(detail: str) -> None:
     try:
         path = ui_error_log_path()
         path.parent.mkdir(parents=True, exist_ok=True)
+        _rotate_if_needed(path)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(_SEPARATOR + chr(10) + detail)
     except Exception:

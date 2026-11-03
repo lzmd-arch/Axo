@@ -171,6 +171,8 @@ class SplashScreen(QWidget):
         self._boot_theme = boot_theme if boot_theme in ("warm", "dark") else "warm"
         # 真实自检结果。**空集不是"全绿"**——面板写"未检查"，绝不假装通过。
         self._boot_checks: dict[str, BootCheck] = {check.key: check for check in checks}
+        # 六幕开着但结果还没送到：面板显示"检测中…"，而不是"未检查"或假 ✓。
+        self._boot_checks_pending = self._boot is not None and not checks
         self._boot_confirm = False
         self._boot_skipped = False
         self._boot_waiting = False
@@ -428,6 +430,7 @@ class SplashScreen(QWidget):
         出现，所以是"先建窗、后填结果"两步。
         """
         self._boot_checks = {check.key: check for check in checks}
+        self._boot_checks_pending = False
         self.update()
 
     def _self_check_warning(self) -> str:
@@ -782,7 +785,10 @@ class SplashScreen(QWidget):
                 done = progress >= (index + 0.5) / len(keys)
                 y = panel.top() + 18 + index * 30
                 if check is None:
-                    mark, label, detail, colour = "·", fallback, "未检查", muted
+                    pending = self._boot_checks_pending
+                    mark, label = "·", fallback
+                    detail = "检测中…" if pending else "未检查"
+                    colour = muted
                 else:
                     mark = "✓" if check.ok else "✗"
                     label, detail = check.label, check.detail
@@ -841,12 +847,25 @@ class SplashScreen(QWidget):
             )
             painter.drawEllipse(QRectF(x - 3, height - 92, 6, 6))
 
+        # 搬迁/自检期间的状态句。六幕画面原本不画 ``_stage``，于是大库搬迁时
+        # 第一幕看上去像卡死；这一行至少让“还在动”有字可读。
+        if self._stage:
+            painter.setFont(mono)
+            painter.setPen(muted)
+            painter.drawText(
+                QRectF(width * 0.12, height - 146, width * 0.76, 18),
+                Qt.AlignmentFlag.AlignHCenter,
+                self._stage,
+            )
+
         # 左下角启动账：**每一行都是刚查出来的事实**，失败项带 !，不写"正在加载"。
         if self._boot_checks:
             logs = tuple(
                 f"> {check.key}: {check.detail}" if check.ok else f"> ! {check.key}: {check.detail}"
                 for check in self._boot_checks.values()
             )
+        elif self._boot_checks_pending:
+            logs = ("> checks: running…",)
         else:
             # 还没填结果时**什么都不写**：不写 "checks: not run" 这种会被当成失败的句子。
             logs = ()

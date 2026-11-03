@@ -31,6 +31,7 @@ from axo.ui.settings_store import (
     BackendSettings,
     BootSettings,
     ExpressionSettings,
+    MemorySettings,
     MusicSettings,
     ProactiveSettings,
     ReminderSettings,
@@ -83,7 +84,15 @@ def _window() -> SimpleNamespace:
         # 表达层（实验）：默认关，与一个刚装好的终端一模一样。
         _expression_settings=ExpressionSettings(),
         # 启动动画设置：从设置库里读；替身只要给出一份默认值。
-        _settings_store=SimpleNamespace(load_boot=lambda: BootSettings()),
+        # 记忆设置也走同一个 store；**故意给两个非默认值**，用来钉住设置页
+        # 不能再把这四个字段漏掉后写回默认。
+        _settings_store=SimpleNamespace(
+            load_boot=lambda: BootSettings(),
+            load_memory=lambda: MemorySettings(
+                propose_enabled=True,
+                recall_min_score=0.37,
+            ),
+        ),
         _voice_settings=SpeechSettings(),
         _music_settings=MusicSettings(),
         # 记忆页那一份：**任务记忆关着**，与一个刚装好的终端一模一样。
@@ -295,3 +304,30 @@ def test_the_catch_all_is_deliberate_and_marked(qapp: Any) -> None:
     block = source.split("def _on_open_settings", 1)[1].split("def _on_theme_changed", 1)[0]
     assert re.search(r"except Exception as exc:\s*# noqa: BLE001", block)
     assert "QMessageBox.warning" in block
+
+
+def test_the_settings_window_receives_the_full_memory_settings(
+    qapp: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`propose_enabled` / `recall_min_score` 不能再被四个字段的 dataclass 吃掉。"""
+    captured: dict[str, Any] = {}
+    fake = SimpleNamespace(
+        **_consolidate_signals().__dict__,
+        set_persona=lambda *_args: None,
+        set_data=lambda *_args: None,
+        set_graph_note=lambda *_args: None,
+        set_consolidate_note=lambda *_args: None,
+        show=lambda: None,
+        raise_=lambda: None,
+        activateWindow=lambda: None,
+    )
+
+    def build(*_args: Any, **kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return fake
+
+    monkeypatch.setattr(main_window_module, "SettingsDialog", build)
+    window = _window()
+    MainWindow._on_open_settings(window)  # type: ignore[arg-type]
+    assert captured["memory"].propose_enabled is True
+    assert captured["memory"].recall_min_score == 0.37

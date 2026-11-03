@@ -421,6 +421,19 @@
 
   // ── 暴露给 Python 的接口 ──────────────────────────────────────────────────
 
+  /* 横幅文字与浓度。**只改这一层**，不碰壁纸/视频——设置页拖浓度滑杆时
+     每次都会推一次，如果走 setWallpaper 会重设视频 src 并重新 load。 */
+  function applyBanner(text, opacity) {
+    var value = typeof text === "string" ? text : "";
+    var alpha = Number(opacity);
+    if (!isFinite(alpha)) alpha = 0;
+    alpha = Math.max(0, Math.min(40, alpha));
+    if (!bannerNode) return;
+    bannerNode.textContent = value;
+    bannerNode.style.opacity = String(alpha / 100);
+    bannerNode.hidden = !value || alpha <= 0;
+  }
+
   window.ChatHost = {
     appendMessage: function (role, text, meta) {
       var bubble = append(role || "assistant", text, meta || {});
@@ -621,15 +634,7 @@
     /* 壁纸：图片走 A/B 两层交叉叠化，视频走 <video>；横幅是同一层的矢量文字。
        换视频失败（解码器不支持 mp4 之类）只撤视频层，不把底图与横幅一起带走。 */
     setWallpaper: function (path, bannerText, bannerOpacity) {
-      var text = typeof bannerText === "string" ? bannerText : "";
-      var alpha = Number(bannerOpacity);
-      if (!isFinite(alpha)) alpha = 0;
-      alpha = Math.max(0, Math.min(40, alpha));
-      if (bannerNode) {
-        bannerNode.textContent = text;
-        bannerNode.style.opacity = String(alpha / 100);
-        bannerNode.hidden = !text || alpha <= 0;
-      }
+      applyBanner(bannerText, bannerOpacity);
       if (!path) {
         if (wallpaperA) wallpaperA.classList.remove("is-visible");
         if (wallpaperB) wallpaperB.classList.remove("is-visible");
@@ -678,6 +683,11 @@
       next.classList.add("is-visible");
       if (prev) prev.classList.remove("is-visible");
       wallpaperFront = wallpaperFront === "a" ? "b" : "a";
+    },
+
+    /* 只更新横幅。设置页拖浓度/改文字时走这条，避免重设视频 src。 */
+    setBanner: function (text, opacity) {
+      applyBanner(text, opacity);
     },
 
     /* 主窗口最小化/恢复。``visibilitychange`` 在 QtWebEngine 里不保证触发，

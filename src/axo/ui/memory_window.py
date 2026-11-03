@@ -24,7 +24,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from PySide6.QtCore import Qt, QThread
+from PySide6.QtCore import Qt, QThread, QTimer
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -76,6 +76,10 @@ from .window_place import place_window
 __all__ = ["DEFAULT_LIST_LIMIT", "MemoryWindow"]
 
 DEFAULT_LIST_LIMIT = 2000
+"""一屏最多装多少条。**到顶要说出来**，否则"列表里没有"会被读成"库里没有"。"""
+
+_SEARCH_DEBOUNCE_AFTER = 500
+"""库里超过这么多条时，搜索输入才防抖；小库直接查，延迟更低。"""
 """一次列多少条。
 
 命中这个上限时界面**必须说出来**（见 :meth:`MemoryWindow._update_count`）：把
@@ -139,6 +143,13 @@ class MemoryWindow(QMainWindow):
         self._current_session_id = ""
         self._ledger: RecallLedger | None = None
         self._summaries: list[MemorySummary] = []
+        #: 关联图热度按**图对象**缓存：``graph_heat`` 是全图遍历，选中一条时
+        #: 不该重算；图换了或窗口重建才失效。
+        self._heat_cache_graph: GraphIndex | None = None
+        self._heat_cache: dict[str, float] | None = None
+        #: 每个空间的 embedding id 集合。写动作后的 ``reload`` 会清掉它；只是换选中项
+        #: 不需要逐空间重拉。
+        self._embedded_cache: dict[str, set[str]] | None = None
 
         #: ``reload()`` 正在跑。**这是防重入的闸门，不是优化。** 见 ``reload`` 的
         #: 文档串：列表清空的过程中 Qt 会挪动当前行并发出选中变化，处理它的
@@ -193,6 +204,7 @@ class MemoryWindow(QMainWindow):
         """
         self._embedding = embedding
         self._spaces = self._memory.spaces()
+        self._embedded_cache = None
         self._refresh_detail()
 
     def set_current_session(self, session_id: str) -> None:
@@ -223,6 +235,8 @@ class MemoryWindow(QMainWindow):
         """
         self._graph = graph
         self._graph_stale = stale
+        self._heat_cache_graph = None
+        self._heat_cache = None
         self._refresh_association()
         self._refresh_heat()
 
@@ -433,7 +447,13 @@ class MemoryWindow(QMainWindow):
         self.delete_button.clicked.connect(self._on_delete)
         self.probe_button.clicked.connect(self._on_probe)
         self.refresh_button.clicked.connect(self.reload)
-        self.search_edit.textChanged.connect(lambda _text: self.reload())
+        # **搜索输入防抖。** 每敲一个字重扫全库、重建最多 2,000 行，在 5 万条上
+        # 是肉眼可见的卡顿；250 ms 足够等用户停手，又不会让输入像没反应。
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(250)
+        self._search_timer.timeout.connect(self.reload)
+        self.search_edit.textChanged.connect(self._on_search_changed)
         self.tier_combo.currentIndexChanged.connect(lambda _index: self.reload())
         self.kind_combo.currentIndexChanged.connect(lambda _index: self.reload())
         self.status_combo.currentIndexChanged.connect(lambda _index: self.reload())
@@ -446,6 +466,17 @@ class MemoryWindow(QMainWindow):
         self.assoc_view.itemClicked.connect(self._on_neighbor_clicked)
 
     # ── 载入与筛选 ──────────────────────────────────────────────────────────
+
+    def _on_search_changed(self, _text: str) -> None:
+        """小库立即查；大库等 250 ms，避免每个键都重建整张列表。"""
+        try:
+            large = self._memory.count() > _SEARCH_DEBOUNCE_AFTER
+        except Exception:  # noqa: BLE001 —— 计数失败时按小库走，别把输入变成没反应
+            large = False
+        if large:
+            self._search_timer.start()
+        else:
+            self.reload()
 
     def _current_filter(self) -> MemoryFilter:
         """把三个下拉框读成一个 :class:`MemoryFilter`。
@@ -497,6 +528,7 @@ class MemoryWindow(QMainWindow):
         if self._reloading:
             return
         self._reloading = True
+        self._embedded_cache = None
         try:
             flt = self._current_filter()
             # 查询非空时走全库：列表那一页只是"最近 N 条"，而用户一旦开始搜，他要找
@@ -645,7 +677,12 @@ class MemoryWindow(QMainWindow):
         """
         reinforced, total = self._memory.reinforce_stats()
         last = last_run()
-        heat = None if self._graph is None or len(self._graph) == 0 else graph_heat(self._graph)
+        heat = None
+        if self._graph is not None and len(self._graph) > 0:
+            if self._heat_cache_graph is not self._graph or self._heat_cache is None:
+                self._heat_cache_graph = self._graph
+                self._heat_cache = graph_heat(self._graph)
+            heat = self._heat_cache
         self.pending_view.setPlainText(
             render_heat_panel(
                 heat=heat,
@@ -762,7 +799,11 @@ class MemoryWindow(QMainWindow):
         而换过嵌入模型之后库里会有多个空间。一条记忆在新空间里有向量、在旧空间
         里也有（或没有）是常态，界面必须逐空间如实标注。
         """
-        return {space.space_id: self._memory.embedded_ids(space.space_id) for space in self._spaces}
+        if self._embedded_cache is None:
+            self._embedded_cache = {
+                space.space_id: self._memory.embedded_ids(space.space_id) for space in self._spaces
+            }
+        return self._embedded_cache
 
     # ── 写动作 ──────────────────────────────────────────────────────────────
     #

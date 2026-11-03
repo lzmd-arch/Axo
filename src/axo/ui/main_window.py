@@ -123,7 +123,7 @@ from ..agent.workspace import build_workspace_context
 from ..asr import Transcription
 from ..attachments import Attachment, attachment_for, body_of
 from ..busd.launcher import launch_blocked_reason, spawn_daemon, stop_daemon
-from ..expression.layer import ExpressionLayer
+from ..expression.layer import ExpressionLayer, ExpressionOutcome
 from ..expression.mix import MixedRenderer
 from ..expression.sir import parse as parse_sir
 from ..expression.templates import TemplateBank
@@ -319,6 +319,9 @@ _GRAPH_CHANNEL_WEIGHT = 0.25
 
 
 SPEECH_TIMEOUT_MS = 20_000
+
+EXPRESSION_CONTEXT_WINDOW = 8192
+"""表达层渲染模型的上下文窗口。**显式传，避免构造时在 GUI 线程发 ``/api/show``。**"""
 
 #: 一次“检索记忆 + 装配”在界面上的硬等待上限。
 #:
@@ -750,6 +753,9 @@ class MainWindow(QMainWindow):
         #: 表达层打开时，主模型这一轮的增量**先攒在这里**，渲染完再一起显示。
         self._draft_parts: list[str] = []
         self._expression_worker: ExpressionWorker | None = None
+        #: 上一次已经提示过的回退原因。同类失败每会话只说一次，避免 Ollama 没起时
+        #: 每一轮都往对话里塞同一句。
+        self._expression_fallback_reason: str = ""
         #: 钉住的语域（``auto`` / ``chat`` / ``task``）。``auto`` = 每轮按那句话判；
         #: 另两档压过规则层、压不过斜杠。见 :func:`~axo.agent.router.pinned_decision`。
         self._routing_mode: str = (
@@ -1322,12 +1328,19 @@ class MainWindow(QMainWindow):
         backdrop = getattr(self, "_backdrop", None)
         if backdrop is not None:
             backdrop.set_animated(self._theme.motion)
+        view = getattr(self, "chat_view", None)
+        if view is not None and not self.isMinimized():
+            # 关窗只是收托盘：网页与视频壁纸在隐藏期间应当停，回来再继续。
+            view.set_wallpaper_playing(True)
 
     def hideEvent(self, event: Any) -> None:  # noqa: N802
         super().hideEvent(event)
         backdrop = getattr(self, "_backdrop", None)
         if backdrop is not None:
             backdrop.set_animated(False)
+        view = getattr(self, "chat_view", None)
+        if view is not None:
+            view.set_wallpaper_playing(False)
 
     # ── 构建界面 ────────────────────────────────────────────────────────────
 
@@ -2591,13 +2604,19 @@ class MainWindow(QMainWindow):
         """
         model = self._expression_settings.model.strip() or EXPRESSION_DEFAULT_MODEL
         settings = getattr(self, "_backend_settings", None)
-        kwargs: dict[str, object] = {"model": model}
+        kwargs: dict[str, object] = {
+            "model": model,
+            "context_window": EXPRESSION_CONTEXT_WINDOW,
+        }
         if (
             settings is not None
             and getattr(settings, "provider", "") == PROVIDER_OLLAMA
             and getattr(settings, "host", "")
         ):
             kwargs["host"] = settings.host
+            # 主对话已按用户要求允许远程；表达层用同一个 host 时必须带上同一张
+            # 通行证，否则主对话能用、表达层每轮必失败。
+            kwargs["allow_remote"] = bool(getattr(settings, "allow_remote", False))
         try:
             return OllamaChatBackend(**kwargs)  # type: ignore[arg-type]
         except Exception:  # noqa: BLE001 —— 构造失败等于这一层不可用，退回草稿
@@ -2610,17 +2629,32 @@ class MainWindow(QMainWindow):
         if statistics.get("interrupted") or not draft.strip():
             self._deliver_reply(draft, statistics)
             return
+        sir = parse_sir(draft)
+        # **模板命中时不要构造后端。** ``OllamaChatBackend.__post_init__`` 会同步
+        # 请求 ``/api/show`` 拿上下文窗口（读超时 300 秒）；模板命中本来不调模型，
+        # 不应该为它付这笔钱，也不应该在 GUI 线程上等网络。
+        bank = TemplateBank.builtin() if self._expression_settings.templates else None
+        if bank is not None:
+            hit = bank.render(sir)
+            if hit is not None:
+                self._on_styled_ready(
+                    ExpressionOutcome(
+                        hit.text,
+                        "styled",
+                        "",
+                        route="template",
+                        template_id=hit.template_id,
+                    ),
+                    draft,
+                    statistics,
+                )
+                return
         backend = self._expression_backend()
         if backend is None:
             self._deliver_reply(draft, statistics, "表达层没有可用的渲染模型，已用原文")
             return
         layer = ExpressionLayer(backend, self._expression_persona())
-        renderer = (
-            MixedRenderer(TemplateBank.builtin(), layer)
-            if self._expression_settings.templates
-            else layer
-        )
-        sir = parse_sir(draft)
+        renderer = MixedRenderer(bank, layer) if bank is not None else layer
         thread = QThread(self)
         worker = ExpressionWorker(renderer, sir)
         worker.finished.connect(thread.quit)
@@ -2631,7 +2665,7 @@ class MainWindow(QMainWindow):
         # 见 thread_tracking 的说明）——这里再连一次会让同一段渲染跑两遍。
         self._expression_worker = worker
         self._track(thread, worker, what="表达层线程", slot="expression")
-        self.chat_view.set_status("正在统一语气…")
+        self.chat_view.set_status("正在按人格重写…")
         thread.start()
 
     def _on_styled_ready(self, outcome: object, draft: str, statistics: dict[str, Any]) -> None:
@@ -2647,7 +2681,11 @@ class MainWindow(QMainWindow):
         reason = str(getattr(outcome, "reason", "") or "")
         if reason == "渲染被停止":
             merged["interrupted"] = True
-        if getattr(outcome, "source", "draft") != "styled" and reason:
+        if getattr(outcome, "source", "draft") == "styled":
+            self._expression_fallback_reason = ""
+        elif reason and reason != self._expression_fallback_reason:
+            # 同一类失败每会话只说一次：Ollama 没起时每轮都提示只会刷屏。
+            self._expression_fallback_reason = reason
             self.chat_view.append_message("system", f"表达层没有接手：{reason}")
         text = str(getattr(outcome, "text", "") or draft)
         self._deliver_reply(text, merged)
@@ -5063,12 +5101,7 @@ class MainWindow(QMainWindow):
                     tools=self._current_tool_settings(),
                     voice=self._voice_settings,
                     music=self._music_settings,
-                    memory=MemorySettings(
-                        task_memory=self._task_memory,
-                        graph_channel=self._graph_enabled,
-                        consolidation_enabled=self._consolidation_enabled,
-                        consolidation_interval_s=self._consolidation_interval_s,
-                    ),
+                    memory=self._settings_store.load_memory(),
                     reminders=self._reminder_settings,
                     proactive=self._proactive_settings,
                     sync=getattr(self, "_sync_settings", SyncSettings()),
@@ -5118,12 +5151,7 @@ class MainWindow(QMainWindow):
                     tools=self._current_tool_settings(),
                     voice=self._voice_settings,
                     music=self._music_settings,
-                    memory=MemorySettings(
-                        task_memory=self._task_memory,
-                        graph_channel=self._graph_enabled,
-                        consolidation_enabled=self._consolidation_enabled,
-                        consolidation_interval_s=self._consolidation_interval_s,
-                    ),
+                    memory=self._settings_store.load_memory(),
                     reminders=self._reminder_settings,
                     proactive=self._proactive_settings,
                     sync=getattr(self, "_sync_settings", SyncSettings()),
@@ -5180,7 +5208,27 @@ class MainWindow(QMainWindow):
 
         回填 ``Resolved`` 而不是让设置窗口自己再 :func:`resolve` 一遍：同一个
         主题算两次，两处迟早会漂，而漂的表现是"说明文字写的主色与屏幕上的不一样"。
+
+        **横幅/可见度是外观里的高频字段。** 每敲一个字都重建 QSS、重装图标、重推
+        壁纸会让视频重启；只改这几项时走轻量路径，其余字段仍走完整 ``_apply_theme``。
         """
+        previous = self._theme
+        visual_identity = ("preset", "accent", "mode", "motion")
+        if all(getattr(theme, name) == getattr(previous, name) for name in visual_identity):
+            self._theme = theme
+            self._settings_store.save(theme)
+            view = getattr(self, "chat_view", None)
+            if view is not None:
+                if theme.wallpaper != previous.wallpaper:
+                    self._push_wallpaper()
+                elif (
+                    theme.banner_text != previous.banner_text
+                    or theme.banner_opacity != previous.banner_opacity
+                ):
+                    view.set_banner(theme.banner_text, theme.banner_opacity)
+                if theme.wallpaper_visible != previous.wallpaper_visible:
+                    view.set_wallpaper_opacity(theme.wallpaper_visible)
+            return
         resolved = self._apply_theme(theme)
         self._settings_store.save(theme)
         # 托盘图标按**解析后**的主色重画，与网页那一侧同源：浅色模式下主色可能已经

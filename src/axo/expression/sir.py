@@ -92,7 +92,7 @@ _LENGTH_WORDS = {
 }
 
 _SENTENCE_END = re.compile(r"[。！？!?；;\n]+")
-_REFUSAL = ("不知道", "不清楚", "没找到", "没有找到", "没法", "不能", "我不记得", "记不清")
+_REFUSAL = ("不知道", "不清楚", "没找到", "没有找到", "我不记得", "记不清")
 _URL = re.compile(r"https?://[^\s，。；、）)】\]]+")
 _WIN_PATH = re.compile(r"[A-Za-z]:\\[^\s，。；、）)】\]]+")
 _QUOTED = re.compile(r"[「『“\"]([^」』”\"]{1,40})[」』”\"]")

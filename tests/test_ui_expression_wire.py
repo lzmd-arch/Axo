@@ -21,8 +21,10 @@ from PySide6.QtWidgets import QApplication
 
 from axo.expression.layer import ExpressionOutcome
 from axo.expression.sir import SIR
+from axo.ui import main_window as main_window_module
 from axo.ui.expression_worker import ExpressionWorker
 from axo.ui.main_window import MainWindow
+from axo.ui.settings_store import BackendSettings, ExpressionSettings
 
 pytestmark = pytest.mark.gui
 
@@ -43,6 +45,8 @@ class _ChatView:
 def _fake(**overrides):
     base = SimpleNamespace(
         _expression_worker=None,
+        _expression_fallback_reason="",
+        _expression_settings=ExpressionSettings(),
         chat_view=_ChatView(),
         delivered=[],
     )
@@ -66,8 +70,9 @@ def test_the_chat_path_buffers_only_when_enabled() -> None:
 
 def test_template_first_is_wired_behind_the_setting() -> None:
     body = inspect.getsource(MainWindow._on_draft_ready)
-    assert "if self._expression_settings.templates" in body
-    assert "MixedRenderer(TemplateBank.builtin()" in body
+    assert "self._expression_settings.templates" in body
+    assert "TemplateBank.builtin()" in body
+    assert "ExpressionOutcome(" in body
 
 
 def test_the_task_path_is_not_touched() -> None:
@@ -178,3 +183,51 @@ def test_the_worker_turns_an_exception_into_a_fallback(qapp: QApplication) -> No
     assert got and got[0].source == "draft"
     assert got[0].text == "草稿正文"
     assert "RuntimeError" in got[0].reason
+
+
+def test_a_template_hit_never_constructs_the_expression_backend() -> None:
+    seen: list[object] = []
+    fake = _fake(
+        _draft_parts=[],
+        _expression_settings=ExpressionSettings(templates=True),
+        _expression_backend=lambda: (_ for _ in ()).throw(AssertionError("模板命中不该构造后端")),
+        _on_styled_ready=lambda outcome, *_args: seen.append(outcome),
+    )
+
+    MainWindow._on_draft_ready(fake, "不知道。", {})  # type: ignore[arg-type]
+
+    assert len(seen) == 1
+    assert seen[0].route == "template"  # type: ignore[attr-defined]
+    assert seen[0].source == "styled"  # type: ignore[attr-defined]
+
+
+def test_the_expression_backend_forwards_remote_and_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeBackend:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr(main_window_module, "OllamaChatBackend", FakeBackend)
+    fake = SimpleNamespace(
+        _expression_settings=ExpressionSettings(model="qwen2.5:0.5b"),
+        _backend_settings=BackendSettings(
+            provider="ollama",
+            host="http://10.0.0.5:11434",
+            allow_remote=True,
+        ),
+    )
+    MainWindow._expression_backend(fake)  # type: ignore[arg-type]
+    assert captured["host"] == "http://10.0.0.5:11434"
+    assert captured["allow_remote"] is True
+    assert captured["context_window"] == main_window_module.EXPRESSION_CONTEXT_WINDOW
+
+
+def test_the_same_fallback_reason_is_only_shown_once() -> None:
+    fake = _fake()
+    outcome = ExpressionOutcome("草稿", "draft", "后端不可用")
+    MainWindow._on_styled_ready(fake, outcome, "草稿", {})
+    MainWindow._on_styled_ready(fake, outcome, "草稿", {})
+    assert len(fake.chat_view.messages) == 1

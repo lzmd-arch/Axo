@@ -210,3 +210,12 @@ def test_quit_from_the_tray_really_quits(qapp: Any) -> None:
     actions["退出"].trigger()
 
     assert window._quitting is True
+
+
+def test_hiding_to_the_tray_pauses_the_video_wallpaper() -> None:
+    import inspect
+
+    hide = inspect.getsource(MainWindow.hideEvent)
+    show = inspect.getsource(MainWindow.showEvent)
+    assert "set_wallpaper_playing(False)" in hide
+    assert "set_wallpaper_playing(True)" in show
