@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from typing import Any
 
 import pytest
@@ -130,55 +131,56 @@ def test_motion_off_never_runs_the_sequence(qapp: Any) -> None:
         splash.close()
 
 
-def test_the_intro_plays_two_acts_and_leaves_the_rest(qapp: Any) -> None:
+def test_pre_roll_plays_every_act_before_returning(qapp: Any) -> None:
+    """用户要"每一幕结束之后才进主界面"：pre_roll 返回时序列必须已经放完。"""
     splash = _splash(motion=True, confirm=False)
     splash.show()
     try:
         splash.pre_roll()
-        assert splash._boot_index == 2
-        assert splash.has_pending_boot() is True
-    finally:
-        splash.close()
-
-
-def test_a_confirm_act_waits_for_a_key_and_advances(qapp: Any) -> None:
-    from PySide6.QtCore import QEvent, Qt
-    from PySide6.QtGui import QKeyEvent
-
-    splash = _splash(motion=True)
-    splash.show()
-    try:
-        splash.pre_roll()
-        splash._start_post_roll()
-        assert splash._boot_index == 2
-        splash.keyPressEvent(
-            QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier)
-        )
         assert splash._boot_done is True
-    finally:
-        splash.close()
-
-
-def test_skip_finishes_the_sequence(qapp: Any) -> None:
-    splash = _splash(motion=True)
-    splash.show()
-    try:
-        splash.pre_roll()
-        splash._start_post_roll()
-        splash._skip_boot()
-        assert splash._boot_done is True
+        assert splash.has_pending_boot() is False
         assert splash._boot_running is False
     finally:
         splash.close()
 
 
-def test_disabling_skip_keeps_the_sequence_alive(qapp: Any) -> None:
-    splash = _splash(motion=True, allow_skip=False)
+def test_a_confirm_act_returns_as_soon_as_the_key_arrives(qapp: Any) -> None:
+    from PySide6.QtCore import QTimer
+
+    splash = _splash(motion=True)
     splash.show()
     try:
+        splash._boot_running = True
+        splash._boot_index = 2  # 默认幕表里第 3 幕才会确认
+        QTimer.singleShot(60, splash._confirm_boot)
+        started = time.monotonic()
+        splash._wait_boot_act(splash._boot.acts[2], confirm=True)
+        assert time.monotonic() - started < 2.0, "按键之后不该再等满 5 秒"
+    finally:
+        splash.close()
+
+
+def test_skip_ends_the_sequence_early(qapp: Any) -> None:
+    from PySide6.QtCore import QTimer
+
+    splash = _splash(motion=True, confirm=False)
+    splash.show()
+    try:
+        QTimer.singleShot(60, splash._skip_boot)
+        started = time.monotonic()
         splash.pre_roll()
-        splash._start_post_roll()
+        assert time.monotonic() - started < 2.0, "跳过之后不该再播完三幕"
+        assert splash._boot_running is False
+    finally:
+        splash.close()
+
+
+def test_disabling_skip_ignores_the_request(qapp: Any) -> None:
+    splash = _splash(motion=True, allow_skip=False, confirm=False)
+    splash.show()
+    try:
+        splash._boot_running = True
         splash._skip_boot()
-        assert splash._boot_done is False
+        assert splash._boot_skipped is False
     finally:
         splash.close()
