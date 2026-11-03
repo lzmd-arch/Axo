@@ -170,6 +170,7 @@ class SplashScreen(QWidget):
         self._boot_confirm = False
         self._boot_skipped = False
         self._boot_waiting = False
+        self._boot_phase = 0.0
         self._boot_loop: QEventLoop | None = None
         self._sound = None
         # 六幕要收键盘（Enter/Esc），所以**不**用"显示但不激活"。单段开屏仍然不抢焦点。
@@ -323,6 +324,8 @@ class SplashScreen(QWidget):
 
         def tick() -> None:
             state["elapsed"] += _BOOT_TICK_MS
+            # **动效有自己的时钟**：等待确认时进度条停住，但准星/掠扫/呼吸不能停。
+            self._boot_phase += _BOOT_TICK_MS / 1000.0
             self._boot_progress = min(1.0, state["elapsed"] / duration)
             if confirm and state["elapsed"] >= duration:
                 self._boot_waiting = True
@@ -500,7 +503,8 @@ class SplashScreen(QWidget):
         painter.fillRect(QRectF(0, 0, width, height), bg)
         glow = QRadialGradient(width * 0.5, height * 0.40, max(width, height) * 0.6)
         halo = QColor(accent)
-        halo.setAlpha(34 if not warm else 24)
+        pulse = 0.75 + 0.25 * math.sin(self._boot_phase * 2.0 * math.pi * 0.5)
+        halo.setAlpha(int((34 if not warm else 24) * pulse))
         glow.setColorAt(0.0, halo)
         clear = QColor(accent)
         clear.setAlpha(0)
@@ -523,7 +527,7 @@ class SplashScreen(QWidget):
         radius = min(width, height) * 0.13
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.setPen(QPen(accent, 2))
-        start = int((self._boot_index * 47 + progress * 240) % 360)
+        start = int((self._boot_index * 47 + self._boot_phase * 70) % 360)
         painter.drawArc(
             QRectF(cx - radius, cy - radius, radius * 2, radius * 2), start * 16, 250 * 16
         )
@@ -548,7 +552,7 @@ class SplashScreen(QWidget):
         painter.drawEllipse(QRectF(cx - 3, cy - 3, 6, 6))
 
         # 一道扫过整屏的细光——它是"系统在跑"的唯一持续运动。
-        scan_y = progress * height
+        scan_y = ((self._boot_phase * 0.16) % 1.0) * height
         band = QColor(accent)
         band.setAlpha(14)
         painter.fillRect(QRectF(0, scan_y - 16, width, 32), band)
