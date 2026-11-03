@@ -52,6 +52,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QWidget
 
 from .boot import BootSequence
+from .boot_checks import BootCheck
 from .theme import Resolved, Theme
 
 __all__ = ["SplashScreen", "splash_enabled"]
@@ -138,6 +139,7 @@ class SplashScreen(QWidget):
         require_confirm: bool = True,
         speed: float = 1.0,
         boot_theme: str = "warm",
+        checks: tuple[BootCheck, ...] = (),
     ) -> None:
         super().__init__(parent)
         self.setWindowFlags(
@@ -167,6 +169,8 @@ class SplashScreen(QWidget):
         self._boot_require_confirm = bool(require_confirm)
         self._boot_speed = max(0.5, min(2.0, float(speed)))
         self._boot_theme = boot_theme if boot_theme in ("warm", "dark") else "warm"
+        # 真实自检结果。**空集不是"全绿"**——面板写"未检查"，绝不假装通过。
+        self._boot_checks: dict[str, BootCheck] = {check.key: check for check in checks}
         self._boot_confirm = False
         self._boot_skipped = False
         self._boot_waiting = False
@@ -417,6 +421,20 @@ class SplashScreen(QWidget):
         self._stage = text
         self.update()
 
+    def set_checks(self, checks: tuple[BootCheck, ...]) -> None:
+        """装入真实自检结果。必须在 :meth:`pre_roll` 之前调用。
+
+        app 要先定下记忆库位置（``boot_data_root``）才能检测库，而开屏必须更早
+        出现，所以是"先建窗、后填结果"两步。
+        """
+        self._boot_checks = {check.key: check for check in checks}
+        self.update()
+
+    def _self_check_warning(self) -> str:
+        """有失败项时给一句醒目的汇总；全过就什么都不说。"""
+        failed = [check for check in self._boot_checks.values() if not check.ok]
+        return f"{len(failed)} 项自检未通过" if failed else ""
+
     def finish(self) -> None:
         """主窗口已经就绪：继续播剩下的幕，或到最短展示时间后淡出关闭。"""
         if self._closing or self._boot_running:
@@ -545,6 +563,14 @@ class SplashScreen(QWidget):
         painter.setFont(mono)
         painter.setPen(muted)
         painter.drawText(QRectF(28, 22, 420, 20), Qt.AlignmentFlag.AlignLeft, "AXO // READY")
+        warning = self._self_check_warning()
+        if warning:
+            painter.setPen(QColor("#ff6b5e"))
+            painter.drawText(
+                QRectF(width - 448, 22, 420, 20),
+                Qt.AlignmentFlag.AlignRight,
+                f"! {warning}",
+            )
 
         stage_font = QFont(self.font())
         stage_font.setPointSize(int(max(18, min(34, min(width, height) * 0.028))))
@@ -736,40 +762,51 @@ class SplashScreen(QWidget):
                 "按 Enter 或点击继续",
             )
 
-        # 中段：暖白幕放"档案面板"，其余放一行状态账
+        # 中段：档案面板显示**真实自检结果**（app 在启动前跑好传进来）
         if act.kind == "glass" or act.id == "permission":
+            if act.kind == "glass":
+                keys = (("data", "数据目录"), ("archive", "记忆库"), ("persona", "人格锚"))
+            else:
+                keys = (("backend", "后端"), ("scope", "数据边界"), ("tools", "工具沙箱"))
             panel = QRectF(cx - 300, text_top + title_size * 2.65, 600, 150)
             painter.setPen(QPen(QColor(accent.red(), accent.green(), accent.blue(), 90), 1))
             panel_bg = QColor(255, 255, 255, 10)
             painter.setBrush(panel_bg)
             painter.drawRoundedRect(panel, 12, 12)
-            entries = (
-                ("记忆库", "ARCHIVE"),
-                ("人格锚", "PERSONA"),
-                ("本地后端", "BACKEND"),
-                ("权限", "LOCAL ONLY"),
-            )
-            for index, (label, code) in enumerate(entries):
-                done = progress >= (index + 0.5) / len(entries)
+            panel_font = QFont(self.font())
+            panel_font.setPointSize(10)
+            painter.setFont(panel_font)
+            metrics = painter.fontMetrics()
+            for index, (key, fallback) in enumerate(keys):
+                check = self._boot_checks.get(key)
+                done = progress >= (index + 0.5) / len(keys)
                 y = panel.top() + 18 + index * 30
-                painter.setPen(QColor(accent) if done else muted)
+                if check is None:
+                    mark, label, detail, colour = "·", fallback, "未检查", muted
+                else:
+                    mark = "✓" if check.ok else "✗"
+                    label, detail = check.label, check.detail
+                    colour = QColor(accent) if check.ok else QColor("#ff6b5e")
+                painter.setPen(colour if done else muted)
                 painter.drawText(
-                    QRectF(panel.left() + 18, y, 60, 22),
+                    QRectF(panel.left() + 18, y, 24, 22),
                     Qt.AlignmentFlag.AlignLeft,
-                    "✓" if done else "·",
+                    mark if done else "·",
                 )
-                painter.setPen(fg)
+                painter.setPen(fg if done else muted)
                 painter.drawText(
-                    QRectF(panel.left() + 46, y, 260, 22),
+                    QRectF(panel.left() + 46, y, 120, 22),
                     Qt.AlignmentFlag.AlignLeft,
                     label,
                 )
-                painter.setPen(muted)
-                painter.drawText(
-                    QRectF(panel.left() + 320, y, 260, 22),
-                    Qt.AlignmentFlag.AlignRight,
-                    code,
-                )
+                if done:
+                    elided = metrics.elidedText(detail, Qt.TextElideMode.ElideMiddle, 380)
+                    painter.setPen(colour if (check is not None and not check.ok) else muted)
+                    painter.drawText(
+                        QRectF(panel.left() + 185, y, 390, 22),
+                        Qt.AlignmentFlag.AlignRight,
+                        elided,
+                    )
 
         painter.setOpacity(1.0)
         # **立绘只在终幕出现**，在准星左侧淡入。
@@ -804,20 +841,32 @@ class SplashScreen(QWidget):
             )
             painter.drawEllipse(QRectF(x - 3, height - 92, 6, 6))
 
-        # 左下角启动账（只写事实，不写"正在加载"这类空话）
-        logs = (
-            "> archive mounted",
-            "> persona anchor verified",
-            "> local backend ready",
-            "> permission: local only",
-        )
+        # 左下角启动账：**每一行都是刚查出来的事实**，失败项带 !，不写"正在加载"。
+        if self._boot_checks:
+            logs = tuple(
+                f"> {check.key}: {check.detail}" if check.ok else f"> ! {check.key}: {check.detail}"
+                for check in self._boot_checks.values()
+            )
+        else:
+            # 还没填结果时**什么都不写**：不写 "checks: not run" 这种会被当成失败的句子。
+            logs = ()
         painter.setFont(mono)
-        painter.setPen(muted)
-        for index, line in enumerate(logs[: min(len(logs), self._boot_index + 1)]):
+        shown = logs[: min(len(logs), self._boot_index + 1)]
+        for index, line in enumerate(shown):
+            painter.setPen(muted if not line.startswith("> !") else QColor("#ff6b5e"))
+            elided = painter.fontMetrics().elidedText(line, Qt.TextElideMode.ElideMiddle, 420)
             painter.drawText(
                 QRectF(28, height - 118 + index * 18, 420, 18),
                 Qt.AlignmentFlag.AlignLeft,
-                line,
+                elided,
+            )
+        warning = self._self_check_warning()
+        if warning:
+            painter.setPen(QColor("#ff6b5e"))
+            painter.drawText(
+                QRectF(width - 448, height - 118, 420, 18),
+                Qt.AlignmentFlag.AlignRight,
+                f"! {warning}",
             )
 
     def _paint_shadow(self, painter: QPainter, plate: QRectF) -> None:

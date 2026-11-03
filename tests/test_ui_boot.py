@@ -184,3 +184,69 @@ def test_disabling_skip_ignores_the_request(qapp: Any) -> None:
         assert splash._boot_skipped is False
     finally:
         splash.close()
+
+
+def test_the_panel_paints_real_check_results(qapp: Any) -> None:
+    """面板画的是传入的真实结果；有失败项时给出醒目的汇总。"""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QPixmap
+
+    from axo.ui.boot import BootAct
+    from axo.ui.boot_checks import BootCheck
+
+    splash = _splash(
+        motion=True,
+        acts=(BootAct("archive", "读取记忆库", "ARCHIVE · LOCAL SQLITE", 200, kind="glass"),),
+    )
+    splash.set_checks(
+        (
+            BootCheck("data", "数据目录", True, "D:/AxoData"),
+            BootCheck("archive", "记忆库", False, "打不开：DatabaseError"),
+            BootCheck("persona", "人格锚", False, "库打不开，未检查"),
+        )
+    )
+    splash.show()
+    try:
+        splash._boot_index = 0
+        splash._boot_progress = 1.0
+        pixmap = QPixmap(splash.size())
+        pixmap.fill(Qt.GlobalColor.black)
+        splash.render(pixmap)
+        assert splash._self_check_warning() == "2 项自检未通过"
+        assert splash._boot_checks["archive"].ok is False
+    finally:
+        splash.close()
+
+
+def test_no_checks_is_not_painted_as_success(qapp: Any) -> None:
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QPixmap
+
+    from axo.ui.boot import BootAct
+
+    splash = _splash(
+        motion=True,
+        acts=(BootAct("archive", "读取记忆库", "ARCHIVE · LOCAL SQLITE", 200, kind="glass"),),
+    )
+    splash.show()
+    try:
+        splash._boot_index = 0
+        splash._boot_progress = 1.0
+        pixmap = QPixmap(splash.size())
+        pixmap.fill(Qt.GlobalColor.black)
+        splash.render(pixmap)
+        assert splash._self_check_warning() == ""
+        assert splash._boot_checks == {}
+    finally:
+        splash.close()
+
+
+def test_the_startup_path_runs_the_checks_before_the_acts() -> None:
+    """纯层全绿不等于接线在：守住"先自检、再播六幕"这一步。"""
+    import inspect
+
+    from axo.ui import app
+
+    source = inspect.getsource(app.main)
+    assert source.index("collect_checks(") < source.index("splash.pre_roll()")
+    assert "splash.set_checks(checks)" in source

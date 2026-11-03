@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import time
@@ -253,6 +254,7 @@ def main(argv: list[str] | None = None) -> int:
 
     settings = make_settings()
     splash = None
+    boot = None
     if splash_enabled():
         from .settings_store import SettingsStore
         from .splash import SplashScreen
@@ -262,7 +264,6 @@ def main(argv: list[str] | None = None) -> int:
         store_now = SettingsStore(QSettingsBackend(settings))
         theme_now = store_now.load()
         boot_settings = store_now.load_boot()
-        boot = None
         if boot_settings.enabled:
             from datetime import date
 
@@ -292,7 +293,9 @@ def main(argv: list[str] | None = None) -> int:
         app.splash = splash  # type: ignore[attr-defined]
         splash.show()
         app.processEvents()
-        splash.pre_roll()
+
+        splash.set_stage("正在定位记忆库…")
+        app.processEvents()
 
     # ── 记忆放在哪：**必须在建 MainWindow 之前** ────────────────────────────
     # 那个窗口一建好，四个 store 加一张图就把 ``paths`` 现算出来的路径焊死了
@@ -301,12 +304,34 @@ def main(argv: list[str] | None = None) -> int:
     #
     # 这也是**待办搬迁真正动盘的地方**：写指针与复制都发生在打开任何东西之前，所以
     # 不存在"搬到一半、库还开着"那种状态。
+    #
+    # **它从 ``pre_roll()`` 之后挪到了之前**：六幕要显示真实的库状态，而库在哪
+    # 要先定下来。开屏在搬迁期间已经显示第一幕，不会出现空桌面。
     from .data_root import boot_data_root
 
+    move_report = boot_data_root(settings)
+
+    # ── 真实自检：六幕里显示的是这一台机器刚跑出来的结果 ──────────────────
+    # 数据目录写探针、记忆库只读打开数条数、人格锚、后端、数据边界、工具沙箱。
+    # **失败不拦启动**：只把 ✗ 与日志写出来；主窗口之后会给出真正的错误。
     if splash is not None:
+        if boot is not None and theme_now.motion:
+            from .boot_checks import collect_checks
+
+            try:
+                checks = collect_checks(store_now.load_backend(), store_now.load_tools())
+            except Exception:  # noqa: BLE001 —— 自检坏掉不该拦住启动
+                logging.getLogger(__name__).exception("启动自检没有跑完")
+                checks = ()
+            splash.set_checks(checks)
+            for check in checks:
+                if not check.ok:
+                    logging.getLogger(__name__).warning(
+                        "启动自检未通过：%s — %s", check.label, check.detail
+                    )
         splash.set_stage("正在打开记忆库…")
         app.processEvents()
-    move_report = boot_data_root(settings)
+        splash.pre_roll()
 
     # 内置表情包只在第一次播种。**目录归用户**：删掉一张默认表情是用户的决定，
     # 每次启动补回来会让"删除"看起来没生效（见 ``axo.stickers.seed_default_stickers``）。

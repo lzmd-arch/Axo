@@ -10,7 +10,9 @@
 ## 与"开屏"的分工
 
 开屏（``SplashScreen``）负责"让程序看起来在醒来"；本模块负责**六幕的叙事与
-节奏**。幕表播完就回到开屏的呼吸/加载状态，主窗口构造期间它仍在那里。
+节奏**。幕表播完后进入同一块暗色的 READY 页，直到主窗口就绪。真实的启动自检
+结果由 :mod:`axo.ui.boot_checks` 算出，经 ``SplashScreen.set_checks()`` 注入，
+面板与启动账显示的是这一台机器刚查到的 ✓/✗，不是按进度打勾的装饰。
 """
 
 from __future__ import annotations
@@ -90,7 +92,7 @@ BOOT_ACTS: tuple[BootAct, ...] = (
     BootAct(
         "permission",
         "权限核验",
-        "PERMISSION · LOCAL ONLY",
+        "PERMISSION · DATA BOUNDARY",
         1200,
         confirm=True,
         kind="type",
