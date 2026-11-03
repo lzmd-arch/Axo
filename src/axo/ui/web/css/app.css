@@ -105,6 +105,7 @@ body {
   inset: 0;
   z-index: 0;
   overflow: hidden;
+  pointer-events: none;
   /* 只改壁纸不该让整页重排，所以它是独立的一层而不是 body 的背景 */
 }
 
