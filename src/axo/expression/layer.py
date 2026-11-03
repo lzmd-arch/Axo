@@ -35,6 +35,8 @@ class ExpressionOutcome:
         reason: 退回时的一句话；``"styled"`` 时为空串。它进状态栏与日志，**不进正文**。
         prompt_tokens: 这一次渲染用掉的输入 token（后端没报时为 ``None``）。
         completion_tokens: 同上，输出那一侧。
+        route: ``"model"``（Phase 1 的模型渲染）或 ``"template"``（Phase 2 的模板）。
+        template_id: 模板路径时命中的模板 id；模型路径为空串。
     """
 
     text: str
@@ -42,6 +44,8 @@ class ExpressionOutcome:
     reason: str = ""
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    route: str = "model"
+    template_id: str = ""
 
 
 class ExpressionLayer:

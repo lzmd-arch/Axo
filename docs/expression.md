@@ -73,3 +73,23 @@ axo.expression.layer.ExpressionLayer.render()
   计划书的排期，**不实现**。Phase 3 的训练数据（千岁历史回复、SIR→文本配对）属于
   用户自己的记忆库，不在任何仓库里。
 * Android：表达层需要本地第二模型，手机上没有 Ollama；Android 端未接。
+
+## Phase 2：模板优先（2026-11-03，默认关）
+
+- `src/axo/expression/templates.py`：模板库（JSONL 可加载）+ 内置一组**中性形状**
+  （拒绝 / 短回答 / 问句 / 安慰开场）。槽位只取 SIR 的 `key_point:i` / `fact:i` /
+  `facts`，**不新增信息**；未知槽位在加载时拒绝。
+- `src/axo/expression/mix.py`：`MixedRenderer` = 模板命中 → 模型 → 草稿。命中模板时
+  **不调用模型**；命中之后仍过 `facts_preserved` 与问句检查，不过就当没命中。
+- 设置：`expression/templates`，默认关；「工具」页表达层那组多一格「模板优先」。
+- 测试：`tests/test_expression_templates.py` 16 条（匹配、填槽、事实、问句、命中不调模型、
+  加载校验）。
+
+**Phase 2 作为教师还差一步（2026-11-03 实测阻塞）**：本机 `ollama pull qwen2.5:0.5b`
+失败，下载重定向到 `*.r2.cloudflarestorage.com` 时被解析成 `198.18.0.38`（非公网地址，
+代理/TUN 的假 IP），Ollama 拒绝。因此：
+
+- Phase 1 的三项未跑验收（30 条事实保真、0.5B 延迟 p50、三后端风格离散度）**仍未跑**；
+- 模板库本身的覆盖率与事实检查可以离线量（不依赖模型），但"教师质量"要在模型可用后
+  才能按 T1–T5 判；
+- 在那之前，模板优先保持默认关，不写"语气已统一"。

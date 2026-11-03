@@ -16,6 +16,7 @@ import threading
 from PySide6.QtCore import QObject, Signal, Slot
 
 from ..expression.layer import ExpressionLayer, ExpressionOutcome
+from ..expression.mix import MixedRenderer
 from ..expression.sir import SIR
 
 __all__ = ["ExpressionWorker"]
@@ -31,7 +32,7 @@ class ExpressionWorker(QObject):
     finished = Signal(object)
     """:class:`~axo.expression.layer.ExpressionOutcome`。"""
 
-    def __init__(self, layer: ExpressionLayer, sir: SIR) -> None:
+    def __init__(self, layer: ExpressionLayer | MixedRenderer, sir: SIR) -> None:
         super().__init__()
         self._layer = layer
         self._sir = sir

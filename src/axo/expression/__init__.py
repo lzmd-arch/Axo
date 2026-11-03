@@ -13,12 +13,18 @@
 from __future__ import annotations
 
 from .layer import ExpressionLayer, ExpressionOutcome
+from .mix import MixedRenderer
 from .sir import SIR, facts_preserved, parse, render_prompt, style_signature
+from .templates import Template, TemplateBank, TemplateHit
 
 __all__ = [
     "ExpressionLayer",
     "ExpressionOutcome",
+    "MixedRenderer",
     "SIR",
+    "Template",
+    "TemplateBank",
+    "TemplateHit",
     "facts_preserved",
     "parse",
     "render_prompt",

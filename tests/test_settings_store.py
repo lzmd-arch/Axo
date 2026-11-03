@@ -429,6 +429,13 @@ def test_expression_settings_roundtrip() -> None:
     assert store.load_expression() == ExpressionSettings(enabled=True, model="qwen2.5:0.5b")
 
 
+def test_template_first_is_off_by_default_and_roundtrips() -> None:
+    store = SettingsStore(FakeBackend())
+    assert store.load_expression().templates is False
+    store.save_expression(ExpressionSettings(enabled=True, templates=True))
+    assert store.load_expression().templates is True
+
+
 def test_routing_mode_defaults_to_auto() -> None:
     """默认自动：每一轮按那句话判。钉住是用户显式要的出口，不是出厂姿态。"""
     assert SettingsStore(FakeBackend()).load_tools().routing_mode == ROUTING_AUTO

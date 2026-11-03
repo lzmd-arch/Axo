@@ -360,6 +360,8 @@ src/
     expression/       分离表达层（实验，默认关）：SIR 与一次渲染（**不 import Qt/httpx**）
       sir.py          SIR、<think> 解析、从草稿降级、事实抽取与核对、风格指标
       layer.py        一次渲染：SIR + 人格 → 文本；失败/丢事实/问句变陈述句一律退回草稿
+      templates.py    Phase 2 模板库：按 SIR 匹配、只用要点/事实填槽、命中后仍核事实
+      mix.py          混合渲染：模板 → 模型 → 草稿；模板命中不调模型
     llm/              模型后端：Ollama（本机）+ OpenAI 兼容端点（云端，只做对话）
       base.py         ChatBackend / EmbeddingBackend 两个协议
       ollama.py       本机推理：NDJSON 流式

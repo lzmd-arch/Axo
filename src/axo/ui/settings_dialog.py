@@ -1105,6 +1105,12 @@ class ToolPage(QWidget):
         self.expression_model_edit.editingFinished.connect(self._on_expression_model_changed)
         model_row.addWidget(self.expression_model_edit, 1)
         outer.addLayout(model_row)
+        self.expression_templates_box = QCheckBox(
+            "模板优先：形状固定的回复先查模板，命中就不调模型", self
+        )
+        self.expression_templates_box.setObjectName("expressionTemplates")
+        self.expression_templates_box.toggled.connect(self._on_expression_toggled)
+        outer.addWidget(self.expression_templates_box)
         outer.addWidget(
             _hint(
                 "打开后，主模型写的正文**先不显示**：先用一个本地小模型按人格重写一遍，"
@@ -1293,6 +1299,9 @@ class ToolPage(QWidget):
         blocked = self.expression_model_edit.blockSignals(True)
         self.expression_model_edit.setText(expression.model)
         self.expression_model_edit.blockSignals(blocked)
+        blocked = self.expression_templates_box.blockSignals(True)
+        self.expression_templates_box.setChecked(bool(expression.templates))
+        self.expression_templates_box.blockSignals(blocked)
         self._routing_snapshot = (
             settings.routing_mode if settings.routing_mode in ROUTING_MODES else ROUTING_AUTO
         )
@@ -1340,6 +1349,7 @@ class ToolPage(QWidget):
         return ExpressionSettings(
             enabled=self.expression_box.isChecked(),
             model=self.expression_model_edit.text().strip(),
+            templates=self.expression_templates_box.isChecked(),
         )
 
     def _on_expression_toggled(self, _checked: bool) -> None:
@@ -1412,6 +1422,9 @@ class ToolPage(QWidget):
             blocked = self.expression_model_edit.blockSignals(True)
             self.expression_model_edit.setText(self._expression_snapshot.model)
             self.expression_model_edit.blockSignals(blocked)
+            blocked = self.expression_templates_box.blockSignals(True)
+            self.expression_templates_box.setChecked(self._expression_snapshot.templates)
+            self.expression_templates_box.blockSignals(blocked)
             self.expression_changed.emit(self._expression_snapshot)
         if self.routing_mode() != self._routing_snapshot:
             blocked = self.routing_combo.blockSignals(True)

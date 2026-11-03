@@ -64,6 +64,12 @@ def test_the_chat_path_buffers_only_when_enabled() -> None:
     )
 
 
+def test_template_first_is_wired_behind_the_setting() -> None:
+    body = inspect.getsource(MainWindow._on_draft_ready)
+    assert "if self._expression_settings.templates" in body
+    assert "MixedRenderer(TemplateBank.builtin()" in body
+
+
 def test_the_task_path_is_not_touched() -> None:
     """任务轮（带工具）这一版**不经过**表达层：中间几轮的"边想边说"与工具结果
     是一体的，重写它会把"她做了什么"和"她怎么说"混在一起。这条钉住"没接"。"""

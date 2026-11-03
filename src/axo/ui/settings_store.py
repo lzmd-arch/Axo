@@ -95,6 +95,7 @@ _K_AUDIO_IN = "tools/audio_in"
 _K_ROUTING_MODE = "tools/routing_mode"
 _K_EXPRESSION_ENABLED = "expression/enabled"
 _K_EXPRESSION_MODEL = "expression/model"
+_K_EXPRESSION_TEMPLATES = "expression/templates"
 
 _K_WRITE_ROOTS = "tools/write_roots"
 _K_WEB_ENABLED = "tools/web_enabled"
@@ -351,10 +352,13 @@ class ExpressionSettings:
             的主模型文本**先不显示**、等渲染完再一起出来。关着时行为与以前逐字节
             相同（主窗口直接接流式文本，不经过这一层）。
         model: 渲染用的 Ollama 模型名。空串 = :data:`EXPRESSION_DEFAULT_MODEL`。
+        templates: 先查模板库（Phase 2）。**默认关**：模板是"中性形状"，不是人格措辞；
+            打开后命中模板的那一轮不调模型，也就拿不到模型对这句话的措辞。
     """
 
     enabled: bool = False
     model: str = ""
+    templates: bool = False
 
 
 @dataclass(frozen=True)
@@ -833,11 +837,13 @@ class SettingsStore:
         return ExpressionSettings(
             enabled=_as_bool(self._backend.value(_K_EXPRESSION_ENABLED, False)),
             model=self._text(_K_EXPRESSION_MODEL),
+            templates=_as_bool(self._backend.value(_K_EXPRESSION_TEMPLATES, False)),
         )
 
     def save_expression(self, settings: ExpressionSettings) -> None:
         self._backend.setValue(_K_EXPRESSION_ENABLED, settings.enabled)
         self._backend.setValue(_K_EXPRESSION_MODEL, settings.model)
+        self._backend.setValue(_K_EXPRESSION_TEMPLATES, settings.templates)
 
     # ── 语音输出（她开口） ──────────────────────────────────────────────────
 

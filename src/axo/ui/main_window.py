@@ -123,7 +123,9 @@ from ..asr import Transcription
 from ..attachments import Attachment, attachment_for, body_of
 from ..busd.launcher import launch_blocked_reason, spawn_daemon, stop_daemon
 from ..expression.layer import ExpressionLayer
+from ..expression.mix import MixedRenderer
 from ..expression.sir import parse as parse_sir
+from ..expression.templates import TemplateBank
 from ..llm.base import ChatBackendError, ChatRequest, EmbeddingBackend
 from ..llm.llama_server import MODEL_ID_PREFIX as BUILTIN_MODEL_ID_PREFIX
 from ..llm.llama_server import BuiltinLlamaBackend
@@ -2596,9 +2598,14 @@ class MainWindow(QMainWindow):
             self._deliver_reply(draft, statistics, "表达层没有可用的渲染模型，已用原文")
             return
         layer = ExpressionLayer(backend, self._expression_persona())
+        renderer = (
+            MixedRenderer(TemplateBank.builtin(), layer)
+            if self._expression_settings.templates
+            else layer
+        )
         sir = parse_sir(draft)
         thread = QThread(self)
-        worker = ExpressionWorker(layer, sir)
+        worker = ExpressionWorker(renderer, sir)
         worker.finished.connect(thread.quit)
         worker.finished.connect(
             lambda outcome, d=draft, st=statistics: self._on_styled_ready(outcome, d, st)

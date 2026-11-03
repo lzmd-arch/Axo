@@ -2170,6 +2170,17 @@ def test_the_expression_switch_states_itself_and_reports_changes() -> None:
     assert seen and seen[-1].enabled is False
 
 
+def test_the_template_switch_is_part_of_the_expression_group() -> None:
+    page = ToolPage()
+    page.set_state(ToolSettings(), ExpressionSettings(enabled=True, templates=True))
+    assert page.expression().templates is True
+
+    seen: list[object] = []
+    page.expression_changed.connect(seen.append)
+    page.expression_templates_box.setChecked(False)
+    assert seen and seen[-1].templates is False
+
+
 def test_revert_puts_the_expression_group_back() -> None:
     page = ToolPage()
     page.set_state(ToolSettings(), ExpressionSettings())
