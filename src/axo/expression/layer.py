@@ -24,6 +24,23 @@ from .sir import SIR, facts_preserved, render_prompt
 
 __all__ = ["ExpressionLayer", "ExpressionOutcome"]
 
+#: 渲染提示词的字段名。小模型（0.5B）偶尔不写正文、把提示词整段抄回来；
+#: 那种文本会**通过**事实核对（事实确实在里面），所以必须单独认出来。
+_ECHO_MARKERS = (
+    "要点：",
+    "必须保留的事实",
+    "规则：",
+    "长度：",
+    "语气指示",
+    "内容意图",
+)
+
+
+def _looks_like_prompt_echo(text: str) -> bool:
+    """至少命中两个提示词字段名才算回显——一个词可能是正文里正常出现的。"""
+    hits = sum(1 for marker in _ECHO_MARKERS if marker in (text or ""))
+    return hits >= 2
+
 
 @dataclass(frozen=True)
 class ExpressionOutcome:
@@ -145,6 +162,14 @@ class ExpressionLayer:
         if not rendered:
             return ExpressionOutcome(
                 draft, "draft", "表达层没有给出文本", prompt_tokens, completion_tokens
+            )
+        if _looks_like_prompt_echo(rendered):
+            return ExpressionOutcome(
+                draft,
+                "draft",
+                "表达层把提示词回显出来了",
+                prompt_tokens,
+                completion_tokens,
             )
         missing = facts_preserved(rendered, sir.facts)
         if sir.intent == "ask" and ("？" not in rendered and "?" not in rendered):

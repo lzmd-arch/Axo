@@ -188,6 +188,27 @@ def test_losing_a_fact_falls_back_to_the_draft() -> None:
     assert "0.898" in outcome.reason
 
 
+def test_a_prompt_echo_is_never_shown_as_the_reply() -> None:
+    """0.5B 实测：不写正文、把提示词抄回来，而事实确实在里面——事实核对拦不住。"""
+    sir = SIR(intent="action", key_points=("甲",), draft="草稿正文。")
+    echo = """action
+要点：
+- 甲
+必须保留的事实：
+- 0.898
+长度：short"""
+    outcome = _layer([[text_chunk(echo, done=True)]]).render(sir)
+    assert outcome.source == "draft"
+    assert outcome.text == "草稿正文。"
+    assert "回显" in outcome.reason
+
+
+def test_one_prompt_word_in_normal_text_is_not_an_echo() -> None:
+    sir = SIR(intent="answer", key_points=("甲",), draft="草稿。")
+    outcome = _layer([[text_chunk("这条的规则：先备份。", done=True)]]).render(sir)
+    assert outcome.source == "styled"
+
+
 def test_a_question_rewritten_as_a_statement_falls_back() -> None:
     """问号不是"事实"，但它决定这句话是不是在问。2026-11-03 实测被吃掉过一次。"""
     sir = SIR(intent="ask", key_points=("甲",), draft="需要我详细说说吗？")
