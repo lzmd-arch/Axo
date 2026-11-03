@@ -635,6 +635,47 @@ class SplashScreen(QWidget):
         painter.setPen(QPen(line, 1))
         painter.drawLine(0, int(scan_y), int(width), int(scan_y))
 
+        # ── 脉冲：环上的发放、扩散的脉冲环、底部一条发放轨迹 ────────────────
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        for index in range(36):
+            angle = math.radians(index * 10)
+            fire = 0.5 + 0.5 * math.sin(self._boot_phase * 6.0 + index * 2.399)
+            if fire < 0.72:
+                continue
+            glow_alpha = int(40 + 160 * (fire - 0.72) / 0.28)
+            colour = QColor(accent)
+            colour.setAlpha(glow_alpha)
+            painter.setPen(QPen(colour, 2))
+            inner_r = radius * 1.06
+            outer_r = radius * (1.12 + 0.18 * (fire - 0.72) / 0.28)
+            painter.drawLine(
+                cx + inner_r * math.cos(angle),
+                cy + inner_r * math.sin(angle),
+                cx + outer_r * math.cos(angle),
+                cy + outer_r * math.sin(angle),
+            )
+
+        beat = (self._boot_phase % 1.4) / 1.4
+        ring_colour = QColor(accent)
+        ring_colour.setAlpha(int(56 * (1.0 - beat)))
+        painter.setPen(QPen(ring_colour, 1))
+        ring_r = radius * (0.7 + 1.7 * beat)
+        painter.drawEllipse(QRectF(cx - ring_r, cy - ring_r, ring_r * 2, ring_r * 2))
+
+        trace_w = min(width * 0.46, 680)
+        trace_x = (width - trace_w) / 2
+        trace_y = height - 128
+        painter.setPen(QPen(QColor(accent.red(), accent.green(), accent.blue(), 70), 1))
+        steps = 72
+        for index in range(steps):
+            x = trace_x + trace_w * index / (steps - 1)
+            value = (
+                math.sin(index * 1.7 + self._boot_phase * 9.0)
+                + math.sin(index * 3.1 - self._boot_phase * 5.0)
+            ) / 2.0
+            spike_height = max(0.0, value) ** 3 * 22.0
+            painter.drawLine(int(x), trace_y, int(x), int(trace_y - spike_height))
+
         # 角标与跳过
         mono = QFont("Consolas")
         mono.setPointSize(9)
@@ -731,15 +772,13 @@ class SplashScreen(QWidget):
                 )
 
         painter.setOpacity(1.0)
-        # 角色在**准星左侧**：全程都在，终幕更亮。
-        if self._still is not None and not self._still.isNull():
-            target_h = height * (0.42 if act.kind == "hero" else 0.34)
+        # **立绘只在终幕出现**，在准星左侧淡入。
+        if act.kind == "hero" and self._still is not None and not self._still.isNull():
+            target_h = height * 0.42
             scale = target_h / self._still.height()
             target_w = self._still.width() * scale
-            char_cx = cx - radius * (2.6 if act.kind == "hero" else 2.3)
-            painter.setOpacity(
-                (0.92 if act.kind == "hero" else 0.55) * min(1.0, 0.3 + progress * 2.0)
-            )
+            char_cx = cx - radius * 2.6
+            painter.setOpacity(min(1.0, progress * 2.6) * 0.95)
             painter.drawPixmap(
                 QRectF(char_cx - target_w / 2, cy - target_h / 2, target_w, target_h),
                 self._still,
