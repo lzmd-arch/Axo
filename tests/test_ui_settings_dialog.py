@@ -65,6 +65,7 @@ from axo.ui.settings_store import (
     ROUTING_CHAT,
     ROUTING_TASK,
     BackendSettings,
+    BootSettings,
     ExpressionSettings,
     MemorySettings,
     MusicSettings,
@@ -2193,3 +2194,47 @@ def test_revert_puts_the_expression_group_back() -> None:
 
     assert page.expression() == ExpressionSettings()
     assert seen and seen[-1] == ExpressionSettings()
+
+
+# ── 外观页：启动设置 ──────────────────────────────────────────────────────
+
+
+def test_the_boot_controls_state_and_report_changes() -> None:
+    from axo.ui.settings_dialog import AppearancePage
+
+    page = AppearancePage()
+    page.set_boot(BootSettings(enabled=False, speed=1.5, display="daily", sound=False))
+    shown = page.boot_settings()
+    assert shown.enabled is False and shown.speed == 1.5
+    assert shown.display == "daily" and shown.sound is False
+
+    seen: list[object] = []
+    page.boot_changed.connect(seen.append)
+    page.boot_enabled_box.setChecked(True)
+    assert seen and seen[-1].enabled is True
+
+
+def test_a_video_wallpaper_is_copied_and_named(qapp, data_root, monkeypatch, tmp_path) -> None:
+    """视频壁纸：不抽帧、不按像素校验，按内容哈希命名（与图片共用 wallpaper- 前缀）。"""
+    source = tmp_path / "loop.mp4"
+    source.write_bytes(b"x" * 4096)
+    page, seen = _page()
+    monkeypatch.setattr(page, "_ask_for_wallpaper", lambda: str(source))
+    page.pick_button.click()
+
+    assert len(seen) == 1
+    name = seen[0].wallpaper
+    assert name.startswith("wallpaper-") and name.endswith(".mp4")
+    assert (settings_dialog.wallpapers_dir() / name).read_bytes() == source.read_bytes()
+
+
+def test_the_banner_is_part_of_the_theme_and_edits_immediately(qapp) -> None:
+    page, seen = _page()
+    page.set_state(Theme(banner_text="千岁", banner_opacity=12), resolve(Theme(), "dark"))
+    assert page.banner_edit.text() == "千岁"
+    assert page.banner_slider.value() == 12
+
+    page.banner_edit.setText("阿螈")
+    assert seen and seen[-1].banner_text == "阿螈"
+    page.banner_slider.setValue(20)
+    assert seen[-1].banner_opacity == 20

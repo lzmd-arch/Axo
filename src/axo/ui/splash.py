@@ -35,6 +35,8 @@ from PySide6.QtCore import (
     QRectF,
     Qt,
     QTimer,
+    QUrl,
+    Signal,
 )
 from PySide6.QtGui import (
     QColor,
@@ -49,6 +51,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QWidget
 
+from .boot import BootSequence
 from .theme import Resolved, Theme
 
 __all__ = ["SplashScreen", "splash_enabled"]
@@ -78,6 +81,15 @@ _PREROLL_MS = 650
 
 _MIN_VISIBLE_MS = 900
 """从显示到允许关闭的最短时间。构造很快时也不至于一闪而过。"""
+
+_CONFIRM_TIMEOUT_MS = 5000
+"""确认幕最多等这么久。用户走开时启动不能永远停在开屏。"""
+
+_SKIP_RECT = QRectF(_SHADOW + _WIDTH - 118, _SHADOW + 22, 96, 30)
+"""画在右上角的「跳过」热区（窗口坐标）。"""
+
+_BOOT_TICK_MS = 16
+""""进度条"的重画间隔。只为动画平滑，不参与任何判定。"""
 
 
 def splash_enabled() -> bool:
@@ -111,12 +123,21 @@ def _load_character() -> tuple[QPixmap | None, QMovie | None]:
 class SplashScreen(QWidget):
     """无边框、半透明、居中的开屏。"""
 
+    closed = Signal()
+    """窗口真正关掉（含淡出结束）。首启向导/搬迁对话框要等它之后再弹。"""
+
     def __init__(
         self,
         *,
         theme: Theme | None = None,
         resolved: Resolved,
         parent: QWidget | None = None,
+        boot: BootSequence | None = None,
+        boot_sound: bool = False,
+        allow_skip: bool = True,
+        require_confirm: bool = True,
+        speed: float = 1.0,
+        boot_theme: str = "warm",
     ) -> None:
         super().__init__(parent)
         self.setWindowFlags(
@@ -136,6 +157,25 @@ class SplashScreen(QWidget):
         self._stage = "正在醒来…"
         self._shown_at = 0.0
         self._closing = False
+        # ── 六幕启动（可选） ────────────────────────────────────────────────
+        self._boot = boot if (boot is not None and self._motion) else None
+        self._boot_index = 0
+        self._boot_progress = 0.0
+        self._boot_running = False
+        self._boot_done = self._boot is None
+        self._boot_sound = bool(boot_sound)
+        self._boot_allow_skip = bool(allow_skip)
+        self._boot_require_confirm = bool(require_confirm)
+        self._boot_speed = max(0.5, min(2.0, float(speed)))
+        self._boot_theme = boot_theme if boot_theme in ("warm", "dark") else "warm"
+        self._boot_confirm = False
+        self._boot_waiting = False
+        self._boot_act_started = 0.0
+        self._boot_loop: QEventLoop | None = None
+        self._sound = None
+        self._boot_timer = QTimer(self)
+        self._boot_timer.setInterval(_BOOT_TICK_MS)
+        self._boot_timer.timeout.connect(self._on_boot_tick)
 
         self._still, self._movie = _load_character()
         if self._movie is not None:
@@ -215,23 +255,184 @@ class SplashScreen(QWidget):
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt 命名)
         if self._movie is not None:
             self._movie.stop()
+        self._boot_timer.stop()
+        if self._sound is not None:
+            self._sound.stop()
         self._phase_anim.stop()
         self._intro_anim.stop()
         self._fade.stop()
+        self.closed.emit()
         super().closeEvent(event)
 
     def pre_roll(self, milliseconds: int = _PREROLL_MS) -> None:
-        """用嵌套事件循环让开屏先动一会儿。
+        """把开场的前几幕播完再返回。
 
-        **只在动画开启时真的等。** 关掉动效的人要的是"别耽误我"：这时它只
-        重画一帧，然后立刻返回。
+        六幕**不全塞在这里**：``MainWindow`` 构造期间事件循环不转，确认幕放在
+        这里会让用户面对一个"点了没反应"的开屏。这里只播不需要确认的开场幕
+        （最多 2 幕），剩下的在 :meth:`finish` 之后由主窗口事件循环继续。
         """
         if not self._motion or milliseconds <= 0:
             self.repaint()
             return
+        if self._boot is not None:
+            self._run_boot_intro()
+            return
         loop = QEventLoop(self)
         QTimer.singleShot(milliseconds, loop.quit)
         loop.exec()
+
+    # ── 六幕启动 ────────────────────────────────────────────────────────────
+
+    def _run_boot_intro(self) -> None:
+        assert self._boot is not None
+        # **只播不需要确认的开场幕**：确认幕要等键盘/点击，而 pre_roll 期间窗口
+        # 还没有焦点（WA_ShowWithoutActivating），放了也收不到输入。
+        intro = 0
+        for act in self._boot.acts:
+            if act.confirm or intro >= 2:
+                break
+            intro += 1
+        for index in range(intro):
+            self._boot_index = index
+            self._boot_progress = 0.0
+            self._play_chime()
+            self._wait_boot_act(self._boot.acts[index])
+        self._boot_index = intro
+        if intro >= len(self._boot.acts):
+            self._boot_done = True
+
+    def _wait_boot_act(self, act) -> None:  # noqa: ANN001 — BootAct
+        """嵌套事件循环里等一幕。``_boot_progress`` 只负责画进度条。"""
+        duration = max(120, int(act.duration_ms / self._boot_speed))
+        loop = QEventLoop(self)
+        self._boot_loop = loop
+        state = {"elapsed": 0}
+
+        def tick() -> None:
+            state["elapsed"] += _BOOT_TICK_MS
+            self._boot_progress = min(1.0, state["elapsed"] / duration)
+            self.update()
+            if state["elapsed"] >= duration:
+                loop.quit()
+
+        timer = QTimer(self)
+        timer.setInterval(_BOOT_TICK_MS)
+        timer.timeout.connect(tick)
+        timer.start()
+        loop.exec()
+        timer.stop()
+        self._boot_loop = None
+
+    def _start_post_roll(self) -> None:
+        """主窗口已就绪：剩下的幕在主事件循环里继续。"""
+        assert self._boot is not None
+        self._boot_running = True
+        self._boot_waiting = False
+        self._boot_act_started = time.monotonic()
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.activateWindow()
+        self.setFocus()
+        if self._boot_index < len(self._boot.acts):
+            self._play_chime()
+        self._boot_timer.start()
+
+    def _on_boot_tick(self) -> None:
+        if self._boot is None or not self._boot_running:
+            return
+        assert self._boot is not None
+        if self._boot_index >= len(self._boot.acts):
+            self._end_post_roll()
+            return
+        act = self._boot.acts[self._boot_index]
+        duration = max(120, int(act.duration_ms / self._boot_speed))
+        elapsed = int((time.monotonic() - self._boot_act_started) * 1000)
+        self._boot_progress = min(1.0, elapsed / duration)
+        self.update()
+        if act.confirm and self._boot_require_confirm and not self._boot_confirm:
+            if elapsed >= duration:
+                self._boot_waiting = True
+            if elapsed >= _CONFIRM_TIMEOUT_MS:
+                self._advance_boot()
+            return
+        if elapsed >= duration:
+            self._advance_boot()
+
+    def _advance_boot(self) -> None:
+        assert self._boot is not None
+        self._boot_index += 1
+        self._boot_progress = 0.0
+        self._boot_confirm = False
+        self._boot_waiting = False
+        self._boot_act_started = time.monotonic()
+        if self._boot_index >= len(self._boot.acts):
+            self._end_post_roll()
+            return
+        self._play_chime()
+        self.update()
+
+    def _end_post_roll(self) -> None:
+        self._boot_running = False
+        self._boot_done = True
+        self._boot_timer.stop()
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._schedule_close()
+
+    def _confirm_boot(self) -> None:
+        if not self._boot_running or self._boot is None:
+            return
+        if self._boot_index >= len(self._boot.acts):
+            return
+        if self._boot.acts[self._boot_index].confirm:
+            self._boot_confirm = True
+            self._advance_boot()
+
+    def _skip_boot(self) -> None:
+        if self._boot_running and self._boot_allow_skip:
+            self._boot_index = len(self._boot.acts) if self._boot is not None else 0
+            self._end_post_roll()
+
+    def _play_chime(self) -> None:
+        if not self._boot_sound:
+            return
+        try:
+            if self._sound is None:
+                from PySide6.QtMultimedia import QMediaDevices, QSoundEffect
+
+                from .boot_sound import ensure_chime
+
+                if QMediaDevices.defaultAudioOutput().isNull():
+                    self._boot_sound = False
+                    return
+                path = ensure_chime()
+                if path is None:
+                    self._boot_sound = False
+                    return
+                self._sound = QSoundEffect(self)
+                self._sound.setSource(QUrl.fromLocalFile(str(path)))
+                self._sound.setVolume(0.35)
+            self._sound.play()
+        except Exception:  # noqa: BLE001 —— 没有音频不该拦住启动
+            self._boot_sound = False
+            self._sound = None
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 (Qt 命名)
+        if self._boot_running:
+            if event.key() == Qt.Key.Key_Escape:
+                self._skip_boot()
+                return
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+                self._confirm_boot()
+                return
+        super().keyPressEvent(event)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt 命名)
+        if self._boot_running:
+            if _SKIP_RECT.contains(event.position()) and self._boot_allow_skip:
+                self._skip_boot()
+                return
+            self._confirm_boot()
+            return
+        super().mousePressEvent(event)
 
     def set_stage(self, text: str) -> None:
         """更新那一行状态句（"正在打开记忆库…"）。"""
@@ -239,13 +440,25 @@ class SplashScreen(QWidget):
         self.update()
 
     def finish(self) -> None:
-        """主窗口已经就绪：到最短展示时间后淡出并关闭。"""
+        """主窗口已经就绪：继续播剩下的幕，或到最短展示时间后淡出关闭。"""
+        if self._closing or self._boot_running:
+            return
+        if self._boot is not None and not self._boot_done:
+            self._start_post_roll()
+            return
+        self._schedule_close()
+
+    def _schedule_close(self) -> None:
         if self._closing:
             return
         self._closing = True
         minimum = _MIN_VISIBLE_MS if self._motion else 0
         remaining = minimum - (time.monotonic() - self._shown_at) * 1000.0
         QTimer.singleShot(max(0, int(remaining)), self._fade_out)
+
+    def has_pending_boot(self) -> bool:
+        """``finish()`` 之后还会在屏幕上继续播六幕吗（对话框据此延后）。"""
+        return self._boot is not None and not self._boot_done
 
     def _fade_out(self) -> None:
         if not self._motion:
@@ -282,12 +495,99 @@ class SplashScreen(QWidget):
         clip.addRoundedRect(plate, _RADIUS, _RADIUS)
         painter.save()
         painter.setClipPath(clip)
+        if self._boot is not None and not self._boot_done and self._boot_theme == "warm":
+            painter.fillRect(plate, QColor("#f7f1ee"))
         self._paint_aurora(painter, plate, accent)
         painter.restore()
 
-        self._paint_character(painter, accent)
-        self._paint_text(painter, tokens, accent)
+        if self._boot is not None and not self._boot_done:
+            self._paint_boot(painter, plate, tokens, accent)
+        else:
+            self._paint_character(painter, accent)
+            self._paint_text(painter, tokens, accent)
         painter.end()
+
+    # ── 六幕的绘制 ──────────────────────────────────────────────────────────
+
+    def _paint_boot(self, painter: QPainter, plate: QRectF, tokens, accent: QColor) -> None:
+        """一幕一屏。版式只借结构，文案来自幕表。"""
+        assert self._boot is not None
+        act = self._boot.acts[min(self._boot_index, len(self._boot.acts) - 1)]
+        progress = self._boot_progress
+        if self._boot_theme == "warm":
+            fg, muted, border = "#1d1b1a", "#6b6461", "#d9d2cc"
+        else:
+            fg, muted, border = tokens.fg_strong, tokens.fg_muted, tokens.border
+        appear = min(1.0, 0.25 + progress * 3.0)
+        x = plate.left() + 366
+        top = plate.top() + 128
+
+        if act.kind == "hero":
+            self._paint_character(painter, accent)
+
+        painter.setOpacity(appear)
+        title_font = QFont(self.font())
+        title_font.setPointSize(26 if act.kind != "hero" else 24)
+        title_font.setBold(True)
+        painter.setFont(title_font)
+        painter.setPen(QColor(fg))
+
+        if act.kind == "glitch" and progress < 0.55:
+            # 色散：主字左右各画一层淡色残影，不引入新资源。
+            for dx, colour in ((-3, QColor(255, 59, 48, 90)), (3, QColor(41, 113, 184, 90))):
+                painter.setPen(colour)
+                painter.drawText(
+                    QRectF(x + dx, top, 320, 44), Qt.AlignmentFlag.AlignLeft, act.title
+                )
+            painter.setPen(QColor(fg))
+        painter.drawText(QRectF(x, top, 320, 44), Qt.AlignmentFlag.AlignLeft, act.title)
+
+        subtitle_font = QFont(self.font())
+        subtitle_font.setPointSize(10)
+        subtitle_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2.0)
+        painter.setFont(subtitle_font)
+        painter.setPen(QColor(muted))
+        subtitle = act.subtitle
+        if act.kind == "type":
+            subtitle = subtitle[: max(0, int(len(subtitle) * min(1.0, progress * 1.6)))]
+        painter.drawText(QRectF(x, top + 54, 330, 24), Qt.AlignmentFlag.AlignLeft, subtitle)
+
+        if act.kind == "glass":
+            painter.setPen(QPen(QColor(border), 1))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(QRectF(x - 14, top - 14, 350, 118), 14, 14)
+
+        if self._boot_waiting and self._boot_running:
+            hint = QFont(self.font())
+            hint.setPointSize(9)
+            painter.setFont(hint)
+            painter.setPen(QColor(accent))
+            painter.drawText(
+                QRectF(x, top + 92, 330, 22),
+                Qt.AlignmentFlag.AlignLeft,
+                "按 Enter / 点击继续",
+            )
+
+        painter.setOpacity(1.0)
+        # 进度条
+        bar = QRectF(x, plate.bottom() - 68, 300, 3)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(border))
+        painter.drawRoundedRect(bar, 1.5, 1.5)
+        painter.setBrush(accent)
+        painter.drawRoundedRect(
+            QRectF(bar.left(), bar.top(), bar.width() * progress, bar.height()), 1.5, 1.5
+        )
+
+        if self._boot_allow_skip:
+            skip_font = QFont(self.font())
+            skip_font.setPointSize(9)
+            painter.setFont(skip_font)
+            painter.setPen(QPen(QColor(border), 1))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(_SKIP_RECT, 12, 12)
+            painter.setPen(QColor(muted))
+            painter.drawText(_SKIP_RECT, Qt.AlignmentFlag.AlignCenter, "跳过 Esc")
 
     def _paint_shadow(self, painter: QPainter, plate: QRectF) -> None:
         """假投影：几层逐渐扩散、逐渐变淡的圆角矩形。"""

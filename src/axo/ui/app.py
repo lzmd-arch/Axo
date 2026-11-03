@@ -259,8 +259,34 @@ def main(argv: list[str] | None = None) -> int:
         from .theme import resolve
         from .theme_qt import QSettingsBackend, os_color_scheme
 
-        theme_now = SettingsStore(QSettingsBackend(settings)).load()
-        splash = SplashScreen(theme=theme_now, resolved=resolve(theme_now, os_color_scheme()))
+        store_now = SettingsStore(QSettingsBackend(settings))
+        theme_now = store_now.load()
+        boot_settings = store_now.load_boot()
+        boot = None
+        if boot_settings.enabled:
+            from datetime import date
+
+            from ..paths import data_dir
+            from .boot import load_boot_sequence
+
+            today = date.today().isoformat()
+            play = not (boot_settings.display == "daily" and boot_settings.last_day == today)
+            if play:
+                boot = load_boot_sequence(data_dir() / "boot" / "sequence.json")
+                if boot_settings.display == "daily":
+                    from dataclasses import replace
+
+                    store_now.save_boot(replace(boot_settings, last_day=today))
+        splash = SplashScreen(
+            theme=theme_now,
+            resolved=resolve(theme_now, os_color_scheme()),
+            boot=boot,
+            boot_sound=boot_settings.sound,
+            allow_skip=boot_settings.allow_skip,
+            require_confirm=boot_settings.require_confirm,
+            speed=boot_settings.speed,
+            boot_theme=boot_settings.theme,
+        )
         # 与 ``main_window`` 同一个理由：没有别的引用时，顶层窗口会被 GC
         # 并连带销毁原生窗口——表现是"开屏一闪就不见了"。
         app.splash = splash  # type: ignore[attr-defined]
@@ -308,14 +334,24 @@ def main(argv: list[str] | None = None) -> int:
     if splash is not None:
         splash.set_stage("就绪")
         splash.finish()
+
     # **在 show() 之后说。** 搬迁的结果要有个父窗口才弹得出来，而在建窗口之前既没有
     # 地方说、抛异常又等于"程序打不开"。这一步可能弹一个对话框问"旧的那份删不删"，
     # 所以不能塞进 MainWindow 的构造函数里——那会让它出现在主窗口之前。
-    if move_report is not None:
-        window.report_data_move(move_report)
-    # 首启向导。**必须在 show() 之后**：从 MainWindow 的构造函数里弹会让它出现在主窗口
-    # 之前。副作用是几个冒烟脚本不会看到它——正好，它们的断言都是关于主窗口的。
-    window.maybe_start_onboarding()
+    # **对话框要等开屏真正关掉之后再弹。** 六幕启动在 ``finish()`` 之后还会在
+    # 主窗口上层继续几秒；这时弹搬迁/首启对话框会被置顶的开屏挡住，看起来像
+    # "点了没反应"，然后对话框其实已经在那里等输入了。
+    def _after_splash() -> None:
+        if move_report is not None:
+            window.report_data_move(move_report)
+        # 首启向导。**必须在 show() 之后**：从 MainWindow 的构造函数里弹会让它出现在主窗口
+        # 之前。副作用是几个冒烟脚本不会看到它——正好，它们的断言都是关于主窗口的。
+        window.maybe_start_onboarding()
+
+    if splash is not None and splash.has_pending_boot():
+        splash.closed.connect(_after_splash)
+    else:
+        _after_splash()
     try:
         return app.exec()
     finally:

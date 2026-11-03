@@ -87,6 +87,7 @@ from .settings_store import (
     ROUTING_MODES,
     ROUTING_TASK,
     BackendSettings,
+    BootSettings,
     ExpressionSettings,
     MemorySettings,
     MusicSettings,
@@ -99,6 +100,7 @@ from .settings_store import (
     wallpaper_file,
 )
 from .theme import (
+    BANNER_OPACITY_MAX,
     CUSTOM_PRESET,
     MODE_DARK,
     MODE_LIGHT,
@@ -125,7 +127,13 @@ _MAX_PIXELS_TEXT = "4000 万"
 _MAX_BYTES = 40 * 1024 * 1024
 _WARN_BYTES = 20 * 1024 * 1024
 
-_WALLPAPER_FILTER = "图片 (*.png *.jpg *.jpeg *.webp *.bmp)"
+_WALLPAPER_FILTER = "壁纸 (*.png *.jpg *.jpeg *.webp *.bmp *.mp4 *.webm)"
+
+#: 视频壁纸：不做像素校验，只限体积。**WebM/VP9 是一等**——QtWebEngine 是否带
+#: H.264 取决于构建，mp4 只能尽力而为（网页侧解码失败会回退静态层）。
+_VIDEO_SUFFIXES = {".mp4", ".webm"}
+_VIDEO_MAX_BYTES = 200 * 1024 * 1024
+_VIDEO_WARN_BYTES = 100 * 1024 * 1024
 
 #: 本模块自己复制进壁纸目录的文件前缀。清理只碰这个前缀——用户自己往那个目录
 #: 里放的东西一律不动。
@@ -222,6 +230,7 @@ class AppearancePage(QWidget):
     """外观页。发出的每一个 ``changed(Theme)`` 都是**完整且合法**的主题。"""
 
     changed = Signal(object)
+    boot_changed = Signal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -237,6 +246,7 @@ class AppearancePage(QWidget):
         outer.addWidget(_section("主色"))
         row = QHBoxLayout()
         row.setSpacing(8)
+        self._boot_snapshot = BootSettings()
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
         for preset in PRESETS:
@@ -323,6 +333,29 @@ class AppearancePage(QWidget):
             )
         )
 
+        banner_row = QHBoxLayout()
+        banner_row.setSpacing(8)
+        banner_row.addWidget(QLabel("横幅", self))
+        self.banner_edit = QLineEdit(self)
+        self.banner_edit.setObjectName("bannerText")
+        self.banner_edit.setPlaceholderText("一行大字，垫在壁纸与消息之间；留空即不显示")
+        self.banner_edit.textChanged.connect(self._on_banner_changed)
+        banner_row.addWidget(self.banner_edit, 1)
+        outer.addLayout(banner_row)
+        banner_alpha_row = QHBoxLayout()
+        banner_alpha_row.setSpacing(8)
+        banner_alpha_row.addWidget(QLabel("横幅浓度", self))
+        self.banner_slider = QSlider(Qt.Orientation.Horizontal, self)
+        self.banner_slider.setRange(0, BANNER_OPACITY_MAX)
+        self.banner_slider.setSingleStep(1)
+        self.banner_slider.setPageStep(5)
+        self.banner_slider.valueChanged.connect(self._on_banner_opacity_changed)
+        banner_alpha_row.addWidget(self.banner_slider, 1)
+        self.banner_value = QLabel("", self)
+        self.banner_value.setMinimumWidth(48)
+        banner_alpha_row.addWidget(self.banner_value)
+        outer.addLayout(banner_alpha_row)
+
         outer.addWidget(_section("动效"))
         self.motion_box = QCheckBox("界面动效（液态玻璃流动、消息弹入、按钮回弹）", self)
         self.motion_box.setObjectName("appearanceMotionBox")
@@ -333,6 +366,57 @@ class AppearancePage(QWidget):
             _hint(
                 "关掉之后只保留静态玻璃：壁纸、磨砂、层次都还在，只是不再有流动与弹入。"
                 "系统开了「减少动态效果」时这里也会自动按关处理。"
+            )
+        )
+
+        outer.addWidget(_section("启动"))
+        self.boot_enabled_box = QCheckBox("启动时播放六幕动画（可跳过）", self)
+        self.boot_enabled_box.setObjectName("bootEnabledBox")
+        self.boot_enabled_box.toggled.connect(self._on_boot_changed)
+        outer.addWidget(self.boot_enabled_box)
+        self.boot_confirm_box = QCheckBox("确认幕等一次按键或点击（5 秒后自动继续）", self)
+        self.boot_confirm_box.setObjectName("bootConfirmBox")
+        self.boot_confirm_box.toggled.connect(self._on_boot_changed)
+        outer.addWidget(self.boot_confirm_box)
+        self.boot_skip_box = QCheckBox("允许跳过（Esc 或右上角）", self)
+        self.boot_skip_box.setObjectName("bootSkipBox")
+        self.boot_skip_box.toggled.connect(self._on_boot_changed)
+        outer.addWidget(self.boot_skip_box)
+        self.boot_sound_box = QCheckBox("播放提示音（程序生成，无音频设备时静默）", self)
+        self.boot_sound_box.setObjectName("bootSoundBox")
+        self.boot_sound_box.toggled.connect(self._on_boot_changed)
+        outer.addWidget(self.boot_sound_box)
+        boot_speed_row = QHBoxLayout()
+        boot_speed_row.setSpacing(8)
+        boot_speed_row.addWidget(QLabel("速度", self))
+        self.boot_speed_slider = QSlider(Qt.Orientation.Horizontal, self)
+        self.boot_speed_slider.setRange(50, 200)
+        self.boot_speed_slider.setSingleStep(10)
+        self.boot_speed_slider.setPageStep(25)
+        self.boot_speed_slider.valueChanged.connect(self._on_boot_changed)
+        boot_speed_row.addWidget(self.boot_speed_slider, 1)
+        self.boot_speed_value = QLabel("", self)
+        self.boot_speed_value.setMinimumWidth(48)
+        boot_speed_row.addWidget(self.boot_speed_value)
+        outer.addLayout(boot_speed_row)
+        boot_display_row = QHBoxLayout()
+        boot_display_row.setSpacing(8)
+        boot_display_row.addWidget(QLabel("播放频率", self))
+        self.boot_display_combo = QComboBox(self)
+        self.boot_display_combo.setObjectName("bootDisplayCombo")
+        for value, label in (
+            ("always", "每次启动"),
+            ("daily", "每天一次"),
+            ("session", "每个进程一次"),
+        ):
+            self.boot_display_combo.addItem(label, value)
+        self.boot_display_combo.currentIndexChanged.connect(self._on_boot_changed)
+        boot_display_row.addWidget(self.boot_display_combo, 1)
+        outer.addLayout(boot_display_row)
+        outer.addWidget(
+            _hint(
+                "六幕全部是程序绘制的动画，不带第三方台词或音频；提示音是启动时现生成的短音。"
+                "关掉动效或设置里停用后，启动只剩原来的单段开屏。"
             )
         )
         outer.addStretch(1)
@@ -377,6 +461,9 @@ class AppearancePage(QWidget):
             for button in self._mode_group.buttons():
                 button.setChecked(button.property("modeValue") == self._theme.mode)
             self.visible_slider.setValue(self._theme.wallpaper_visible)
+            self.banner_edit.setText(self._theme.banner_text)
+            self.banner_slider.setValue(self._theme.banner_opacity)
+            self.banner_value.setText(f"{self._theme.banner_opacity}%")
             self.motion_box.setChecked(self._theme.motion)
         finally:
             self._syncing = False
@@ -390,6 +477,43 @@ class AppearancePage(QWidget):
         """
         self.accent_note.setText(f"当前：{describe_accent(self._theme, resolved)}")
         self.visible_value.setText(f"{self._theme.wallpaper_visible}%")
+        self.banner_value.setText(f"{self._theme.banner_opacity}%")
+
+    # ── 启动设置（六幕） ────────────────────────────────────────────────────
+
+    def set_boot(self, settings: BootSettings) -> None:
+        """摆上启动设置；**不发信号**（陈述现状不是修改）。"""
+        self._boot_snapshot = settings
+        self._syncing = True
+        try:
+            self.boot_enabled_box.setChecked(settings.enabled)
+            self.boot_confirm_box.setChecked(settings.require_confirm)
+            self.boot_skip_box.setChecked(settings.allow_skip)
+            self.boot_sound_box.setChecked(settings.sound)
+            self.boot_speed_slider.setValue(int(round(settings.speed * 100)))
+            index = self.boot_display_combo.findData(settings.display)
+            self.boot_display_combo.setCurrentIndex(index if index >= 0 else 0)
+            self.boot_speed_value.setText(f"{settings.speed:.2f}×")
+        finally:
+            self._syncing = False
+
+    def boot_settings(self) -> BootSettings:
+        return BootSettings(
+            enabled=self.boot_enabled_box.isChecked(),
+            theme=self._boot_snapshot.theme,
+            speed=self.boot_speed_slider.value() / 100.0,
+            require_confirm=self.boot_confirm_box.isChecked(),
+            allow_skip=self.boot_skip_box.isChecked(),
+            sound=self.boot_sound_box.isChecked(),
+            display=str(self.boot_display_combo.currentData() or "always"),
+            last_day=self._boot_snapshot.last_day,
+        )
+
+    def _on_boot_changed(self, *_args: object) -> None:
+        if self._syncing:
+            return
+        self.boot_speed_value.setText(f"{self.boot_speed_slider.value() / 100.0:.2f}×")
+        self.boot_changed.emit(self.boot_settings())
 
     # ── 改一个字段 ──────────────────────────────────────────────────────────
 
@@ -406,6 +530,8 @@ class AppearancePage(QWidget):
             "mode": self._theme.mode,
             "wallpaper": self._theme.wallpaper,
             "wallpaper_visible": self._theme.wallpaper_visible,
+            "banner_text": self._theme.banner_text,
+            "banner_opacity": self._theme.banner_opacity,
             "motion": self._theme.motion,
         }
         fields.update(changes)
@@ -493,6 +619,9 @@ class AppearancePage(QWidget):
         if not source.is_file():
             self._warn(f"找不到这个文件：{source}")
             return None
+        suffix = source.suffix.lower()
+        if suffix in _VIDEO_SUFFIXES:
+            return self._install_video_wallpaper(source)
         reader = QImageReader(str(source))
         if not reader.canRead():
             self._warn("这不是一张能读的图片（或者格式不被支持）。")
@@ -519,6 +648,37 @@ class AppearancePage(QWidget):
         self.wallpaper_name.setText(f"已复制 {source.name} {note}")
         return target.name
 
+    def _install_video_wallpaper(self, source: Path) -> str | None:
+        """视频壁纸：分块复制（200 MB 一次性读进内存会卡住界面），按内容哈希命名。"""
+        import hashlib as _hashlib
+
+        size = source.stat().st_size
+        if size > _VIDEO_MAX_BYTES:
+            self._warn(f"这个视频 {size // (1024 * 1024)} MB，超过上限 200 MB。")
+            return None
+        digest = _hashlib.sha1(usedforsecurity=False)
+        # 先写临时名，边读边算哈希；读完再把名字定下来。
+        tmp = wallpapers_dir() / f"{_WALLPAPER_PREFIX}tmp{source.suffix.lower()}"
+        try:
+            with source.open("rb") as src, tmp.open("wb") as dst:
+                while True:
+                    chunk = src.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                    dst.write(chunk)
+            target = wallpapers_dir() / (
+                f"{_WALLPAPER_PREFIX}{digest.hexdigest()[:10]}{source.suffix.lower()}"
+            )
+            tmp.replace(target)
+        except OSError as exc:
+            tmp.unlink(missing_ok=True)
+            self._warn(f"复制失败：{exc}")
+            return None
+        note = "（视频，加载会慢一点）" if size > _VIDEO_WARN_BYTES else "（视频）"
+        self.wallpaper_name.setText(f"已复制 {source.name} {note}")
+        return target.name
+
     def _on_clear_wallpaper(self) -> None:
         self._replace(wallpaper="")
 
@@ -533,6 +693,10 @@ class AppearancePage(QWidget):
             else:
                 self._warn("未设置")
             return
+        if path.suffix.lower() in _VIDEO_SUFFIXES:
+            self.wallpaper_name.setText(f"{theme.wallpaper}（视频壁纸）")
+            self.wallpaper_preview.clear()
+            return
         pixmap = _thumbnail(path)
         if pixmap is None:
             self._warn(f"{theme.wallpaper}（预览读不出来，但设置已记下）")
@@ -544,6 +708,13 @@ class AppearancePage(QWidget):
         """往预览那一行写字。**不弹框**：选图失败是一种就地可修的输入问题，
         弹一个要点的框只会让"再选一张"多两步。"""
         self.wallpaper_name.setText(text)
+
+    def _on_banner_changed(self, text: str) -> None:
+        self._replace(banner_text=text)
+
+    def _on_banner_opacity_changed(self, value: int) -> None:
+        self.banner_value.setText(f"{value}%")
+        self._replace(banner_opacity=value)
 
     def _on_visible_changed(self, value: int) -> None:
         self.visible_value.setText(f"{value}%")
@@ -2810,6 +2981,7 @@ class SettingsDialog(QDialog):
     vision_changed = Signal(bool)
     routing_changed = Signal(str)
     expression_changed = Signal(object)
+    boot_changed = Signal(object)
     voice_changed = Signal(object)
     music_changed = Signal(object)
     sync_changed = Signal(object)
@@ -2853,6 +3025,7 @@ class SettingsDialog(QDialog):
         music: MusicSettings | None = None,
         sync: SyncSettings | None = None,
         expression: ExpressionSettings | None = None,
+        boot: BootSettings | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("设置")
@@ -2978,6 +3151,7 @@ class SettingsDialog(QDialog):
         self.tools.audio_changed.connect(self.audio_changed)
         self.tools.routing_changed.connect(self.routing_changed)
         self.tools.expression_changed.connect(self.expression_changed)
+        self.appearance.boot_changed.connect(self.boot_changed)
         self.speech.changed.connect(self.voice_changed)
         self.speech.set_state(voice if voice is not None else SpeechSettings())
         self.music.changed.connect(self.music_changed)
@@ -3021,6 +3195,7 @@ class SettingsDialog(QDialog):
             music=music if music is not None else MusicSettings(),
             sync=sync if sync is not None else SyncSettings(),
             expression=expression,
+            boot=boot,
         )
 
     # ── 状态进出 ────────────────────────────────────────────────────────────
@@ -3059,6 +3234,7 @@ class SettingsDialog(QDialog):
         music: MusicSettings | None = None,
         sync: SyncSettings | None = None,
         expression: ExpressionSettings | None = None,
+        boot: BootSettings | None = None,
     ) -> None:
         """**打开窗口时调。** 顺带把快照换成这一份——「撤销修改」回到的是**这一次**
         打开时的样子，而不是上一次的。
@@ -3070,6 +3246,7 @@ class SettingsDialog(QDialog):
         self._snapshot = theme
         self.set_glass(resolved.accent, motion=theme.motion)
         self.appearance.set_state(theme, resolved)
+        self.appearance.set_boot(boot or BootSettings())
         self.backend.set_state(backend, note)
         self.tools.set_state(tools, expression)
         self.memory.set_state(memory)

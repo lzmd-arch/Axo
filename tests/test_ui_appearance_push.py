@@ -48,13 +48,18 @@ class Recorder:
     def set_theme(self, resolved: object) -> None:
         self.calls.append("setTheme")
 
+    def set_wallpaper_playing(self, playing: bool) -> None:
+        self.calls.append("setWallpaperPlaying")
+
     def set_wallpaper_opacity(self, percent: int) -> None:
         self.calls.append(f"setWallpaperOpacity({percent})")
 
     def set_motion(self, enabled: bool) -> None:
         self.calls.append(f"setMotion({enabled})")
 
-    def set_wallpaper(self, path: str | None) -> None:
+    def set_wallpaper(
+        self, path: str | None, *, banner_text: str = "", banner_opacity: int = 0
+    ) -> None:
         self.calls.append(f"setWallpaper({path!r})")
 
     def set_status(self, text: str) -> None:

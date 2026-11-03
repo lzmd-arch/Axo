@@ -41,6 +41,8 @@ __all__ = [
     "PRESETS",
     "WALLPAPER_VISIBLE_DEFAULT",
     "WALLPAPER_VISIBLE_MAX",
+    "BANNER_OPACITY_MAX",
+    "clamp_banner_opacity",
     "Preset",
     "Resolved",
     "Theme",
@@ -136,6 +138,8 @@ WALLPAPER_VISIBLE_DEFAULT = 18
 #: 滚动的——没有哪一块区域是"纯装饰、可以不看"的。再高就是拿一张照片当背景、
 #: 正文压在上面，可读性没有兜底。这是个刻意的硬上限，不是没做完。
 WALLPAPER_VISIBLE_MAX = 70
+#: 大字横幅的透明度上限（百分比）。默认 0 = 不显示；12 是"压在壁纸上刚好能看见"。
+BANNER_OPACITY_MAX = 40
 
 
 @dataclass(frozen=True)
@@ -297,6 +301,10 @@ class Theme:
     症状是"壁纸莫名其妙没了"，看不出是路径问题。
     """
     wallpaper_visible: int = WALLPAPER_VISIBLE_DEFAULT
+    banner_text: str = ""
+    """壁纸层的大字横幅。**矢量文字，不是图片**；空串 = 不显示。"""
+    banner_opacity: int = 0
+    """横幅的 alpha（0–40%）。0 = 隐藏。"""
     motion: bool = True
     """网页侧的动效（液态玻璃的流动、消息弹入、按钮回弹）。默认开。
 
@@ -334,6 +342,8 @@ class Theme:
             raise ValueError(
                 f"壁纸可见度必须在 0–{WALLPAPER_VISIBLE_MAX} 内：{self.wallpaper_visible!r}"
             )
+        if not 0 <= self.banner_opacity <= BANNER_OPACITY_MAX:
+            raise ValueError(f"横幅透明度必须在 0–{BANNER_OPACITY_MAX} 内：{self.banner_opacity!r}")
 
 
 DEFAULT_THEME = Theme()
@@ -376,6 +386,15 @@ def clamp_mode(value: object) -> str:
     既不在构造函数里、也不在存储层里的落点——放这里，两边都调它。
     """
     return value if value in _MODE_CHOICES else MODE_SYSTEM  # type: ignore[return-value]
+
+
+def clamp_banner_opacity(value: object) -> int:
+    """把任意输入收成合法的横幅透明度。"""
+    try:
+        number = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(BANNER_OPACITY_MAX, number))
 
 
 def clamp_wallpaper_visible(value: object) -> int:

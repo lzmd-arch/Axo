@@ -36,6 +36,11 @@
   var callMute = document.getElementById("call-mute");
   var callHangup = document.getElementById("call-hangup");
   var statusLabel = document.getElementById("status");
+  var wallpaperA = document.getElementById("wallpaper-a");
+  var wallpaperB = document.getElementById("wallpaper-b");
+  var wallpaperVideo = document.getElementById("wallpaper-video");
+  var bannerNode = document.getElementById("banner");
+  var wallpaperFront = "";
   var registerChip = document.getElementById("register");
   var emptyState = document.getElementById("empty");
   var welcome = document.getElementById("welcome");
@@ -613,19 +618,78 @@
       document.documentElement.style.setProperty("--wallpaper-dim", String(1 - visible / 100));
     },
 
-    setWallpaper: function (path) {
-      var layer = document.getElementById("wallpaper");
-      if (!layer) return;
+    /* 壁纸：图片走 A/B 两层交叉叠化，视频走 <video>；横幅是同一层的矢量文字。
+       换视频失败（解码器不支持 mp4 之类）只撤视频层，不把底图与横幅一起带走。 */
+    setWallpaper: function (path, bannerText, bannerOpacity) {
+      var text = typeof bannerText === "string" ? bannerText : "";
+      var alpha = Number(bannerOpacity);
+      if (!isFinite(alpha)) alpha = 0;
+      alpha = Math.max(0, Math.min(40, alpha));
+      if (bannerNode) {
+        bannerNode.textContent = text;
+        bannerNode.style.opacity = String(alpha / 100);
+        bannerNode.hidden = !text || alpha <= 0;
+      }
       if (!path) {
-        layer.style.backgroundImage = "";
+        if (wallpaperA) wallpaperA.classList.remove("is-visible");
+        if (wallpaperB) wallpaperB.classList.remove("is-visible");
+        if (wallpaperVideo) {
+          wallpaperVideo.pause();
+          wallpaperVideo.classList.remove("is-visible");
+          wallpaperVideo.removeAttribute("src");
+        }
+        wallpaperFront = "";
         document.body.classList.remove("has-wallpaper");
         return;
       }
       var url = /^(https?:|file:|data:)/i.test(path)
         ? path
         : (window.BASE || "") + "/" + String(path).replace(/^\/+/, "");
-      layer.style.backgroundImage = 'url("' + url.replace(/"/g, "%22") + '")';
+      var isVideo = /\.(mp4|webm)(\?|#|$)/i.test(url);
       document.body.classList.add("has-wallpaper");
+      if (isVideo) {
+        if (wallpaperA) wallpaperA.classList.remove("is-visible");
+        if (wallpaperB) wallpaperB.classList.remove("is-visible");
+        wallpaperFront = "";
+        if (!wallpaperVideo) return;
+        wallpaperVideo.onerror = function () {
+          wallpaperVideo.classList.remove("is-visible");
+        };
+        wallpaperVideo.src = url;
+        wallpaperVideo.load();
+        var playing = wallpaperVideo.play();
+        if (playing && typeof playing.catch === "function") {
+          playing.catch(function () {
+            /* 自动播放被拒：保持静音循环，等一次用户手势再试。 */
+          });
+        }
+        wallpaperVideo.classList.add("is-visible");
+        return;
+      }
+      if (wallpaperVideo) {
+        wallpaperVideo.pause();
+        wallpaperVideo.classList.remove("is-visible");
+        wallpaperVideo.removeAttribute("src");
+      }
+      var next = wallpaperFront === "a" ? wallpaperB : wallpaperA;
+      var prev = wallpaperFront === "a" ? wallpaperA : wallpaperB;
+      if (!next) return;
+      next.style.backgroundImage = 'url("' + url.replace(/"/g, "%22") + '")';
+      next.classList.add("is-visible");
+      if (prev) prev.classList.remove("is-visible");
+      wallpaperFront = wallpaperFront === "a" ? "b" : "a";
+    },
+
+    /* 主窗口最小化/恢复。``visibilitychange`` 在 QtWebEngine 里不保证触发，
+       所以 Python 侧再补这一条。 */
+    setWallpaperPlaying: function (playing) {
+      if (!wallpaperVideo || !wallpaperVideo.getAttribute("src")) return;
+      if (playing) {
+        var result = wallpaperVideo.play();
+        if (result && typeof result.catch === "function") result.catch(function () {});
+      } else {
+        wallpaperVideo.pause();
+      }
     },
 
     /* 人设卡片：要不要问、内置的那段是什么。**Python 每次启动都会推一次**，包括
@@ -764,6 +828,18 @@
       if (bridge) bridge.open_stickers_folder();
     });
   }
+  /* 页面可见性：视频壁纸在后台暂停。主窗口最小化时 QtWebEngine 不保证发这个
+     事件，所以 Python 侧还会通过 ChatHost.setWallpaperPlaying 补一刀。 */
+  document.addEventListener("visibilitychange", function () {
+    if (!wallpaperVideo || !wallpaperVideo.getAttribute("src")) return;
+    if (document.hidden) {
+      wallpaperVideo.pause();
+      return;
+    }
+    var result = wallpaperVideo.play();
+    if (result && typeof result.catch === "function") result.catch(function () {});
+  });
+
   document.addEventListener("click", function (event) {
     if (!stickerPanel || stickerPanel.hidden) return;
     var target = event.target;

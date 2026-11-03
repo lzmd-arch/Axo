@@ -104,10 +104,53 @@ body {
   position: fixed;
   inset: 0;
   z-index: 0;
+  overflow: hidden;
+  /* 只改壁纸不该让整页重排，所以它是独立的一层而不是 body 的背景 */
+}
+
+/* 两层图片 + 一个视频：换壁纸时交叉叠化，视频解码失败只撤自己。 */
+.wallpaper-layer,
+.wallpaper-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
-  /* 只改壁纸不该让整页重排，所以它是独立的一层而不是 body 的背景 */
+  opacity: 0;
+  transition: opacity 600ms ease;
+  pointer-events: none;
+}
+
+.wallpaper-layer.is-visible,
+.wallpaper-video.is-visible {
+  opacity: 1;
+}
+
+body.no-motion .wallpaper-layer,
+body.no-motion .wallpaper-video {
+  transition: none;
+}
+
+/* 大字横幅：**矢量文字**，垫在壁纸与纱之间；纱会按可见度把它一起压暗。 */
+#banner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8%;
+  text-align: center;
+  white-space: pre-wrap;
+  font-weight: 800;
+  font-size: clamp(28px, 6vw, 92px);
+  letter-spacing: 0.08em;
+  line-height: 1.15;
+  color: var(--fg);
+  opacity: 0;
+  pointer-events: none;
 }
 
 #scrim {

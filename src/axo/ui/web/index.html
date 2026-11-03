@@ -10,13 +10,19 @@
                script-src 'self' qrc:;
                style-src 'self' 'unsafe-inline';
                img-src 'self' data: file:;
+               media-src 'self' data: file:;
                font-src 'self' data:;
                connect-src 'self';">
 <title>Axo</title>
 <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
-  <div id="wallpaper" aria-hidden="true"></div>
+  <div id="wallpaper" aria-hidden="true">
+    <div id="wallpaper-a" class="wallpaper-layer"></div>
+    <div id="wallpaper-b" class="wallpaper-layer"></div>
+    <video id="wallpaper-video" class="wallpaper-video" muted loop playsinline></video>
+    <div id="banner" aria-hidden="true"></div>
+  </div>
   <div id="scrim" aria-hidden="true"></div>
 
   <!-- 预留的 Live2D 容器：现在只是一个空的定位盒子，接入 Cubism SDK 时由

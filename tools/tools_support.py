@@ -95,8 +95,13 @@ class RecordingChatView(QWidget):
     def load_history(self, messages: object) -> None:
         self.calls.append("loadHistory")
 
-    def set_wallpaper(self, path: str | None) -> None:
+    def set_wallpaper(
+        self, path: str | None, *, banner_text: str = "", banner_opacity: int = 0
+    ) -> None:
         self.calls.append("setWallpaper")
+
+    def set_wallpaper_playing(self, playing: bool) -> None:
+        self.calls.append("setWallpaperPlaying")
 
     def set_wallpaper_opacity(self, percent: int) -> None:
         self.calls.append(f"setWallpaperOpacity({percent})")

@@ -19,6 +19,7 @@ import pytest
 
 from axo.ui.color import contrast_ratio, parse_hex
 from axo.ui.theme import (
+    BANNER_OPACITY_MAX,
     CUSTOM_PRESET,
     DARK_TOKENS,
     DEFAULT_THEME,
@@ -30,6 +31,7 @@ from axo.ui.theme import (
     WALLPAPER_VISIBLE_MAX,
     Theme,
     build_qss,
+    clamp_banner_opacity,
     clamp_mode,
     clamp_wallpaper_visible,
     describe_accent,
@@ -486,3 +488,18 @@ def test_muted_text_is_still_readable(tokens) -> None:
     但也不能糊成一片。"""
     ratio = contrast_ratio(parse_hex(tokens.fg_muted), parse_hex(tokens.bg))
     assert ratio >= 3.0, f"fg_muted 只有 {ratio:.2f}"
+
+
+# ── 横幅 ────────────────────────────────────────────────────────────────────
+
+
+def test_banner_defaults_to_off() -> None:
+    theme = Theme()
+    assert theme.banner_text == "" and theme.banner_opacity == 0
+
+
+def test_banner_opacity_is_clamped_and_validated() -> None:
+    assert clamp_banner_opacity(99) == BANNER_OPACITY_MAX
+    assert clamp_banner_opacity(-3) == 0
+    with pytest.raises(ValueError):
+        Theme(banner_opacity=BANNER_OPACITY_MAX + 1)

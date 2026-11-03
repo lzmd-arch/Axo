@@ -31,6 +31,7 @@ from axo.ui.settings_store import (
     ROUTING_CHAT,
     ROUTING_TASK,
     BackendSettings,
+    BootSettings,
     ExpressionSettings,
     MemorySettings,
     ProactiveSettings,
@@ -434,6 +435,28 @@ def test_template_first_is_off_by_default_and_roundtrips() -> None:
     assert store.load_expression().templates is False
     store.save_expression(ExpressionSettings(enabled=True, templates=True))
     assert store.load_expression().templates is True
+
+
+def test_boot_settings_defaults_and_roundtrip() -> None:
+    store = SettingsStore(FakeBackend())
+    defaults = store.load_boot()
+    assert defaults.enabled is True
+    assert defaults.display == "always"
+    assert 0.5 <= defaults.speed <= 2.0
+
+    store.save_boot(BootSettings(enabled=False, theme="dark", speed=1.5, display="daily"))
+    loaded = store.load_boot()
+    assert loaded.enabled is False and loaded.theme == "dark"
+    assert loaded.speed == 1.5 and loaded.display == "daily"
+
+
+def test_boot_speed_and_display_are_clamped() -> None:
+    store = SettingsStore(FakeBackend())
+    store.save_boot(BootSettings(speed=9.0, display="hourly", theme="neon"))
+    loaded = store.load_boot()
+    assert loaded.speed == 2.0
+    assert loaded.display == "always"
+    assert loaded.theme == "warm"
 
 
 def test_routing_mode_defaults_to_auto() -> None:

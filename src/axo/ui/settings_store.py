@@ -33,13 +33,17 @@ from .theme import (
     DEFAULT_THEME,
     PRESETS,
     Theme,
+    clamp_banner_opacity,
     clamp_mode,
     clamp_wallpaper_visible,
     preset_by_key,
 )
 
 __all__ = [
+    "BOOT_DISPLAY_MODES",
+    "BOOT_THEMES",
     "BackendSettings",
+    "BootSettings",
     "EXPRESSION_DEFAULT_MODEL",
     "ExpressionSettings",
     "ROUTING_AUTO",
@@ -74,6 +78,8 @@ _K_ACCENT = f"{_NS}/accent"
 _K_MODE = f"{_NS}/mode"
 _K_WALLPAPER = f"{_NS}/wallpaper"
 _K_VISIBLE = f"{_NS}/wallpaper_visible"
+_K_BANNER_TEXT = f"{_NS}/banner_text"
+_K_BANNER_OPACITY = f"{_NS}/banner_opacity"
 _K_MOTION = f"{_NS}/motion"
 
 _K_BACKEND_HOST = "backend/host"
@@ -96,6 +102,14 @@ _K_ROUTING_MODE = "tools/routing_mode"
 _K_EXPRESSION_ENABLED = "expression/enabled"
 _K_EXPRESSION_MODEL = "expression/model"
 _K_EXPRESSION_TEMPLATES = "expression/templates"
+_K_BOOT_ENABLED = "boot/enabled"
+_K_BOOT_THEME = "boot/theme"
+_K_BOOT_SPEED = "boot/speed"
+_K_BOOT_CONFIRM = "boot/require_confirm"
+_K_BOOT_SKIP = "boot/allow_skip"
+_K_BOOT_SOUND = "boot/sound"
+_K_BOOT_DISPLAY = "boot/display"
+_K_BOOT_LAST_DAY = "boot/last_day"
 
 _K_WRITE_ROOTS = "tools/write_roots"
 _K_WEB_ENABLED = "tools/web_enabled"
@@ -359,6 +373,37 @@ class ExpressionSettings:
     enabled: bool = False
     model: str = ""
     templates: bool = False
+
+
+BOOT_DISPLAY_MODES = ("always", "daily", "session")
+"""启动动画的播放频率。``session`` 每个进程一次，``daily`` 每天一次。"""
+
+BOOT_THEMES = ("warm", "dark")
+
+
+@dataclass(frozen=True)
+class BootSettings:
+    """六幕启动动画。
+
+    Attributes:
+        enabled: 开不开。关掉 = 退回原来的单段开屏（不是"没有开屏"）。
+        theme: ``warm`` / ``dark``；只影响配色，幕表共用。
+        speed: 0.5–2.0，只缩放每幕的视觉时长。
+        require_confirm: 确认幕是否等 Enter/空格/点击；关掉就自动前进。
+        allow_skip: 是否显示「跳过」并响应 Esc。
+        sound: 是否播程序生成的提示音（无设备时静默）。
+        display: ``always`` / ``daily`` / ``session``；``last_day`` 记最近一次
+            ``daily`` 播放的日期。
+    """
+
+    enabled: bool = True
+    theme: str = "warm"
+    speed: float = 1.0
+    require_confirm: bool = True
+    allow_skip: bool = True
+    sound: bool = True
+    display: str = "always"
+    last_day: str = ""
 
 
 @dataclass(frozen=True)
@@ -728,6 +773,8 @@ class SettingsStore:
             wallpaper_visible=clamp_wallpaper_visible(
                 self._backend.value(_K_VISIBLE, DEFAULT_THEME.wallpaper_visible)
             ),
+            banner_text=self._text(_K_BANNER_TEXT).strip(),
+            banner_opacity=clamp_banner_opacity(self._backend.value(_K_BANNER_OPACITY, 0)),
             motion=_as_bool(self._backend.value(_K_MOTION, True), True),
         )
 
@@ -738,6 +785,8 @@ class SettingsStore:
         self._backend.setValue(_K_MODE, theme.mode)
         self._backend.setValue(_K_WALLPAPER, theme.wallpaper)
         self._backend.setValue(_K_VISIBLE, int(theme.wallpaper_visible))
+        self._backend.setValue(_K_BANNER_TEXT, theme.banner_text)
+        self._backend.setValue(_K_BANNER_OPACITY, int(theme.banner_opacity))
         self._backend.setValue(_K_MOTION, bool(theme.motion))
 
     # ── 后端 ────────────────────────────────────────────────────────────────
@@ -844,6 +893,36 @@ class SettingsStore:
         self._backend.setValue(_K_EXPRESSION_ENABLED, settings.enabled)
         self._backend.setValue(_K_EXPRESSION_MODEL, settings.model)
         self._backend.setValue(_K_EXPRESSION_TEMPLATES, settings.templates)
+
+    # ── 启动动画 ────────────────────────────────────────────────────────────
+
+    def load_boot(self) -> BootSettings:
+        try:
+            speed = float(self._backend.value(_K_BOOT_SPEED, 1.0))
+        except (TypeError, ValueError):
+            speed = 1.0
+        theme = str(self._backend.value(_K_BOOT_THEME, "warm") or "warm")
+        display = str(self._backend.value(_K_BOOT_DISPLAY, "always") or "always")
+        return BootSettings(
+            enabled=_as_bool(self._backend.value(_K_BOOT_ENABLED, True), True),
+            theme=theme if theme in BOOT_THEMES else "warm",
+            speed=min(2.0, max(0.5, speed)),
+            require_confirm=_as_bool(self._backend.value(_K_BOOT_CONFIRM, True), True),
+            allow_skip=_as_bool(self._backend.value(_K_BOOT_SKIP, True), True),
+            sound=_as_bool(self._backend.value(_K_BOOT_SOUND, True), True),
+            display=display if display in BOOT_DISPLAY_MODES else "always",
+            last_day=self._text(_K_BOOT_LAST_DAY),
+        )
+
+    def save_boot(self, settings: BootSettings) -> None:
+        self._backend.setValue(_K_BOOT_ENABLED, settings.enabled)
+        self._backend.setValue(_K_BOOT_THEME, settings.theme)
+        self._backend.setValue(_K_BOOT_SPEED, float(settings.speed))
+        self._backend.setValue(_K_BOOT_CONFIRM, settings.require_confirm)
+        self._backend.setValue(_K_BOOT_SKIP, settings.allow_skip)
+        self._backend.setValue(_K_BOOT_SOUND, settings.sound)
+        self._backend.setValue(_K_BOOT_DISPLAY, settings.display)
+        self._backend.setValue(_K_BOOT_LAST_DAY, settings.last_day)
 
     # ── 语音输出（她开口） ──────────────────────────────────────────────────
 

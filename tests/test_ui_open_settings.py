@@ -29,6 +29,7 @@ from axo.ui.main_window import MainWindow
 from axo.ui.settings_store import (
     ROUTING_AUTO,
     BackendSettings,
+    BootSettings,
     ExpressionSettings,
     MusicSettings,
     ProactiveSettings,
@@ -81,6 +82,8 @@ def _window() -> SimpleNamespace:
         _routing_mode=ROUTING_AUTO,
         # 表达层（实验）：默认关，与一个刚装好的终端一模一样。
         _expression_settings=ExpressionSettings(),
+        # 启动动画设置：从设置库里读；替身只要给出一份默认值。
+        _settings_store=SimpleNamespace(load_boot=lambda: BootSettings()),
         _voice_settings=SpeechSettings(),
         _music_settings=MusicSettings(),
         # 记忆页那一份：**任务记忆关着**，与一个刚装好的终端一模一样。
@@ -112,6 +115,7 @@ def _window() -> SimpleNamespace:
         _on_commands_changed=lambda *_args: None,
         _on_routing_changed=lambda *_args: None,
         _on_expression_changed=lambda *_args: None,
+        _on_boot_changed=lambda *_args: None,
         _on_voice_settings_changed=lambda *_args: None,
         _on_music_settings_changed=lambda *_args: None,
         _on_memory_changed=lambda *_args: None,
@@ -166,6 +170,7 @@ def _consolidate_signals() -> SimpleNamespace:
         "commands_changed",
         "routing_changed",
         "expression_changed",
+        "boot_changed",
         "voice_changed",
         "music_changed",
         "graph_rebuild_requested",

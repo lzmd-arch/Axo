@@ -49,6 +49,7 @@ from urllib.request import url2pathname
 from PySide6.QtCore import (
     QBuffer,
     QByteArray,
+    QEvent,
     QIODevice,
     QMetaObject,
     QObject,
@@ -1279,7 +1280,23 @@ class MainWindow(QMainWindow):
             if self._theme.wallpaper:
                 self.chat_view.set_status(f"壁纸 {self._theme.wallpaper} 找不到了，已按无壁纸显示")
             return
-        view.set_wallpaper(QUrl.fromLocalFile(str(path)).toString())
+        view.set_wallpaper(
+            QUrl.fromLocalFile(str(path)).toString(),
+            banner_text=self._theme.banner_text,
+            banner_opacity=self._theme.banner_opacity,
+        )
+
+    def changeEvent(self, event) -> None:  # noqa: N802 (Qt 命名)
+        """最小化/恢复时暂停视频壁纸。
+
+        ``visibilitychange`` 在 QtWebEngine 里不保证触发（Windows 上实测不可靠），
+        所以这里补一条窗口状态；网页侧仍然保留 visibilitychange 作为双保险。
+        """
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            view = getattr(self, "chat_view", None)
+            if view is not None:
+                view.set_wallpaper_playing(not self.isMinimized())
 
     def _on_os_color_scheme_changed(self, _scheme: Any = None) -> None:
         """系统明暗变了。**这就是裁决 5「两侧一起跟」的落点。**
@@ -5056,12 +5073,14 @@ class MainWindow(QMainWindow):
                     proactive=self._proactive_settings,
                     sync=getattr(self, "_sync_settings", SyncSettings()),
                     expression=self._expression_settings,
+                    boot=self._settings_store.load_boot(),
                 )
                 dialog.theme_changed.connect(self._on_theme_changed)
                 dialog.backend_changed.connect(self._on_backend_changed)
                 dialog.tools_changed.connect(self._on_tools_changed)
                 dialog.routing_changed.connect(self._on_routing_changed)
                 dialog.expression_changed.connect(self._on_expression_changed)
+                dialog.boot_changed.connect(self._on_boot_changed)
                 dialog.vision_changed.connect(self._on_cloud_vision_changed)
                 dialog.audio_changed.connect(self._on_cloud_audio_changed)
                 dialog.web_changed.connect(self._on_web_changed)
@@ -5109,6 +5128,7 @@ class MainWindow(QMainWindow):
                     proactive=self._proactive_settings,
                     sync=getattr(self, "_sync_settings", SyncSettings()),
                     expression=self._expression_settings,
+                    boot=self._settings_store.load_boot(),
                 )
             # 图状态那一行**每次打开都重新对齐**（同人设页的道理，也是同一种真源：
             # 图是在这个窗口存在的时候才建的）。不回填的话，用户在设置页看着"还没建"
@@ -5235,6 +5255,14 @@ class MainWindow(QMainWindow):
             audio_in=self._audio_in,
             routing_mode=getattr(self, "_routing_mode", ROUTING_AUTO),
         )
+
+    @Slot(object)
+    def _on_boot_changed(self, settings: object) -> None:
+        """启动动画设置：**下一轮启动生效**（本次开屏已经播过了）。"""
+        from .settings_store import BootSettings
+
+        if isinstance(settings, BootSettings):
+            self._settings_store.save_boot(settings)
 
     @Slot(object)
     def _on_expression_changed(self, settings: ExpressionSettings) -> None:

@@ -29,7 +29,9 @@ JS 与 Python 的契约（两边都是**只增不改**，否则旧前端会静�
                     window.ChatHost.setStatus(text)                  顶栏状态
                     window.ChatHost.clear()                          清空对话流
                     window.ChatHost.loadHistory(messages)            messages: [{role, text, meta}, ...]
-                    window.ChatHost.setWallpaper(path)               file:// 绝对 URL；"" = 无
+                    window.ChatHost.setWallpaper(path, banner, alpha)
+                        path: file:// 绝对 URL（图片或视频）；"" = 无
+                        banner: 大字横幅文本；alpha: 0–40
                     window.ChatHost.setTheme({mode, accent})         mode: dark|light
                     window.ChatHost.setWallpaperOpacity(percent)     0–100
                     window.ChatHost.setPersonaState({asking, builtin}) 首启人设卡片的显隐
@@ -418,6 +420,8 @@ class ChatView(QWidget):
         #: 外观是默认值、动一下设置才恢复。
         self._theme: dict[str, str] = {}
         self._wallpaper: str = ""
+        self._banner_text: str = ""
+        self._banner_opacity: int = 0
         self._wallpaper_opacity: int = -1  # -1 = 还没设过，别推
         self._motion: bool = True
 
@@ -507,7 +511,7 @@ class ChatView(QWidget):
             self._call("setWallpaperOpacity", self._wallpaper_opacity)
         self._call("setMotion", self._motion)
         if self._wallpaper:
-            self._call("setWallpaper", self._wallpaper)
+            self._call("setWallpaper", self._wallpaper, self._banner_text, self._banner_opacity)
         # 逐字稿紧挨着人设卡片之前重推（它在网页里创建节点，不动焦点）。渲染进程
         # 刚重启的那一次不推缓存：让主窗口用**当前**的逐字稿重推一遍（见
         # :attr:`recovered`）。
@@ -659,20 +663,33 @@ class ChatView(QWidget):
         self._history = [dict(item) for item in messages]
         self._call("loadHistory", self._history)
 
-    def set_wallpaper(self, path: str | None) -> None:
-        """设置壁纸。``None`` 表示恢复默认纯色。
+    def set_wallpaper(
+        self,
+        path: str | None,
+        *,
+        banner_text: str = "",
+        banner_opacity: int = 0,
+    ) -> None:
+        """设置壁纸与可选的大字横幅。``None`` 表示恢复默认纯色。
 
         ``path`` 应当是 ``file://`` 绝对 URL（``QUrl.fromLocalFile(...).toString()``），
         不是文件系统路径也不是相对路径——见 :mod:`axo.paths` 里壁纸目录
-        在数据目录下、**不在 web 根下**这一事实。
+        在数据目录下、**不在 web 根下**这一事实。后缀决定网页侧用图片层还是
+        ``<video>`` 层（mp4/webm）。
         """
         self._wallpaper = path or ""
-        self._call("setWallpaper", self._wallpaper)
+        self._banner_text = banner_text or ""
+        self._banner_opacity = int(banner_opacity)
+        self._call("setWallpaper", self._wallpaper, self._banner_text, self._banner_opacity)
 
     def set_motion(self, enabled: bool) -> None:
         """网页动效开关。静态玻璃仍然保留，只是不再流动/回弹/弹入。"""
         self._motion = bool(enabled)
         self._call("setMotion", self._motion)
+
+    def set_wallpaper_playing(self, playing: bool) -> None:
+        """视频壁纸的暂停/恢复。主窗口最小化时由 Python 侧补发（见 ``changeEvent``）。"""
+        self._call("setWallpaperPlaying", bool(playing))
 
     def set_wallpaper_opacity(self, percent: int) -> None:
         """壁纸可见度，0–100。与 :attr:`~axo.ui.theme.Theme.wallpaper_visible`
