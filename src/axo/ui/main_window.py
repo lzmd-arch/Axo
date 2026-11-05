@@ -1931,6 +1931,13 @@ class MainWindow(QMainWindow):
         """
         path = self._backend_settings.local_model_path.strip()
         if not path:
+            from ..paths import bundled_llama_model
+
+            bundled = bundled_llama_model()
+            if bundled is not None:
+                # 发布包自带一个模型：没配路径时用它，而不是把用户挡在门外。
+                path = str(bundled)
+        if not path:
             self._set_backend_down(
                 "用的是内置 llama.cpp，但还没选模型文件。"
                 "设置 → 后端 → 内置（llama.cpp）里选一个 .gguf 文件。"
@@ -1961,9 +1968,8 @@ class MainWindow(QMainWindow):
         self._model_caps = {name: ("completion", "tools")}
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
-        self.model_combo.addItem(
-            f"本地（{Path(self._backend_settings.local_model_path).name}）", name
-        )
+        model_name = Path(getattr(runtime, "model_path", "")).name or "本地模型"
+        self.model_combo.addItem(f"本地（{model_name}）", name)
         self.model_combo.blockSignals(False)
         self._on_model_changed()
         self._set_backend_up(f"内置 llama.cpp 就绪 · {self._backend_settings.local_context} token")

@@ -171,6 +171,8 @@ def _bundle_missing() -> list[str]:
         # 本地模型运行时。**发布版必须带**：用户要求的正是"软件自己调用本地模型、
         # 不经过 Ollama"；少了它，那条路在安装包里只剩一句"运行时不在了"。
         "llama/llama-server.exe",
+        # 发布包自带一个对话模型：没有它，“全部内置”仍然要在设置里选 .gguf。
+        "llama/qwen2.5-1.5b-instruct-q4_k_m.gguf",
         "llama/cublas64_13.dll",
         "embedding/bge-small-zh-v1.5/model_optimized.onnx",
         "embedding/bge-small-zh-v1.5/tokenizer.json",

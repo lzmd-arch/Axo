@@ -437,6 +437,18 @@ def bundled_embedding_dir() -> Path | None:
 LLAMA_DIR_NAME = "llama"
 """随包的 llama.cpp 运行时目录名（``llama-server.exe`` + CUDA 运行库）。"""
 
+LLAMA_BUNDLED_MODEL_NAME = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
+"""随包的默认对话模型。存在时，内置后端没配路径就用它。"""
+
+
+def bundled_llama_model() -> Path | None:
+    """随包的默认 GGUF；没有就 ``None``。**只判文件，不判目录。**"""
+    root = bundled_llama_dir()
+    if root is None:
+        return None
+    candidate = root / LLAMA_BUNDLED_MODEL_NAME
+    return candidate if candidate.is_file() else None
+
 
 def bundled_llama_dir() -> Path | None:
     """随包的 llama.cpp 运行时目录；没有就 ``None``。
