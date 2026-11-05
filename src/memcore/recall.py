@@ -31,8 +31,8 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass, replace
 from datetime import datetime
 
 import numpy as np
@@ -53,7 +53,15 @@ from .timefmt import format_when
 from .tokens import estimate_tokens
 from .types import SDR, MemoryItem, Tier, now_ts
 
-__all__ = ["RecallConfig", "recall"]
+__all__ = ["RecallConfig", "RerankHook", "recall"]
+
+RerankHook = Callable[[str, Sequence[RecalledMemory]], Sequence[float]]
+"""第二段重排：``(query, 候选) -> 与候选等长的分数``。
+
+**由上层注入，memcore 不认识任何重排模型。** 这样重排器可以住在
+:mod:`axo.memory.rerank`（要 numpy 之外的东西也随便），而核心召回仍然纯函数、
+无 I/O、无模型。
+"""
 
 #: 权重调制的地板。最终得分 = 融合相似度 × (地板 + (1-地板)·权重)。
 #:
@@ -247,6 +255,12 @@ class _Candidate:
     tokens: int
     scores: ChannelScores
     sdr: SDR | None
+    rerank: float | None = None
+    """第二段分数；``None`` = 没跑重排，排序仍用 ``scores.fused``。"""
+
+    @property
+    def rank_score(self) -> float:
+        return self.scores.fused if self.rerank is None else self.rerank
 
 
 def recall(
@@ -261,6 +275,7 @@ def recall(
     now: float | None = None,
     settle: bool = True,
     graph: GraphIndex | None = None,
+    rerank: RerankHook | None = None,
 ) -> RecallLedger:
     """召回要注入上下文的记忆。
 
@@ -286,6 +301,9 @@ def recall(
             图必须由调用方建好传进来，:mod:`memcore` 不做 I/O（照 ``query_vector``
             的先例）。配 :attr:`RecallConfig.graph_weight` 使用：权重是 0 时即便传了
             图，扩散也**根本不算**，这样"关着开关"与"没有这个功能"在账本上逐位相同。
+        rerank: 可选的第二段重排。拿到的是**阈值之后、MMR 与预算之前**的候选，
+            返回与候选等长的分数；分数只改排序，不改去留。``None`` 时行为与
+            旧版逐位相同。
 
     Returns:
         一份完整的账本，含入选、淘汰与原因。
@@ -354,6 +372,9 @@ def recall(
         notes=notes,
         candidate_ids=candidate_ids,
     )
+
+    if rerank is not None and candidates:
+        _apply_rerank(candidates, query_text, rerank, notes)
 
     injected, more_rejected, used = _select(
         candidates, budget_tokens=budget_tokens, settings=settings
@@ -798,6 +819,43 @@ def _jaccard_matrix(pool: list[_Candidate]) -> np.ndarray:
         return np.where(union > 0, intersection / union, 0.0)
 
 
+def _public(candidate: _Candidate) -> RecalledMemory:
+    """内部候选 → 账本形态。重排钩子拿到的也是这个，**不含内部字段**。"""
+    return RecalledMemory(
+        memory_id=candidate.item.memory_id,
+        content=candidate.item.content,
+        kind=str(candidate.item.kind),
+        tier=str(candidate.item.tier),
+        weight=candidate.weight,
+        tokens=candidate.tokens,
+        scores=replace(candidate.scores, rerank=candidate.rerank or 0.0),
+        pinned=candidate.item.pinned,
+        session_id=candidate.item.session_id,
+        created_at=candidate.item.created_at,
+        span=_span_of(candidate.item),
+        derived_from=_derived_of(candidate.item),
+    )
+
+
+def _apply_rerank(
+    pool: list[_Candidate],
+    query_text: str,
+    hook: RerankHook,
+    notes: list[str],
+) -> None:
+    """跑第二段。**失败就抛**：静默退回第一段会让"重排没生效"看起来像"重排没用"。"""
+    items = tuple(_public(candidate) for candidate in pool)
+    scores = list(hook(query_text, items))
+    if len(scores) != len(pool):
+        raise ValueError(
+            f"重排器返回了 {len(scores)} 个分数，候选有 {len(pool)} 条；"
+            "数量对不上说明分数与候选的对应关系已经断了。"
+        )
+    for candidate, score in zip(pool, scores, strict=True):
+        candidate.rerank = float(score)
+    notes.append(f"重排 {len(pool)} 条候选（{type(hook).__name__}）")
+
+
 def _select(
     pool: list[_Candidate],
     *,
@@ -818,13 +876,13 @@ def _select(
     Jaccard"；选中一条后用矩阵的一行做一次 ``maximum`` 更新。语义与原逐对版本
     相同，只是把 O(k²) 次 Python/numpy 调用换成一次矩阵乘。
     """
-    pool.sort(key=lambda candidate: -candidate.scores.fused)
+    pool.sort(key=lambda candidate: -candidate.rank_score)
     pool = pool[: settings.candidate_limit]
     if not pool:
         return [], [], 0
 
     jaccard = _jaccard_matrix(pool)
-    scores = np.asarray([candidate.scores.fused for candidate in pool], dtype=np.float64)
+    scores = np.asarray([candidate.rank_score for candidate in pool], dtype=np.float64)
     max_sim = np.zeros(len(pool), dtype=np.float64)
     alive = np.ones(len(pool), dtype=bool)
 
@@ -871,23 +929,7 @@ def _select(
         if alive[index]:
             rejected.append(_reject(candidate.item, RejectReason.MAX_ITEMS, candidate.scores.fused))
 
-    injected = [
-        RecalledMemory(
-            memory_id=candidate.item.memory_id,
-            content=candidate.item.content,
-            kind=str(candidate.item.kind),
-            tier=str(candidate.item.tier),
-            weight=candidate.weight,
-            tokens=candidate.tokens,
-            scores=candidate.scores,
-            pinned=candidate.item.pinned,
-            session_id=candidate.item.session_id,
-            created_at=candidate.item.created_at,
-            span=_span_of(candidate.item),
-            derived_from=_derived_of(candidate.item),
-        )
-        for candidate in selected
-    ]
+    injected = [_public(candidate) for candidate in selected]
     return injected, rejected, used
 
 

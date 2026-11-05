@@ -2282,3 +2282,14 @@ def test_the_security_page_reports_policy_and_actions() -> None:
     page._on_trust()
     assert recovery_seen[-1] == "old"
     assert trust_seen[-1] == "old"
+
+
+def test_rerank_mode_opens_on_the_stored_value_and_reads_back(qapp, data_root) -> None:
+    from axo.ui.settings_store import RERANK_HEURISTIC, RERANK_LEARNED
+
+    dialog = _memory_dialog(rerank_mode=RERANK_LEARNED)
+    assert dialog.memory.current().rerank_mode == RERANK_LEARNED
+
+    index = dialog.memory.rerank_combo.findData(RERANK_HEURISTIC)
+    dialog.memory.rerank_combo.setCurrentIndex(index)
+    assert dialog.memory.current().rerank_mode == RERANK_HEURISTIC

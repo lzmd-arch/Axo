@@ -121,6 +121,9 @@ class ChannelScores:
     semantic: float = 0.0
     graph: float = 0.0
     fused: float = 0.0
+    rerank: float = 0.0
+    """第二段重排分。0 = 本轮没有重排（默认路径）。"""
+
     semantic_raw: float = 0.0
     """语义通道的原始余弦。只在它被对比度归一化过、且与 :attr:`semantic` 明显
     不同时才值得看——它回答的是"嵌入模型认为这两段话有多像"，而不是"相对本库
@@ -196,7 +199,10 @@ class RecalledMemory:
             f"{_LABELS[field]} {self.scores.channel(field):.2f}{self.scores.note(field)}"
             for field in fields
         )
-        return f"因{phrase} 被注入，{self.tokens} token；权重 {self.weight:.2f}"
+        suffix = ""
+        if self.scores.rerank:
+            suffix = f"；重排 {self.scores.rerank:.2f}"
+        return f"因{phrase} 被注入，{self.tokens} token；权重 {self.weight:.2f}{suffix}"
 
 
 @dataclass(frozen=True)

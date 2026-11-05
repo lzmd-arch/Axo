@@ -82,3 +82,6 @@ htmlcov/
 secrets.*
 # 例外：DPAPI 模块本身叫 secrets.py，是源代码不是凭据文件。
 !src/axo/secrets.py
+
+# 实验原始输出（可复现的结果进 benchmarks/，这里放临时 sweep）
+sweep_results/

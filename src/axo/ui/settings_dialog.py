@@ -83,6 +83,10 @@ from .settings_store import (
     PROVIDER_BUILTIN,
     PROVIDER_CLOUD,
     PROVIDER_OLLAMA,
+    RERANK_HEURISTIC,
+    RERANK_LEARNED,
+    RERANK_MODES,
+    RERANK_OFF,
     ROUTING_AUTO,
     ROUTING_CHAT,
     ROUTING_MODES,
@@ -1712,11 +1716,11 @@ class ToolPage(QWidget):
 
 class MemoryPage(QWidget):
     """记忆页。三件事：**写入的粒度**（任务记忆）、**召回的通道**（联想）、以及
-    **后台的睡眠巩固**。
+    **后台的睡眠巩固**，以及**召回的第二段重排**。
 
     这一页管的不是"记不记"（记忆一直在记，那是这个程序的意义），而是**一次任务记成
     几条、记的是哪一句**、**召回时要不要多看一条通道**、以及**已有的记忆要不要定期
-    重新认一遍**。所以说明文字是这一页的主体，三个勾选框各只有一行——用户按下它之前
+    重新认一遍**。所以说明文字是这一页的主体，每个开关/档位各只有一行——用户按下它之前
     唯一该知道的事就是"会变成什么样"，而那句话写进文档等于没写。
 
     **两个开关都默认关，而且这句话要写在界面上。** 关着的时候，写入路径与召回路径
@@ -1835,6 +1839,26 @@ class MemoryPage(QWidget):
         )
 
         outer.addSpacing(6)
+        outer.addWidget(_section("第二段重排（实验）"))
+        self.rerank_combo = QComboBox(self)
+        self.rerank_combo.setObjectName("rerankModeCombo")
+        for value, label in (
+            (RERANK_OFF, "关（默认）"),
+            (RERANK_HEURISTIC, "启发式（无训练）"),
+            (RERANK_LEARNED, "学习版（英文 LoCoMo）"),
+        ):
+            self.rerank_combo.addItem(label, value)
+        self.rerank_combo.currentIndexChanged.connect(self._on_toggled)
+        outer.addWidget(self.rerank_combo)
+        outer.addWidget(
+            _hint(
+                "关着时与旧版逐位相同。启发式用 BM25、数字、实体与首段名次重排，"
+                "不训练；LoCoMo 英文上 hit@5 0.493 → 0.538（+4.5pp）。"
+                "学习版是线性模型，0.493 → 0.654（+16.1pp），但只在英文 LoCoMo 上"
+                "做过按对话留一；中文与真实库还没验。两者都只改排序，不改去留。"
+            )
+        )
+
         outer.addWidget(_section("睡眠巩固"))
         self.consolidation_box = QCheckBox("每天自动巩固一次", self)
         self.consolidation_box.setObjectName("consolidationBox")
@@ -1928,6 +1952,8 @@ class MemoryPage(QWidget):
             self.graph_box.setChecked(settings.graph_channel)
             self.recall_slider.setValue(round(settings.recall_min_score * 100))
             self._sync_recall_value(self.recall_slider.value())
+            mode = settings.rerank_mode if settings.rerank_mode in RERANK_MODES else RERANK_OFF
+            self.rerank_combo.setCurrentIndex(RERANK_MODES.index(mode))
             self.consolidation_box.setChecked(settings.consolidation_enabled)
             # **小时 ← 秒，四舍五入到整小时**：手改过的注册表里可以是 3600（正好 1 小时）
             # 也可以是 5400（1.5 小时）。后者界面上只能显示成 2 小时——**这是有损的**，
@@ -1947,6 +1973,7 @@ class MemoryPage(QWidget):
             propose_enabled=self.propose_box.isChecked(),
             graph_channel=self.graph_box.isChecked(),
             recall_min_score=self.recall_slider.value() / 100.0,
+            rerank_mode=str(self.rerank_combo.currentData() or RERANK_OFF),
             consolidation_enabled=self.consolidation_box.isChecked(),
             consolidation_interval_s=self.consolidation_hours.value() * _SECONDS_PER_HOUR,
         )

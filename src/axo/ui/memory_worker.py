@@ -29,7 +29,7 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from memcore.audit import RecallLedger
 from memcore.graph import GraphIndex
-from memcore.recall import RecallConfig, recall
+from memcore.recall import RecallConfig, RerankHook, recall
 from memcore.store import MemoryStore
 from memcore.types import now_ts
 
@@ -234,6 +234,7 @@ class AssemblyWorker(QObject):
         session_id: str = "",
         recall_config: RecallConfig | None = None,
         graph: GraphIndex | None = None,
+        rerank: RerankHook | None = None,
     ) -> None:
         super().__init__()
         self._store = store
@@ -248,6 +249,7 @@ class AssemblyWorker(QObject):
         #: ``None`` = 没有图。它只在 ``config.graph_weight > 0`` 时才有用；给一个
         #: 默认关的 config 配一张真图是**安全的**：那条通道会被短路掉，不算也不看。
         self._graph = graph
+        self._rerank = rerank
         self._meter = TokenMeter()
 
     @Slot()
@@ -275,6 +277,7 @@ class AssemblyWorker(QObject):
                 space_id="" if self._embedding is None else (self._embedding.space_id or ""),
                 config=self._config,
                 graph=self._graph,
+                rerank=self._rerank,
             )
             injected = [
                 MemoryInjection(

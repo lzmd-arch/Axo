@@ -115,3 +115,5 @@ python tools/bench_locomo.py ... --arm lexical
 ```
 
 三份 `*_full.json` 与本文件同目录；数据的哈希在每份 json 的 `data_sha256` 字段里。
+
+第二段重排实验（2026-11-05）：见 [`RERANK.md`](RERANK.md) 与 `rerank_v1.json`。

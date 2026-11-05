@@ -799,6 +799,7 @@ def test_the_memory_keys_live_in_their_own_namespace() -> None:
         "memory/task_memory",
         "memory/propose_enabled",
         "memory/graph_channel",
+        "memory/rerank",
         "memory/recall_min_score",
         "memory/consolidation_enabled",
         "memory/consolidation_interval_s",
@@ -1499,3 +1500,18 @@ def test_security_without_path_keeps_legacy_behavior() -> None:
     """不传路径的调用点（单测、无头入口）不受影响。"""
     store = SettingsStore(FakeBackend({"security/password_verifier": _record(b"f")}))
     assert store.load_security().password_verifier == _record(b"f")
+
+
+def test_rerank_mode_is_off_by_default_and_roundtrips() -> None:
+    from axo.ui.settings_store import RERANK_HEURISTIC, MemorySettings
+
+    store = SettingsStore(FakeBackend({}))
+    assert store.load_memory().rerank_mode == "off"
+
+    store.save_memory(MemorySettings(rerank_mode=RERANK_HEURISTIC))
+    assert store.load_memory().rerank_mode == RERANK_HEURISTIC
+
+
+def test_unknown_rerank_mode_falls_back_to_off() -> None:
+    backend = FakeBackend({"memory/rerank": "some-new-mode"})
+    assert SettingsStore(backend).load_memory().rerank_mode == "off"

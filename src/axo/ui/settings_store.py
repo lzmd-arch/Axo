@@ -53,6 +53,10 @@ __all__ = [
     "ROUTING_CHAT",
     "ROUTING_MODES",
     "ROUTING_TASK",
+    "RERANK_HEURISTIC",
+    "RERANK_LEARNED",
+    "RERANK_MODES",
+    "RERANK_OFF",
     "MemorySettings",
     "MusicSettings",
     "ProactiveSettings",
@@ -137,6 +141,7 @@ _K_SPEECH_CALL_IDLE = "speech/call_idle_hangup_s"
 _K_TASK_MEMORY = "memory/task_memory"
 _K_PROPOSE_ENABLED = "memory/propose_enabled"
 _K_GRAPH_CHANNEL = "memory/graph_channel"
+_K_RERANK = "memory/rerank"
 _K_RECALL_MIN_SCORE = "memory/recall_min_score"
 _K_CONSOLIDATION_ENABLED = "memory/consolidation_enabled"
 _K_CONSOLIDATION_INTERVAL_S = "memory/consolidation_interval_s"
@@ -575,6 +580,13 @@ DEFAULT_RECALL_MIN_SCORE = 0.20
 """
 
 
+RERANK_OFF = "off"
+RERANK_HEURISTIC = "heuristic"
+RERANK_LEARNED = "learned"
+RERANK_MODES = (RERANK_OFF, RERANK_HEURISTIC, RERANK_LEARNED)
+"""第二段重排的档位。默认关；打开是显式的实验选择。"""
+
+
 @dataclass(frozen=True)
 class MemorySettings:
     """记忆设置。
@@ -638,6 +650,13 @@ class MemorySettings:
     task_memory: bool = False
     propose_enabled: bool = False
     graph_channel: bool = False
+    rerank_mode: str = RERANK_OFF
+    """第二段重排：``off`` / ``heuristic`` / ``learned``。
+
+    **默认关。** ``heuristic`` 是不训练的字面特征（BM25/数字/实体/首段名次）；
+    ``learned`` 是 LoCoMo 英文上按对话留一训练出的线性模型，只在英文基准上验过。
+    中文/真实库上的效果要另写预注册，所以这里不替用户默认打开。
+    """
     recall_min_score: float = DEFAULT_RECALL_MIN_SCORE
     consolidation_enabled: bool = True
     consolidation_interval_s: int = 86_400
@@ -1050,6 +1069,7 @@ class SettingsStore:
             task_memory=_as_bool(self._backend.value(_K_TASK_MEMORY, False)),
             propose_enabled=_as_bool(self._backend.value(_K_PROPOSE_ENABLED, False)),
             graph_channel=_as_bool(self._backend.value(_K_GRAPH_CHANNEL, False)),
+            rerank_mode=_as_rerank_mode(self._backend.value(_K_RERANK, RERANK_OFF)),
             recall_min_score=min(
                 0.9,
                 max(
@@ -1073,6 +1093,7 @@ class SettingsStore:
         self._backend.setValue(_K_TASK_MEMORY, bool(settings.task_memory))
         self._backend.setValue(_K_PROPOSE_ENABLED, bool(settings.propose_enabled))
         self._backend.setValue(_K_GRAPH_CHANNEL, bool(settings.graph_channel))
+        self._backend.setValue(_K_RERANK, settings.rerank_mode)
         self._backend.setValue(_K_RECALL_MIN_SCORE, float(settings.recall_min_score))
         self._backend.setValue(_K_CONSOLIDATION_ENABLED, bool(settings.consolidation_enabled))
         self._backend.setValue(_K_CONSOLIDATION_INTERVAL_S, int(settings.consolidation_interval_s))
@@ -1276,6 +1297,12 @@ def _as_routing_mode(value: object) -> str:
     的语域整段消失，而自动最多是"没有按你想要的切"。"""
     text = str(value or "").strip().lower()
     return text if text in ROUTING_MODES else ROUTING_AUTO
+
+
+def _as_rerank_mode(value: object) -> str:
+    """未知值一律回落 ``off``。**不猜最接近的档位**：猜错会悄悄改变排序。"""
+    text = str(value or "").strip()
+    return text if text in RERANK_MODES else RERANK_OFF
 
 
 def _as_bool(value: object, default: bool = False) -> bool:

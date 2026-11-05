@@ -246,6 +246,9 @@ from .settings_dialog import SettingsDialog
 from .settings_store import (
     EXPRESSION_DEFAULT_MODEL,
     PROVIDER_OLLAMA,
+    RERANK_HEURISTIC,
+    RERANK_LEARNED,
+    RERANK_OFF,
     ROUTING_AUTO,
     ROUTING_MODES,
     ROUTING_TASK,
@@ -840,6 +843,9 @@ class MainWindow(QMainWindow):
         #: 没有图时打开开关**不是静默失效**——``memcore.recall`` 会往账本里写一句
         #: "联想通道已启用，但没有可用的关联图"，界面在归因里照原样显示。
         self._graph_enabled: bool = self._settings_store.load_memory().graph_channel
+        #: 第二段重排的档位。**每轮现读**在 :meth:`_rerank_hook` 里用；
+        #: 与 ``_graph_enabled`` 同一种形状——只记布尔/字符串，不持有重排器对象。
+        self._rerank_mode: str = self._settings_store.load_memory().rerank_mode
         #: 关联图本体。``None`` = 还没有。**只在打开记忆窗口时建/载入**——启动时
         #: 无条件建的话，每个用户每次开程序都要为用不上的功能等几秒。
         self._graph: GraphIndex | None = None
@@ -2508,6 +2514,7 @@ class MainWindow(QMainWindow):
             # 账本里那句 note 说出来，不静默。
             recall_config=self._recall_config(),
             graph=self._graph,
+            rerank=self._rerank_hook(),
         )
         if getattr(self, "_call_pending_alerts", None) is not None:
             self._call_pending_alerts.clear()
@@ -5807,6 +5814,7 @@ class MainWindow(QMainWindow):
         self._task_memory = settings.task_memory
         self._writer.policy = TaskPolicy() if self._task_memory else PerItemPolicy()
         self._graph_enabled = settings.graph_channel
+        self._rerank_mode = settings.rerank_mode
         self._recall_min_score = settings.recall_min_score
         self._settings_store.save_memory(settings)
         self._sync_propose_consumer()
@@ -5823,6 +5831,23 @@ class MainWindow(QMainWindow):
             # 它跑完照样写库、照样报结果——比"关掉开关时砍掉一个写了一半的库"
             # 干净得多。
             self._consolidate_pending = False
+
+    def _rerank_hook(self):
+        """按设置返回第二段重排器；``off`` 返回 ``None``（旧路径逐位不变）。
+
+        **惰性 import**：重排器要 numpy，而主窗口模块在核心腿里也会被 import；
+        把 ``axo.memory.rerank`` 钉在模块顶部会让每个不召回的场景也付一次。
+        """
+        mode = getattr(self, "_rerank_mode", RERANK_OFF)
+        if mode == RERANK_HEURISTIC:
+            from ..memory.rerank import HeuristicReranker
+
+            return HeuristicReranker()
+        if mode == RERANK_LEARNED:
+            from ..memory.rerank import LOCOMO_V1
+
+            return LOCOMO_V1
+        return None
 
     def _recall_config(self) -> RecallConfig:
         """这一轮召回用的配置。**每轮现造**，所以它永远不会陈旧。
