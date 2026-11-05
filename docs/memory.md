@@ -485,6 +485,7 @@ id 或 `delete` 仍直接让索引失效——更新/删除是低频动作，不
 | learned | 0.654 | 0.570 | 0.497 |
 
 **不要把这张表当成产品收益。** 它是英文 LoCoMo、单数据集、纯排序口径；产品中文库、
-MMR/预算口径都不同。`learned` 只在英文上验过，中文/真实库要另写预注册；三档默认关。
+MMR/预算口径都不同。中文金标准上 bge 臂**没有复现**（hit@5 0.870 → 0.857 / 0.883，
+候选覆盖 0.909 < 0.95），见 `benchmarks/gold/RERANK_ZH.md`。`learned` 只在英文上验过，中文/真实库要另写预注册；三档默认关。
 细节、判据与边界见 `benchmarks/locomo/RERANK.md` 与
 `docs/prereg-locomo-rerank-v1.md`。

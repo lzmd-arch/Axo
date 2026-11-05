@@ -83,6 +83,8 @@ def rank_by(records: list[dict], key: str) -> list[list[str]]:
 
 def heuristic_scores(record: dict) -> np.ndarray:
     matrix = record["features"]
+    if not len(matrix):
+        return np.zeros(0, dtype=np.float32)
     names = {name: index for index, name in enumerate(FEATURE_NAMES)}
     bm25 = matrix[:, names["bm25"]]
     span = float(bm25.max() - bm25.min())

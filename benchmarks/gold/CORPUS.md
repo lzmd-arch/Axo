@@ -281,3 +281,6 @@ uv run python tools/bench_recall.py --no-semantic --graph-weight 0,0.25,0.5,1.0
   不相干，所以"wheel 要不要连语料一起带"**仍然开着**（届时 `default_gold_dir()` 要能
   处理安装态）。
 * **本版不做**：按类别设门槛、真实语料变体、把基准接进界面（不做一个"跑评测"按钮）。
+
+
+第二段重排的中文实验（2026-11-05）：见 [`RERANK_ZH.md`](RERANK_ZH.md) 与 `rerank_zh_bge.json`。

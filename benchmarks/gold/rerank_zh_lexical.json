@@ -1,0 +1,221 @@
+{
+ "kind": "gold rerank zh v1",
+ "arm": "lexical",
+ "memories": 208,
+ "queries": 85,
+ "candidate_coverage": 0.8701298701298701,
+ "config": {
+  "min_score": 0.133,
+  "candidate_limit": 200
+ },
+ "baseline": {
+  "hit@1": 0.7662337662337663,
+  "hit@3": 0.7792207792207793,
+  "hit@5": 0.7922077922077922,
+  "hit@8": 0.8311688311688312,
+  "recall@8": 0.8311688311688312,
+  "mrr": 0.7797619047619048,
+  "false_injection_rate": 0.882960413080895,
+  "no_answer_injections": 6.5,
+  "answered": 77
+ },
+ "heuristic": {
+  "hit@1": 0.7662337662337663,
+  "hit@3": 0.8441558441558441,
+  "hit@5": 0.8441558441558441,
+  "hit@8": 0.8571428571428571,
+  "recall@8": 0.8571428571428571,
+  "mrr": 0.8030303030303031,
+  "false_injection_rate": 0.8777969018932874,
+  "no_answer_injections": 6.5,
+  "answered": 77
+ },
+ "learned": {
+  "hit@1": 0.7662337662337663,
+  "hit@3": 0.8441558441558441,
+  "hit@5": 0.8571428571428571,
+  "hit@8": 0.8571428571428571,
+  "recall@8": 0.8571428571428571,
+  "mrr": 0.8062770562770563,
+  "false_injection_rate": 0.8760757314974182,
+  "no_answer_injections": 6.5,
+  "answered": 77
+ },
+ "per_category": {
+  "baseline": {
+   "budget": {
+    "answered": 5,
+    "hit@1": 0.8,
+    "hit@5": 0.8
+   },
+   "cold_twin": {
+    "answered": 2,
+    "hit@1": 1.0,
+    "hit@5": 1.0
+   },
+   "distractor_topic": {
+    "answered": 8,
+    "hit@1": 1.0,
+    "hit@5": 1.0
+   },
+   "exact": {
+    "answered": 8,
+    "hit@1": 0.875,
+    "hit@5": 1.0
+   },
+   "name_number": {
+    "answered": 30,
+    "hit@1": 1.0,
+    "hit@5": 1.0
+   },
+   "no_answer": {
+    "answered": 0,
+    "hit@1": NaN,
+    "hit@5": NaN
+   },
+   "paraphrase": {
+    "answered": 5,
+    "hit@1": 0.2,
+    "hit@5": 0.4
+   },
+   "pinned_twin": {
+    "answered": 2,
+    "hit@1": 1.0,
+    "hit@5": 1.0
+   },
+   "redundant_pair": {
+    "answered": 5,
+    "hit@1": 0.6,
+    "hit@5": 0.6
+   },
+   "session_exclude": {
+    "answered": 3,
+    "hit@1": 0.3333333333333333,
+    "hit@5": 0.3333333333333333
+   },
+   "temporal": {
+    "answered": 9,
+    "hit@1": 0.1111111111111111,
+    "hit@5": 0.1111111111111111
+   }
+  },
+  "heuristic": {
+   "budget": {
+    "answered": 5,
+    "hit@1": 0.8,
+    "hit@5": 0.8
+   },
+   "cold_twin": {
+    "answered": 2,
+    "hit@1": 1.0,
+    "hit@5": 1.0
+   },
+   "distractor_topic": {
+    "answered": 8,
+    "hit@1": 1.0,
+    "hit@5": 1.0
+   },
+   "exact": {
+    "answered": 8,
+    "hit@1": 0.875,
+    "hit@5": 1.0
+   },
+   "name_number": {
+    "answered": 30,
+    "hit@1": 1.0,
+    "hit@5": 1.0
+   },
+   "no_answer": {
+    "answered": 0,
+    "hit@1": NaN,
+    "hit@5": NaN
+   },
+   "paraphrase": {
+    "answered": 5,
+    "hit@1": 0.2,
+    "hit@5": 0.6
+   },
+   "pinned_twin": {
+    "answered": 2,
+    "hit@1": 1.0,
+    "hit@5": 1.0
+   },
+   "redundant_pair": {
+    "answered": 5,
+    "hit@1": 0.6,
+    "hit@5": 0.8
+   },
+   "session_exclude": {
+    "answered": 3,
+    "hit@1": 0.3333333333333333,
+    "hit@5": 1.0
+   },
+   "temporal": {
+    "answered": 9,
+    "hit@1": 0.1111111111111111,
+    "hit@5": 0.1111111111111111
+   }
+  },
+  "learned": {
+   "budget": {
+    "answered": 5,
+    "hit@1": 0.8,
+    "hit@5": 0.8
+   },
+   "cold_twin": {
+    "answered": 2,
+    "hit@1": 1.0,
+    "hit@5": 1.0
+   },
+   "distractor_topic": {
+    "answered": 8,
+    "hit@1": 1.0,
+    "hit@5": 1.0
+   },
+   "exact": {
+    "answered": 8,
+    "hit@1": 0.875,
+    "hit@5": 1.0
+   },
+   "name_number": {
+    "answered": 30,
+    "hit@1": 1.0,
+    "hit@5": 1.0
+   },
+   "no_answer": {
+    "answered": 0,
+    "hit@1": NaN,
+    "hit@5": NaN
+   },
+   "paraphrase": {
+    "answered": 5,
+    "hit@1": 0.2,
+    "hit@5": 0.6
+   },
+   "pinned_twin": {
+    "answered": 2,
+    "hit@1": 1.0,
+    "hit@5": 1.0
+   },
+   "redundant_pair": {
+    "answered": 5,
+    "hit@1": 0.6,
+    "hit@5": 1.0
+   },
+   "session_exclude": {
+    "answered": 3,
+    "hit@1": 0.3333333333333333,
+    "hit@5": 1.0
+   },
+   "temporal": {
+    "answered": 9,
+    "hit@1": 0.1111111111111111,
+    "hit@5": 0.1111111111111111
+   }
+  }
+ },
+ "first_stage_ms_median": 10.132100025657564,
+ "feature_ms_median": 0.6297999643720686,
+ "feature_ms_p90": 2.334299962967635,
+ "elapsed_s": 3.0
+}

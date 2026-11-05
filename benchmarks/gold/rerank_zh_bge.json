@@ -1,0 +1,221 @@
+{
+ "kind": "gold rerank zh v1",
+ "arm": "bge",
+ "memories": 208,
+ "queries": 85,
+ "candidate_coverage": 0.9090909090909091,
+ "config": {
+  "min_score": 0.133,
+  "candidate_limit": 200
+ },
+ "baseline": {
+  "hit@1": 0.7792207792207793,
+  "hit@3": 0.8701298701298701,
+  "hit@5": 0.8701298701298701,
+  "hit@8": 0.8701298701298701,
+  "recall@8": 0.8701298701298701,
+  "mrr": 0.8181818181818182,
+  "false_injection_rate": 0.889739663093415,
+  "no_answer_injections": 8.0,
+  "answered": 77
+ },
+ "heuristic": {
+  "hit@1": 0.7792207792207793,
+  "hit@3": 0.8571428571428571,
+  "hit@5": 0.8571428571428571,
+  "hit@8": 0.8831168831168831,
+  "recall@8": 0.8831168831168831,
+  "mrr": 0.8197278911564627,
+  "false_injection_rate": 0.888208269525268,
+  "no_answer_injections": 8.0,
+  "answered": 77
+ },
+ "learned": {
+  "hit@1": 0.7792207792207793,
+  "hit@3": 0.8831168831168831,
+  "hit@5": 0.8831168831168831,
+  "hit@8": 0.8831168831168831,
+  "recall@8": 0.8831168831168831,
+  "mrr": 0.8290043290043291,
+  "false_injection_rate": 0.888208269525268,
+  "no_answer_injections": 8.0,
+  "answered": 77
+ },
+ "per_category": {
+  "baseline": {
+   "budget": {
+    "answered": 5,
+    "hit@1": 0.8,
+    "hit@5": 0.8
+   },
+   "cold_twin": {
+    "answered": 2,
+    "hit@1": 1.0,
+    "hit@5": 1.0
+   },
+   "distractor_topic": {
+    "answered": 8,
+    "hit@1": 0.875,
+    "hit@5": 1.0
+   },
+   "exact": {
+    "answered": 8,
+    "hit@1": 0.875,
+    "hit@5": 1.0
+   },
+   "name_number": {
+    "answered": 30,
+    "hit@1": 1.0,
+    "hit@5": 1.0
+   },
+   "no_answer": {
+    "answered": 0,
+    "hit@1": NaN,
+    "hit@5": NaN
+   },
+   "paraphrase": {
+    "answered": 5,
+    "hit@1": 0.6,
+    "hit@5": 1.0
+   },
+   "pinned_twin": {
+    "answered": 2,
+    "hit@1": 1.0,
+    "hit@5": 1.0
+   },
+   "redundant_pair": {
+    "answered": 5,
+    "hit@1": 0.6,
+    "hit@5": 0.8
+   },
+   "session_exclude": {
+    "answered": 3,
+    "hit@1": 0.3333333333333333,
+    "hit@5": 1.0
+   },
+   "temporal": {
+    "answered": 9,
+    "hit@1": 0.1111111111111111,
+    "hit@5": 0.1111111111111111
+   }
+  },
+  "heuristic": {
+   "budget": {
+    "answered": 5,
+    "hit@1": 0.8,
+    "hit@5": 0.8
+   },
+   "cold_twin": {
+    "answered": 2,
+    "hit@1": 1.0,
+    "hit@5": 1.0
+   },
+   "distractor_topic": {
+    "answered": 8,
+    "hit@1": 0.875,
+    "hit@5": 1.0
+   },
+   "exact": {
+    "answered": 8,
+    "hit@1": 0.875,
+    "hit@5": 1.0
+   },
+   "name_number": {
+    "answered": 30,
+    "hit@1": 1.0,
+    "hit@5": 1.0
+   },
+   "no_answer": {
+    "answered": 0,
+    "hit@1": NaN,
+    "hit@5": NaN
+   },
+   "paraphrase": {
+    "answered": 5,
+    "hit@1": 0.6,
+    "hit@5": 0.8
+   },
+   "pinned_twin": {
+    "answered": 2,
+    "hit@1": 1.0,
+    "hit@5": 1.0
+   },
+   "redundant_pair": {
+    "answered": 5,
+    "hit@1": 0.6,
+    "hit@5": 0.8
+   },
+   "session_exclude": {
+    "answered": 3,
+    "hit@1": 0.3333333333333333,
+    "hit@5": 1.0
+   },
+   "temporal": {
+    "answered": 9,
+    "hit@1": 0.1111111111111111,
+    "hit@5": 0.1111111111111111
+   }
+  },
+  "learned": {
+   "budget": {
+    "answered": 5,
+    "hit@1": 0.8,
+    "hit@5": 0.8
+   },
+   "cold_twin": {
+    "answered": 2,
+    "hit@1": 1.0,
+    "hit@5": 1.0
+   },
+   "distractor_topic": {
+    "answered": 8,
+    "hit@1": 0.875,
+    "hit@5": 1.0
+   },
+   "exact": {
+    "answered": 8,
+    "hit@1": 0.875,
+    "hit@5": 1.0
+   },
+   "name_number": {
+    "answered": 30,
+    "hit@1": 1.0,
+    "hit@5": 1.0
+   },
+   "no_answer": {
+    "answered": 0,
+    "hit@1": NaN,
+    "hit@5": NaN
+   },
+   "paraphrase": {
+    "answered": 5,
+    "hit@1": 0.6,
+    "hit@5": 1.0
+   },
+   "pinned_twin": {
+    "answered": 2,
+    "hit@1": 1.0,
+    "hit@5": 1.0
+   },
+   "redundant_pair": {
+    "answered": 5,
+    "hit@1": 0.6,
+    "hit@5": 1.0
+   },
+   "session_exclude": {
+    "answered": 3,
+    "hit@1": 0.3333333333333333,
+    "hit@5": 1.0
+   },
+   "temporal": {
+    "answered": 9,
+    "hit@1": 0.1111111111111111,
+    "hit@5": 0.1111111111111111
+   }
+  }
+ },
+ "first_stage_ms_median": 11.092600005213171,
+ "feature_ms_median": 1.0157999931834638,
+ "feature_ms_p90": 2.280599984806031,
+ "elapsed_s": 6.4
+}
