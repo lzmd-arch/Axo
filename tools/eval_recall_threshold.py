@@ -34,6 +34,12 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--questions", type=Path, required=True)
     parser.add_argument("--db", type=Path, default=Path.home() / ".axo" / "memory" / "mem.db")
     parser.add_argument("--limit", type=int, default=5, help="每次召回最多注入多少条")
+    parser.add_argument(
+        "--min-score",
+        type=float,
+        default=0.20,
+        help="产品召回门槛（默认 0.20；库默认 0.133，不是产品口径）",
+    )
     parser.add_argument("--json-out", type=Path, default=None)
     args = parser.parse_args(argv)
 
@@ -66,7 +72,7 @@ def main(argv: list[str]) -> int:
             store,
             query_text=row["question"],
             budget_tokens=8000,
-            config=RecallConfig(max_items=args.limit),
+            config=RecallConfig(max_items=args.limit, min_score=args.min_score),
             settle=False,
         )
         results.append({**row, "injected": len(ledger.injected)})
@@ -85,6 +91,7 @@ def main(argv: list[str]) -> int:
     print(
         f"语料：{len(rows)} 条（support {len(support)} / none {len(none)} / partial {len(partial)}）"
     )
+    print(f"门槛：min_score={args.min_score:g}，max_items={args.limit}")
     print(
         f"判据 2（support 至少注入一条）：{hit_rate:.1%}（门槛 ≥95%）"
         if hit_rate is not None
