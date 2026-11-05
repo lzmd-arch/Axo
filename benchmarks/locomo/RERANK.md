@@ -54,8 +54,8 @@ hit@k 不会超过 baseline）。
 ## 边界
 
 - **英文、单数据集、10 段对话**。中文金标准上的复验**没有复现**这组增益，见
-  [`benchmarks/gold/RERANK_ZH.md`](../gold/RERANK_ZH.md)：bge 臂 0.870 → 0.857 / 0.883，
-  候选覆盖 0.909 < 0.95。留一按 conversation 切，不是按查询随机切；
+  [`benchmarks/gold/RERANK_ZH.md`](../gold/RERANK_ZH.md)：bge 臂 0.870 → 0.870 / 0.883，
+  候选覆盖 0.883 < 0.95。留一按 conversation 切，不是按查询随机切；
   但 LoCoMo 的 10 段对话共享说话人与话题风格，跨数据集/中文不能直接外推。
 - **学习版是研究结果，不是产品默认。** 产品默认仍关；学习版权重只在英文
   LoCoMo 上验过，中文/真实库要另写预注册。产品设置里 `heuristic` / `learned` 都可选，默认关；
